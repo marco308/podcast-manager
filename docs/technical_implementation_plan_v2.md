@@ -2,6 +2,9 @@
 
 > A comprehensive technical specification for the Podcast Manager application, derived from the [General Plan](general_plan.md).
 
+**Last Updated:** 6 December 2025  
+**Status:** Phase 1 Complete ✅ | Phase 2-4 Pending
+
 ---
 
 ## Table of Contents
@@ -58,18 +61,21 @@
 
 ### Backend
 
-| Package         | Version | Purpose                                   |
-| --------------- | ------- | ----------------------------------------- |
-| `fastapi`       | ^0.109  | Web framework with automatic OpenAPI docs |
-| `uvicorn`       | ^0.27   | ASGI server                               |
-| `sqlalchemy`    | ^2.0    | ORM for database operations               |
-| `alembic`       | ^1.13   | Database migrations                       |
-| `httpx`         | ^0.26   | Async HTTP client for Spotify API         |
-| `apscheduler`   | ^3.10   | Background job scheduling                 |
-| `cryptography`  | ^42.0   | Fernet encryption for tokens              |
-| `holidays`      | ^0.40   | UK public holiday detection               |
-| `pydantic`      | ^2.6    | Data validation and settings management   |
-| `python-dotenv` | ^1.0    | Environment variable management           |
+| Package             | Version | Purpose                                   |
+| ------------------- | ------- | ----------------------------------------- |
+| `fastapi`           | ^0.109  | Web framework with automatic OpenAPI docs |
+| `uvicorn`           | ^0.27   | ASGI server with SSL support              |
+| `sqlalchemy`        | ^2.0    | Async ORM for database operations         |
+| `aiosqlite`         | ^0.19   | Async SQLite driver                       |
+| `alembic`           | ^1.13   | Database migrations                       |
+| `greenlet`          | ^3.0    | Required for async SQLAlchemy             |
+| `httpx`             | ^0.26   | Async HTTP client for Spotify API         |
+| `apscheduler`       | ^3.10   | Background job scheduling                 |
+| `cryptography`      | ^42.0   | Fernet encryption for tokens              |
+| `holidays`          | ^0.40   | UK public holiday detection               |
+| `pydantic`          | ^2.6    | Data validation and settings management   |
+| `pydantic-settings` | ^2.1    | Settings management with .env support     |
+| `python-dotenv`     | ^1.0    | Environment variable management           |
 
 ### Frontend
 
@@ -236,7 +242,13 @@ backend/
 ├── alembic.ini
 ├── requirements.txt
 ├── Dockerfile
-└── .env.example
+├── .env.example
+├── .env                        # Configured credentials (gitignored)
+├── certs/                      # Local HTTPS certificates (gitignored)
+│   ├── localhost+2.pem
+│   └── localhost+2-key.pem
+└── data/
+    └── podcast_manager.db      # SQLite database
 ```
 
 ### Configuration (`app/config.py`)
@@ -244,19 +256,21 @@ backend/
 ```python
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+from urllib.parse import urlencode
 
 class Settings(BaseSettings):
     # Application
     APP_NAME: str = "Podcast Manager"
     DEBUG: bool = False
+    FRONTEND_URL: str = "https://127.0.0.1:3000"
 
     # Database
-    DATABASE_URL: str = "sqlite:///./podcast_manager.db"
+    DATABASE_URL: str = "sqlite+aiosqlite:///./data/podcast_manager.db"
 
-    # Spotify OAuth
+    # Spotify OAuth (HTTPS required as of 2024)
     SPOTIFY_CLIENT_ID: str
     SPOTIFY_CLIENT_SECRET: str
-    SPOTIFY_REDIRECT_URI: str = "http://localhost:8000/api/auth/callback"
+    SPOTIFY_REDIRECT_URI: str = "https://127.0.0.1:8000/api/auth/callback"
     SPOTIFY_SCOPES: str = "user-read-playback-position user-library-read playlist-modify-public playlist-modify-private"
 
     # Security
@@ -267,6 +281,18 @@ class Settings(BaseSettings):
     PLAYLIST_UPDATE_HOUR: int = 4  # 4:00 AM
     PLAYLIST_UPDATE_MINUTE: int = 0
 
+    @property
+    def spotify_auth_url(self) -> str:
+        """Build Spotify authorization URL."""
+        params = {
+            "client_id": self.SPOTIFY_CLIENT_ID,
+            "response_type": "code",
+            "redirect_uri": self.SPOTIFY_REDIRECT_URI,
+            "scope": self.SPOTIFY_SCOPES,
+            "show_dialog": "true",
+        }
+        return f"https://accounts.spotify.com/authorize?{urlencode(params)}"
+
     class Config:
         env_file = ".env"
 
@@ -274,6 +300,8 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     return Settings()
 ```
+
+> ⚠️ **Important:** Spotify now requires HTTPS for OAuth redirect URIs. Use `mkcert` to generate local SSL certificates for development.
 
 ---
 
@@ -449,15 +477,25 @@ class TokenEncryption:
 # .env.example
 SPOTIFY_CLIENT_ID=your_client_id
 SPOTIFY_CLIENT_SECRET=your_client_secret
-SPOTIFY_REDIRECT_URI=http://localhost:8000/api/auth/callback
 
-# Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# IMPORTANT: Must use HTTPS and 127.0.0.1 (not localhost) for Spotify OAuth
+SPOTIFY_REDIRECT_URI=https://127.0.0.1:8000/api/auth/callback
+
+# Generate with: python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ENCRYPTION_KEY=your_fernet_key
 
+# Generate with: python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 SECRET_KEY=your_random_secret_key
 
-DATABASE_URL=sqlite:///./podcast_manager.db
+DATABASE_URL=sqlite+aiosqlite:///./data/podcast_manager.db
+FRONTEND_URL=https://127.0.0.1:3000
 ```
+
+> ⚠️ **Spotify HTTPS Requirement:** As of 2024, Spotify rejects `http://` redirect URIs. You must:
+>
+> 1. Use `https://` in your redirect URI
+> 2. Use `127.0.0.1` instead of `localhost` to avoid "Insecure redirect URI" errors
+> 3. Register the exact URI in your [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
 
 ### Security Best Practices
 
@@ -619,21 +657,32 @@ CMD ["nginx", "-g", "daemon off;"]
 
 ## 10. Development Phases
 
-### Phase 1: Foundation & Authentication (Week 1-2)
+### Phase 1: Foundation & Authentication ✅ COMPLETE
+
+**Completed:** 6 December 2025
 
 **Objectives:**
 
-- [ ] Initialize FastAPI project with proper structure
-- [ ] Configure SQLite + SQLAlchemy with initial models
-- [ ] Set up Alembic migrations
-- [ ] Implement Spotify OAuth2 flow (login, callback, token storage)
-- [ ] Implement Fernet token encryption/decryption
-- [ ] Create basic health check and auth endpoints
+- [x] Initialize FastAPI project with proper structure
+- [x] Configure SQLite + async SQLAlchemy with initial models
+- [x] Set up Alembic migrations (with async support via greenlet)
+- [x] Implement Spotify OAuth2 flow (login, callback, token storage)
+- [x] Implement Fernet token encryption/decryption
+- [x] Create basic health check and auth endpoints
+- [x] Set up local HTTPS with mkcert (required for Spotify OAuth)
 
 **Deliverables:**
 
-- Working OAuth flow with encrypted token storage
-- Database with users table populated on login
+- ✅ Working OAuth flow with encrypted token storage
+- ✅ Database with users table populated on login
+- ✅ Local HTTPS development environment
+
+**Implementation Notes:**
+
+- Spotify now requires HTTPS redirect URIs - solved with `mkcert`
+- Must use `127.0.0.1` instead of `localhost` for redirect URI
+- Async SQLAlchemy requires `greenlet` package
+- Server runs with SSL: `uvicorn app.main:app --ssl-keyfile=./certs/localhost+2-key.pem --ssl-certfile=./certs/localhost+2.pem`
 
 ---
 
@@ -754,22 +803,57 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 ```bash
 # Backend
 cd backend
-python -m venv venv
+python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env  # Edit with your values
-alembic upgrade head
-uvicorn app.main:app --reload
 
+# Generate encryption keys
+python3 -c "from cryptography.fernet import Fernet; print('ENCRYPTION_KEY=' + Fernet.generate_key().decode())"
+python3 -c "import secrets; print('SECRET_KEY=' + secrets.token_urlsafe(32))"
+
+# Configure environment
+cp .env.example .env  # Edit with your Spotify credentials and generated keys
+
+# Set up local HTTPS (required for Spotify OAuth)
+mkdir -p certs && cd certs
+mkcert -install
+mkcert localhost 127.0.0.1 ::1
+cd ..
+
+# Run migrations
+alembic upgrade head
+
+# Start server with HTTPS
+uvicorn app.main:app --reload \
+  --ssl-keyfile=./certs/localhost+2-key.pem \
+  --ssl-certfile=./certs/localhost+2.pem
+
+# API available at: https://127.0.0.1:8000
+# Docs at: https://127.0.0.1:8000/docs
+```
+
+```bash
 # Frontend
 cd frontend
 npm install
 npm run dev
 ```
 
+> **Note:** On macOS, use `python3` instead of `python`. Install mkcert via `brew install mkcert`.
+
 ### Useful Links
 
 - [Spotify Web API Documentation](https://developer.spotify.com/documentation/web-api/)
+- [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) - Configure OAuth redirect URIs here
 - [FastAPI Documentation](https://fastapi.tiangolo.com/)
 - [Ant Design Components](https://ant.design/components/overview)
 - [APScheduler Documentation](https://apscheduler.readthedocs.io/)
+- [mkcert](https://github.com/FiloSottile/mkcert) - Local HTTPS certificate generation
+
+---
+
+## Changelog
+
+| Date       | Phase   | Changes                                                 |
+| ---------- | ------- | ------------------------------------------------------- |
+| 2025-12-06 | Phase 1 | ✅ Complete backend foundation, OAuth flow, HTTPS setup |

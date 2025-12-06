@@ -1,0 +1,63 @@
+/* Global styles for Podcast Manager */
+
+/* Reset */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* Ant Design overrides */
+.ant-layout {
+  min-height: 100vh;
+}
+
+.ant-layout-content {
+  background: #f5f5f5;
+}
+
+/* Table category row highlights */
+.ant-table-row.category-primary td:first-child {
+  border-left: 3px solid #1890ff;
+}
+
+.ant-table-row.category-news td:first-child {
+  border-left: 3px solid #52c41a;
+}
+
+.ant-table-row.category-background td:first-child {
+  border-left: 3px solid #722ed1;
+}
+
+/* Smooth transitions */
+.ant-switch,
+.ant-select,
+.ant-btn {
+  transition: all 0.2s ease;
+}
+
+/* Card hover effects */
+.ant-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+/* Spotify-style button */
+.ant-btn-primary {
+  font-weight: 500;
+}
+
+/* Loading spinner centering */
+.ant-spin-nested-loading > div > .ant-spin {
+  max-height: none;
+}

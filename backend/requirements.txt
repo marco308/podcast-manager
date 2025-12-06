@@ -1,0 +1,30 @@
+# FastAPI and server
+fastapi>=0.109.0,<0.120.0
+uvicorn[standard]>=0.27.0,<0.30.0
+
+# Database
+sqlalchemy>=2.0.0,<3.0.0
+alembic>=1.13.0,<2.0.0
+aiosqlite>=0.19.0,<1.0.0
+greenlet>=3.0.0,<4.0.0
+
+# HTTP client for Spotify API
+httpx>=0.26.0,<1.0.0
+
+# Background jobs
+apscheduler>=3.10.0,<4.0.0
+
+# Security and encryption
+cryptography>=42.0.0,<44.0.0
+python-jose[cryptography]>=3.3.0,<4.0.0
+
+# UK public holidays
+holidays>=0.40,<1.0.0
+
+# Configuration and validation
+pydantic>=2.6.0,<3.0.0
+pydantic-settings>=2.1.0,<3.0.0
+python-dotenv>=1.0.0,<2.0.0
+
+# Development
+python-multipart>=0.0.6,<1.0.0
