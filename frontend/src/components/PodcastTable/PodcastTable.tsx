@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
-import { Table, Avatar, Switch, message, Typography, Space, Tag, Grid, Drawer, Form, Divider, Card, Segmented, Empty } from 'antd';
+import { useState, useEffect, useMemo } from 'react';
+import { Table, Avatar, Switch, message, Typography, Space, Tag, Grid, Drawer, Form, Divider, Card, Segmented, Empty, Input } from 'antd';
 import type { TableProps } from 'antd';
-import { RightOutlined, AppstoreOutlined, UnorderedListOutlined } from '@ant-design/icons';
+import { RightOutlined, AppstoreOutlined, UnorderedListOutlined, SearchOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import type { Podcast, PodcastCategory } from '../../types';
@@ -25,6 +25,7 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [selectedPodcast, setSelectedPodcast] = useState<Podcast | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const screens = useBreakpoint();
   const isMobile = !screens.md;
   const [viewMode, setViewMode] = useState<ViewMode>('cards');
@@ -33,6 +34,20 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
   useEffect(() => {
     setViewMode(isMobile ? 'cards' : 'table');
   }, [isMobile]);
+
+  // Filter podcasts by search query
+  const filteredPodcasts = useMemo(() => {
+    if (!searchQuery.trim()) {
+      return podcasts;
+    }
+
+    const query = searchQuery.toLowerCase();
+    return podcasts.filter(
+      (podcast) =>
+        podcast.name.toLowerCase().includes(query) ||
+        (podcast.publisher?.toLowerCase().includes(query) ?? false)
+    );
+  }, [podcasts, searchQuery]);
 
   const openPodcastDrawer = (podcast: Podcast) => {
     setSelectedPodcast(podcast);
@@ -194,13 +209,13 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
 
   // Card view for mobile
   const renderCardView = () => {
-    if (podcasts.length === 0) {
-      return <Empty description="No podcasts found" />;
+    if (filteredPodcasts.length === 0) {
+      return <Empty description={searchQuery ? "No podcasts match your search" : "No podcasts found"} />;
     }
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {podcasts.map((podcast) => (
+        {filteredPodcasts.map((podcast) => (
           <Card
             key={podcast.spotify_id}
             size="small"
@@ -264,8 +279,24 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
 
   return (
     <>
-      {/* View Toggle */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+      {/* Search and View Toggle */}
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 16,
+        gap: 12,
+        flexWrap: 'wrap'
+      }}>
+        <Input
+          placeholder="Search podcasts by name or publisher..."
+          prefix={<SearchOutlined />}
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          allowClear
+          style={{ flex: 1, minWidth: 200, maxWidth: 400 }}
+          size={isMobile ? 'middle' : 'large'}
+        />
         <Segmented
           value={viewMode}
           onChange={(value) => setViewMode(value as ViewMode)}
@@ -284,7 +315,7 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
       {viewMode === 'table' && (
         <div style={{ overflowX: 'auto' }}>
           <Table
-            dataSource={podcasts}
+            dataSource={filteredPodcasts}
             columns={columns}
             rowKey="spotify_id"
             loading={loading}
