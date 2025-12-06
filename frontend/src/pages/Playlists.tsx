@@ -116,8 +116,9 @@ export function Playlists() {
     try {
       const result = await runPlaylist.mutateAsync(id);
       message.success(result.message);
-    } catch {
-      message.error('Failed to update playlist');
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      message.error(detail || 'Failed to update playlist');
     }
   };
 
@@ -125,8 +126,9 @@ export function Playlists() {
     try {
       const result = await runAllPlaylists.mutateAsync();
       message.success(result.message);
-    } catch {
-      message.error('Failed to update playlists');
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      message.error(detail || 'Failed to update playlists');
     }
   };
 

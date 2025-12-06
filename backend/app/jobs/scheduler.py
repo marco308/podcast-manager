@@ -1,24 +1,163 @@
-"""APScheduler setup and job management (Phase 3 stub)."""
+"""APScheduler setup and job management."""
+
+import logging
+from datetime import datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
+from sqlalchemy import select
+
+from app.config import get_settings
+from app.database import async_session_maker
+from app.models.playlist import Playlist
+from app.models.sync_log import SyncLog, SyncStatus
+from app.models.user import User
+from app.services.encryption import get_encryption_service
+from app.services.playlist_builder import PlaylistBuilder
+from app.services.spotify import SpotifyService
+
+logger = logging.getLogger(__name__)
+settings = get_settings()
 
 # Global scheduler instance
 scheduler = AsyncIOScheduler()
 
 
-def init_scheduler() -> None:
-    """Initialize and start the scheduler.
+async def refresh_all_tokens() -> None:
+    """Refresh Spotify tokens for all users before they expire."""
+    logger.info("Starting token refresh job")
 
-    Jobs will be added in Phase 3.
-    """
-    if not scheduler.running:
-        scheduler.start()
+    async with async_session_maker() as db:
+        try:
+            result = await db.execute(select(User))
+            users = result.scalars().all()
+
+            encryption = get_encryption_service()
+
+            for user in users:
+                try:
+                    # Check if token will expire in the next 15 minutes
+                    if (user.token_expires_at.timestamp() - datetime.utcnow().timestamp()) < 900:
+                        refresh_token = encryption.decrypt(user.refresh_token)
+                        spotify = SpotifyService()
+                        token_data = await spotify.refresh_access_token(refresh_token)
+
+                        user.access_token = encryption.encrypt(token_data["access_token"])
+                        user.refresh_token = encryption.encrypt(token_data["refresh_token"])
+                        user.token_expires_at = token_data["expires_at"]
+
+                        logger.info(f"Refreshed token for user {user.display_name}")
+
+                except Exception as e:
+                    logger.error(f"Failed to refresh token for user {user.id}: {e}")
+
+            await db.commit()
+            logger.info("Token refresh job completed")
+
+        except Exception as e:
+            logger.error(f"Token refresh job failed: {e}")
+            await db.rollback()
+
+
+async def update_all_playlists() -> None:
+    """Update all enabled playlists for all users."""
+    logger.info("Starting daily playlist update job")
+
+    async with async_session_maker() as db:
+        try:
+            # Create sync log entry
+            sync_log = SyncLog(
+                job_type="playlist_update",
+                status=SyncStatus.RUNNING,
+                started_at=datetime.utcnow(),
+            )
+            db.add(sync_log)
+            await db.flush()
+
+            # Get all users
+            result = await db.execute(select(User))
+            users = result.scalars().all()
+
+            total_playlists = 0
+            total_episodes = 0
+            errors = []
+
+            for user in users:
+                try:
+                    builder = PlaylistBuilder(db, user)
+                    results = await builder.update_all_playlists()
+
+                    for res in results:
+                        total_playlists += 1
+                        if res.success:
+                            total_episodes += res.episode_count
+                        else:
+                            errors.append(f"{res.playlist_name}: {res.error}")
+
+                except Exception as e:
+                    logger.error(f"Failed to update playlists for user {user.id}: {e}")
+                    errors.append(f"User {user.id}: {str(e)}")
+
+            # Update sync log
+            sync_log.status = SyncStatus.SUCCESS if not errors else SyncStatus.FAILED
+            sync_log.completed_at = datetime.utcnow()
+            sync_log.details = (
+                f"Updated {total_playlists} playlists with {total_episodes} episodes. "
+                f"Errors: {len(errors)}"
+            )
+            if errors:
+                sync_log.details += f"\n{chr(10).join(errors[:10])}"  # First 10 errors
+
+            await db.commit()
+            logger.info(
+                f"Playlist update job completed: {total_playlists} playlists, "
+                f"{total_episodes} episodes, {len(errors)} errors"
+            )
+
+        except Exception as e:
+            logger.error(f"Playlist update job failed: {e}")
+            await db.rollback()
+
+
+def init_scheduler() -> None:
+    """Initialize and start the scheduler with configured jobs."""
+    if scheduler.running:
+        return
+
+    # Daily playlist update job
+    scheduler.add_job(
+        update_all_playlists,
+        CronTrigger(
+            hour=settings.PLAYLIST_UPDATE_HOUR,
+            minute=settings.PLAYLIST_UPDATE_MINUTE,
+        ),
+        id="daily_playlist_update",
+        name="Daily Playlist Update",
+        replace_existing=True,
+    )
+
+    # Token refresh every 45 minutes
+    scheduler.add_job(
+        refresh_all_tokens,
+        IntervalTrigger(minutes=45),
+        id="token_refresh",
+        name="Spotify Token Refresh",
+        replace_existing=True,
+    )
+
+    scheduler.start()
+    logger.info(
+        f"Scheduler started with daily update at "
+        f"{settings.PLAYLIST_UPDATE_HOUR:02d}:{settings.PLAYLIST_UPDATE_MINUTE:02d}"
+    )
 
 
 def shutdown_scheduler() -> None:
     """Shutdown the scheduler gracefully."""
     if scheduler.running:
         scheduler.shutdown(wait=True)
+        logger.info("Scheduler shutdown complete")
 
 
 def get_job_status() -> list[dict]:
@@ -33,3 +172,88 @@ def get_job_status() -> list[dict]:
         }
         for job in jobs
     ]
+
+
+async def trigger_playlist_update_for_user(user_id: int) -> dict:
+    """Manually trigger playlist update for a specific user.
+
+    Args:
+        user_id: The user ID to update playlists for.
+
+    Returns:
+        Dictionary with update results.
+    """
+    async with async_session_maker() as db:
+        try:
+            result = await db.execute(select(User).where(User.id == user_id))
+            user = result.scalar_one_or_none()
+
+            if not user:
+                return {"success": False, "error": "User not found"}
+
+            builder = PlaylistBuilder(db, user)
+            results = await builder.update_all_playlists()
+            await db.commit()
+
+            return {
+                "success": True,
+                "results": [
+                    {
+                        "playlist_id": r.playlist_id,
+                        "playlist_name": r.playlist_name,
+                        "success": r.success,
+                        "episode_count": r.episode_count,
+                        "error": r.error,
+                    }
+                    for r in results
+                ],
+            }
+
+        except Exception as e:
+            logger.error(f"Manual playlist update failed: {e}")
+            await db.rollback()
+            return {"success": False, "error": str(e)}
+
+
+async def trigger_single_playlist_update(user_id: int, playlist_id: int) -> dict:
+    """Manually trigger update for a single playlist.
+
+    Args:
+        user_id: The user ID.
+        playlist_id: The playlist ID to update.
+
+    Returns:
+        Dictionary with update result.
+    """
+    async with async_session_maker() as db:
+        try:
+            user_result = await db.execute(select(User).where(User.id == user_id))
+            user = user_result.scalar_one_or_none()
+
+            if not user:
+                return {"success": False, "error": "User not found"}
+
+            playlist_result = await db.execute(
+                select(Playlist).where(Playlist.id == playlist_id)
+            )
+            playlist = playlist_result.scalar_one_or_none()
+
+            if not playlist:
+                return {"success": False, "error": "Playlist not found"}
+
+            builder = PlaylistBuilder(db, user)
+            result = await builder.update_playlist(playlist)
+            await db.commit()
+
+            return {
+                "success": result.success,
+                "playlist_id": result.playlist_id,
+                "playlist_name": result.playlist_name,
+                "episode_count": result.episode_count,
+                "error": result.error,
+            }
+
+        except Exception as e:
+            logger.error(f"Single playlist update failed: {e}")
+            await db.rollback()
+            return {"success": False, "error": str(e)}

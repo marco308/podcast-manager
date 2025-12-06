@@ -72,6 +72,12 @@ export interface PodcastListResponse {
   total: number;
 }
 
+// Playlist list response
+export interface PlaylistListResponse {
+  items: Playlist[];
+  total: number;
+}
+
 // API Response types
 export interface ApiError {
   detail: string;

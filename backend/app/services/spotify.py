@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -188,8 +189,10 @@ class SpotifyService:
             Created playlist data.
         """
         async with httpx.AsyncClient() as client:
+            # URL-encode the user_id to handle special characters like #
+            encoded_user_id = quote(user_id, safe="")
             response = await client.post(
-                f"{SPOTIFY_API_BASE}/users/{user_id}/playlists",
+                f"{SPOTIFY_API_BASE}/users/{encoded_user_id}/playlists",
                 headers=self._headers,
                 json={
                     "name": name,
@@ -210,9 +213,125 @@ class SpotifyService:
             uris: List of Spotify URIs (e.g., spotify:episode:xxx).
         """
         async with httpx.AsyncClient() as client:
-            response = await client.put(
-                f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/tracks",
+            # Spotify limits to 100 items per request
+            if len(uris) <= 100:
+                response = await client.put(
+                    f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/tracks",
+                    headers=self._headers,
+                    json={"uris": uris},
+                )
+                response.raise_for_status()
+            else:
+                # First replace with first 100
+                response = await client.put(
+                    f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/tracks",
+                    headers=self._headers,
+                    json={"uris": uris[:100]},
+                )
+                response.raise_for_status()
+
+                # Then add remaining in batches of 100
+                for i in range(100, len(uris), 100):
+                    batch = uris[i : i + 100]
+                    response = await client.post(
+                        f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/tracks",
+                        headers=self._headers,
+                        json={"uris": batch},
+                    )
+                    response.raise_for_status()
+
+    async def get_episode(self, episode_id: str) -> dict[str, Any]:
+        """Get a single episode by ID.
+
+        Args:
+            episode_id: Spotify episode ID.
+
+        Returns:
+            Episode data including resume_point if available.
+        """
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{SPOTIFY_API_BASE}/episodes/{episode_id}",
                 headers=self._headers,
-                json={"uris": uris},
             )
             response.raise_for_status()
+            return response.json()
+
+    async def get_episodes(self, episode_ids: list[str]) -> list[dict[str, Any]]:
+        """Get multiple episodes by IDs.
+
+        Args:
+            episode_ids: List of Spotify episode IDs (max 50).
+
+        Returns:
+            List of episode data.
+        """
+        if not episode_ids:
+            return []
+
+        async with httpx.AsyncClient() as client:
+            # Spotify allows up to 50 episodes per request
+            response = await client.get(
+                f"{SPOTIFY_API_BASE}/episodes",
+                headers=self._headers,
+                params={"ids": ",".join(episode_ids[:50])},
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get("episodes", [])
+
+    async def get_show_episodes_all(
+        self, show_id: str, max_episodes: int = 200
+    ) -> list[dict[str, Any]]:
+        """Get all episodes for a show with pagination.
+
+        Args:
+            show_id: Spotify show ID.
+            max_episodes: Maximum number of episodes to fetch.
+
+        Returns:
+            List of episodes.
+        """
+        all_episodes = []
+        offset = 0
+
+        while len(all_episodes) < max_episodes:
+            batch_limit = min(50, max_episodes - len(all_episodes))
+            data = await self.get_show_episodes(show_id, limit=batch_limit, offset=offset)
+
+            episodes = data.get("items", [])
+            if not episodes:
+                break
+
+            all_episodes.extend(episodes)
+            offset += len(episodes)
+
+            if not data.get("next"):
+                break
+
+        return all_episodes
+
+    async def get_all_user_shows(self) -> list[dict[str, Any]]:
+        """Get all user's subscribed podcasts (handles pagination).
+
+        Returns:
+            Complete list of all saved shows.
+        """
+        all_shows = []
+        offset = 0
+        limit = 50
+
+        while True:
+            data = await self.get_user_shows(limit=limit, offset=offset)
+            items = data.get("items", [])
+
+            if not items:
+                break
+
+            all_shows.extend(items)
+            offset += len(items)
+
+            if not data.get("next"):
+                break
+
+        return all_shows

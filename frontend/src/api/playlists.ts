@@ -1,11 +1,11 @@
 import apiClient from './client';
-import type { Playlist, PlaylistCreate, PlaylistUpdate } from '../types';
+import type { Playlist, PlaylistCreate, PlaylistUpdate, PlaylistListResponse } from '../types';
 
 export const playlistsApi = {
   // List all managed playlists
   async list(): Promise<Playlist[]> {
-    const response = await apiClient.get<Playlist[]>('/playlists');
-    return response.data;
+    const response = await apiClient.get<PlaylistListResponse>('/playlists');
+    return response.data.items;
   },
 
   // Create a new playlist mapping

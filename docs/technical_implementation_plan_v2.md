@@ -2,8 +2,8 @@
 
 > A comprehensive technical specification for the Podcast Manager application, derived from the [General Plan](general_plan.md).
 
-**Last Updated:** 6 December 2025  
-**Status:** Phase 1 Complete ✅ | Phase 2-4 Pending
+**Last Updated:** 6 December 2025
+**Status:** Phase 1 Complete ✅ | Phase 2 Complete ✅ | Phase 3 Complete ✅ | Phase 4 Complete ✅
 
 ---
 
@@ -686,58 +686,131 @@ CMD ["nginx", "-g", "daemon off;"]
 
 ---
 
-### Phase 2: Podcast Sync & Management (Week 3-4)
+### Phase 2: Podcast Sync & Management ✅ COMPLETE
+
+**Completed:** 6 December 2025
 
 **Objectives:**
 
-- [ ] Create Spotify API client service
-- [ ] Implement "Sync Subscriptions" job (fetch → save)
-- [ ] Build CRUD endpoints for podcasts
-- [ ] Build React frontend scaffold with Ant Design
-- [ ] Create Podcast Manager table with editable fields
-- [ ] Implement category/attribute updates
+- [x] Create Spotify API client service
+- [x] Implement "Sync Subscriptions" job (fetch → save)
+- [x] Build CRUD endpoints for podcasts
+- [x] Build React frontend scaffold with Ant Design
+- [x] Create Podcast Manager table with editable fields
+- [x] Implement category/attribute updates
 
 **Deliverables:**
 
-- Full podcast list synced from Spotify
-- UI for viewing and categorizing podcasts
+- ✅ Full podcast list synced from Spotify
+- ✅ UI for viewing and categorizing podcasts
+
+**Implementation Notes:**
+
+- Frontend built with React 19 + TypeScript 5.9 + Vite 7
+- Session-based auth: Backend generates session ID, frontend stores in localStorage
+- Axios interceptor appends `?session=xxx` to all API requests
+- Backend returns `PodcastListResponse { items: [], total: N }` - frontend extracts items array
+- Vite configured with HTTPS and API proxy to backend
+- React Query for server state management with optimistic updates
+- Ant Design 5 for UI components (Table, Select, Switch, Layout)
+
+**Frontend Structure:**
+
+```
+frontend/src/
+├── api/           # Axios client + API functions
+├── components/    # Layout, PodcastTable, common
+├── context/       # AuthContext with session management
+├── hooks/         # usePodcasts, usePlaylists (React Query)
+├── pages/         # Login, Dashboard, Podcasts, Playlists, Settings
+└── types/         # TypeScript definitions
+```
 
 ---
 
-### Phase 3: Playlist Logic & Automation (Week 5-6)
+### Phase 3: Playlist Logic & Automation ✅ COMPLETE
+
+**Completed:** 6 December 2025
 
 **Objectives:**
 
-- [ ] Implement episode fetching with playback status
-- [ ] Build playlist generation logic for each rule type
-- [ ] Implement UK holiday detection
-- [ ] Set up APScheduler with daily job
-- [ ] Create playlist mapping configuration
-- [ ] Build manual trigger endpoints
+- [x] Implement episode fetching with playback status
+- [x] Build playlist generation logic for each rule type
+- [x] Implement UK holiday detection
+- [x] Set up APScheduler with daily job
+- [x] Create playlist mapping configuration
+- [x] Build manual trigger endpoints
 
 **Deliverables:**
 
-- Automated daily playlist updates
-- Manual trigger buttons in UI
-- Weekend/holiday logic working
+- ✅ Automated daily playlist updates at configurable time (default 4:00 AM)
+- ✅ Manual trigger endpoints (`POST /api/playlists/{id}/run`, `POST /api/playlists/run-all`)
+- ✅ Weekend/holiday logic with UK public holidays via `holidays` package
+
+**Implementation Notes:**
+
+- `PlaylistBuilder` service handles all playlist generation logic
+- Episode playback status determined via Spotify's `resume_point.fully_played` field
+- Playlist rules:
+  - **Primary**: All unplayed episodes from primary podcasts, oldest first (sequential respected)
+  - **News**: Latest unplayed episode per news podcast only
+  - **Morning**: Same as news (can be customized)
+  - **Background**: All unplayed episodes from background podcasts, oldest first
+- APScheduler runs two jobs:
+  - `daily_playlist_update`: CronTrigger at configured hour/minute
+  - `token_refresh`: IntervalTrigger every 45 minutes
+- Weekend-only podcasts skip non-weekend/non-holiday days (Friday counts as weekend)
+- Spotify API pagination handled for shows with many episodes (max 200 per show)
+- Playlist updates handle >100 episodes via batch requests
+- **Auto-create Spotify playlists**: If `spotify_playlist_id` is not set, `PlaylistBuilder._ensure_spotify_playlist()` automatically creates a new Spotify playlist with an appropriate description
+- **URL encoding for Spotify user IDs**: User IDs with special characters (e.g., `#`) are URL-encoded using `urllib.parse.quote()` to prevent 405 errors
+
+**New Files:**
+
+```
+backend/app/services/playlist_builder.py  # Core playlist generation logic
+```
 
 ---
 
-### Phase 4: Deployment & Polish (Week 7-8)
+### Phase 4: Deployment & Polish ✅ COMPLETE
+
+**Completed:** 6 December 2025
 
 **Objectives:**
 
-- [ ] Create Dockerfiles for both services
-- [ ] Set up docker-compose with volume persistence
-- [ ] Add error handling and logging throughout
-- [ ] UI polish (loading states, error messages, notifications)
-- [ ] Write basic documentation
-- [ ] Test full workflow end-to-end
+- [x] Create Dockerfiles for both services
+- [x] Set up docker-compose with volume persistence
+- [x] Add error handling and logging throughout
+- [x] UI polish (loading states, error messages, notifications)
+- [x] Write basic documentation
+- [x] Test full workflow end-to-end
 
 **Deliverables:**
 
-- Production-ready Docker deployment
-- Complete, polished application
+- ✅ Production-ready Docker deployment
+- ✅ Complete, polished application
+
+**Implementation Notes:**
+
+- **Backend Dockerfile**: Multi-stage build with non-root user, health checks, and security hardening
+- **Frontend Dockerfile**: Multi-stage Node.js build with nginx for production serving
+- **docker-compose.yml**: Orchestrates both services with health checks, network isolation, and volume persistence
+- **nginx.conf**: SPA-aware configuration with gzip compression, security headers, and API proxy
+- **Logging**: Centralized logging with configurable levels, reduced noise from third-party libraries
+- **Error handling**: Global exception handler in FastAPI, ErrorBoundary in React, proper error messages in UI
+- **UI polish**: Version display in Settings, improved layout and spacing, loading states throughout
+
+**New Files:**
+
+```
+docker-compose.yml                    # Container orchestration
+frontend/Dockerfile                   # Frontend production build
+frontend/nginx.conf                   # Nginx configuration
+backend/.dockerignore                 # Backend Docker ignore rules
+frontend/.dockerignore                # Frontend Docker ignore rules
+.env.example                          # Root environment template
+```
 
 ---
 
@@ -854,6 +927,8 @@ npm run dev
 
 ## Changelog
 
-| Date       | Phase   | Changes                                                 |
-| ---------- | ------- | ------------------------------------------------------- |
-| 2025-12-06 | Phase 1 | ✅ Complete backend foundation, OAuth flow, HTTPS setup |
+| Date       | Phase   | Changes                                                              |
+| ---------- | ------- | -------------------------------------------------------------------- |
+| 2025-12-06 | Phase 3 | ✅ Complete playlist automation, APScheduler, manual trigger endpoints |
+| 2025-12-06 | Phase 2 | ✅ Complete podcast sync, frontend scaffold, React Query integration  |
+| 2025-12-06 | Phase 1 | ✅ Complete backend foundation, OAuth flow, HTTPS setup              |

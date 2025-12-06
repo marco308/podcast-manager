@@ -1,13 +1,12 @@
 """Playlists router for managing playlist configurations."""
 
-from datetime import datetime
-
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.playlist import Playlist, PlaylistRuleType
+from app.models.user import User
 from app.routers.auth import get_current_user_id
 from app.schemas.playlist import (
     PlaylistCreate,
@@ -15,6 +14,7 @@ from app.schemas.playlist import (
     PlaylistUpdate,
     PlaylistListResponse,
 )
+from app.services.playlist_builder import PlaylistBuilder
 
 router = APIRouter(prefix="/playlists", tags=["Playlists"])
 
@@ -114,20 +114,37 @@ async def run_playlist_update(
     user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Manually trigger a playlist update (stub for Phase 3)."""
-    result = await db.execute(select(Playlist).where(Playlist.id == playlist_id))
-    playlist = result.scalar_one_or_none()
+    """Manually trigger a playlist update."""
+    # Get the playlist
+    playlist_result = await db.execute(
+        select(Playlist).where(Playlist.id == playlist_id)
+    )
+    playlist = playlist_result.scalar_one_or_none()
 
     if not playlist:
         raise HTTPException(status_code=404, detail="Playlist not found")
 
-    # TODO: Implement playlist update logic in Phase 3
-    playlist.last_updated_at = datetime.utcnow()
-    await db.flush()
+    # Get the user
+    user_result = await db.execute(select(User).where(User.id == user_id))
+    user = user_result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Build and update the playlist
+    builder = PlaylistBuilder(db, user)
+    result = await builder.update_playlist(playlist)
+
+    if not result.success:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to update playlist: {result.error}",
+        )
 
     return {
-        "message": f"Playlist '{playlist.name}' update triggered",
+        "message": f"Playlist '{playlist.name}' updated successfully",
         "playlist_id": playlist_id,
+        "episode_count": result.episode_count,
     }
 
 
@@ -136,19 +153,31 @@ async def run_all_playlist_updates(
     user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Manually trigger all playlist updates (stub for Phase 3)."""
-    result = await db.execute(
-        select(Playlist).where(Playlist.is_enabled == True)
-    )
-    playlists = result.scalars().all()
+    """Manually trigger all enabled playlist updates."""
+    # Get the user
+    user_result = await db.execute(select(User).where(User.id == user_id))
+    user = user_result.scalar_one_or_none()
 
-    # TODO: Implement playlist update logic in Phase 3
-    for playlist in playlists:
-        playlist.last_updated_at = datetime.utcnow()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
 
-    await db.flush()
+    # Update all playlists
+    builder = PlaylistBuilder(db, user)
+    results = await builder.update_all_playlists()
+
+    successful = [r for r in results if r.success]
+    failed = [r for r in results if not r.success]
 
     return {
-        "message": "All playlist updates triggered",
-        "count": len(playlists),
+        "message": f"Updated {len(successful)} playlists, {len(failed)} failed",
+        "results": [
+            {
+                "playlist_id": r.playlist_id,
+                "playlist_name": r.playlist_name,
+                "success": r.success,
+                "episode_count": r.episode_count,
+                "error": r.error,
+            }
+            for r in results
+        ],
     }
