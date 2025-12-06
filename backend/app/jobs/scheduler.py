@@ -146,6 +146,15 @@ def init_scheduler() -> None:
         replace_existing=True,
     )
 
+    # Remove played episodes every 5 minutes
+    scheduler.add_job(
+        remove_played_episodes_from_playlists,
+        IntervalTrigger(minutes=5),
+        id="remove_played_episodes",
+        name="Remove Played Episodes",
+        replace_existing=True,
+    )
+
     scheduler.start()
     logger.info(
         f"Scheduler started with daily update at "
@@ -257,3 +266,117 @@ async def trigger_single_playlist_update(user_id: int, playlist_id: int) -> dict
             logger.error(f"Single playlist update failed: {e}")
             await db.rollback()
             return {"success": False, "error": str(e)}
+
+
+async def remove_played_episodes_from_playlists() -> None:
+    """Remove fully-played episodes from all playlists for all users.
+
+    This job runs every 5 minutes to clean up played content.
+    """
+    logger.info("Starting remove played episodes job")
+
+    async with async_session_maker() as db:
+        try:
+            result = await db.execute(select(User))
+            users = result.scalars().all()
+
+            encryption = get_encryption_service()
+            total_removed = 0
+            errors = []
+
+            for user in users:
+                try:
+                    # Get all enabled playlists for user
+                    playlists_result = await db.execute(
+                        select(Playlist).where(
+                            (Playlist.user_id == user.id) & (Playlist.is_enabled == True)
+                        )
+                    )
+                    playlists = playlists_result.scalars().all()
+
+                    for playlist in playlists:
+                        try:
+                            # Get Spotify client with valid token
+                            access_token = encryption.decrypt(user.access_token)
+                            if datetime.utcnow() >= user.token_expires_at:
+                                refresh_token = encryption.decrypt(user.refresh_token)
+                                spotify = SpotifyService()
+                                token_data = await spotify.refresh_access_token(
+                                    refresh_token
+                                )
+                                user.access_token = encryption.encrypt(
+                                    token_data["access_token"]
+                                )
+                                user.refresh_token = encryption.encrypt(
+                                    token_data["refresh_token"]
+                                )
+                                user.token_expires_at = token_data["expires_at"]
+                                await db.flush()
+                                access_token = token_data["access_token"]
+
+                            spotify_client = SpotifyService(access_token=access_token)
+
+                            # Get all tracks in playlist
+                            played_uris = []
+                            offset = 0
+                            limit = 50
+
+                            while True:
+                                tracks_data = await spotify_client.get_playlist_tracks(
+                                    playlist.spotify_id, limit=limit, offset=offset
+                                )
+                                tracks = tracks_data.get("items", [])
+
+                                if not tracks:
+                                    break
+
+                                # Check each track for playback status
+                                for track in tracks:
+                                    if track and "track" in track:
+                                        episode = track["track"]
+                                        resume_point = episode.get("resume_point", {})
+                                        if resume_point.get("fully_played", False):
+                                            played_uris.append(episode["uri"])
+
+                                offset += limit
+                                if not tracks_data.get("next"):
+                                    break
+
+                            # Remove played episodes if any found
+                            if played_uris:
+                                # Remove in batches to avoid timeouts
+                                for i in range(0, len(played_uris), 50):
+                                    batch = played_uris[i : i + 50]
+                                    await spotify_client.remove_tracks_from_playlist(
+                                        playlist.spotify_id, batch
+                                    )
+                                    total_removed += len(batch)
+                                    logger.info(
+                                        f"Removed {len(batch)} played episodes from "
+                                        f"playlist {playlist.name} (user {user.id})"
+                                    )
+
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to clean playlist {playlist.name} "
+                                f"(user {user.id}): {e}"
+                            )
+                            errors.append(
+                                f"Playlist {playlist.name}: {str(e)}"
+                            )
+
+                    await db.commit()
+
+                except Exception as e:
+                    logger.error(f"Failed to clean playlists for user {user.id}: {e}")
+                    errors.append(f"User {user.id}: {str(e)}")
+                    await db.rollback()
+
+            logger.info(
+                f"Remove played episodes job completed: "
+                f"removed {total_removed} episodes, {len(errors)} errors"
+            )
+
+        except Exception as e:
+            logger.error(f"Remove played episodes job failed: {e}")
+            await db.rollback()

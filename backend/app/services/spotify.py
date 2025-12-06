@@ -240,6 +240,45 @@ class SpotifyService:
                     )
                     response.raise_for_status()
 
+    async def remove_tracks_from_playlist(
+        self, playlist_id: str, uris: list[str]
+    ) -> None:
+        """Remove tracks from a playlist.
+
+        Args:
+            playlist_id: Spotify playlist ID.
+            uris: List of Spotify URIs to remove (e.g., spotify:episode:xxx).
+        """
+        async with httpx.AsyncClient() as client:
+            response = await client.delete(
+                f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/tracks",
+                headers=self._headers,
+                json={"tracks": [{"uri": uri} for uri in uris]},
+            )
+            response.raise_for_status()
+
+    async def get_playlist_tracks(
+        self, playlist_id: str, limit: int = 50, offset: int = 0
+    ) -> dict[str, Any]:
+        """Get all tracks/episodes in a playlist.
+
+        Args:
+            playlist_id: Spotify playlist ID.
+            limit: Maximum number of tracks to return (max 50).
+            offset: Index of the first track to return.
+
+        Returns:
+            Paginated list of tracks in the playlist.
+        """
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/tracks",
+                headers=self._headers,
+                params={"limit": limit, "offset": offset},
+            )
+            response.raise_for_status()
+            return response.json()
+
     async def get_episode(self, episode_id: str) -> dict[str, Any]:
         """Get a single episode by ID.
 
