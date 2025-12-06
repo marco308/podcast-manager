@@ -1,6 +1,7 @@
 """Authentication router for Spotify OAuth2 flow."""
 
-from datetime import datetime
+import logging
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import RedirectResponse
@@ -14,37 +15,63 @@ from app.schemas.user import UserResponse
 from app.services.encryption import get_encryption_service
 from app.services.spotify import SpotifyService
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
-# Simple in-memory session store (for demo purposes)
-# In production, use Redis or database-backed sessions
-_sessions: dict[str, int] = {}
+# In-memory session store with expiration
+# Maps session_id -> (user_id, created_at)
+_sessions: dict[str, tuple[int, datetime]] = {}
 
 
 def get_current_user_id(session_id: str | None = Query(None, alias="session")) -> int:
     """Get current user ID from session."""
     if not session_id or session_id not in _sessions:
+        logger.warning(f"Session not found: {session_id}, available: {list(_sessions.keys())}")
         raise HTTPException(status_code=401, detail="Not authenticated")
-    return _sessions[session_id]
+    
+    user_id, created_at = _sessions[session_id]
+    
+    # Check if session expired (24 hours)
+    if datetime.utcnow() - created_at > timedelta(hours=24):
+        del _sessions[session_id]
+        logger.info(f"Session expired: {session_id}")
+        raise HTTPException(status_code=401, detail="Session expired")
+    
+    return user_id
 
 
 @router.get("/login")
 async def login() -> RedirectResponse:
     """Redirect to Spotify authorization page."""
     settings = get_settings()
-    return RedirectResponse(url=settings.spotify_auth_url)
+    auth_url = settings.spotify_auth_url
+    logger.info(f"Redirecting to Spotify auth URL: {auth_url}")
+    return RedirectResponse(url=auth_url)
 
 
 @router.get("/callback")
 async def callback(
-    code: str = Query(...),
+    code: str | None = Query(None),
+    state: str | None = Query(None),
+    error: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
-) -> RedirectResponse:
+) -> dict[str, str]:
     """Handle Spotify OAuth callback.
 
     Exchanges the authorization code for tokens, creates/updates user,
-    and redirects to frontend with session.
+    and returns session ID.
     """
+    logger.info(f"Callback received: code={code}, state={state}, error={error}")
+    
+    if error:
+        logger.error(f"OAuth error: {error}")
+        raise HTTPException(status_code=400, detail=f"OAuth error: {error}")
+    
+    if not code:
+        logger.error("No authorization code provided")
+        raise HTTPException(status_code=400, detail="No authorization code provided")
+    
     settings = get_settings()
     encryption = get_encryption_service()
 
@@ -52,10 +79,12 @@ async def callback(
         # Exchange code for tokens
         spotify = SpotifyService()
         token_data = await spotify.exchange_code_for_tokens(code)
+        logger.info("Successfully exchanged code for tokens")
 
         # Get user profile
         spotify_with_token = SpotifyService(access_token=token_data["access_token"])
         profile = await spotify_with_token.get_current_user()
+        logger.info(f"Got Spotify profile: {profile.get('id')}")
 
         # Check if user exists
         result = await db.execute(
@@ -75,6 +104,7 @@ async def callback(
             user.refresh_token = encrypted_refresh
             user.token_expires_at = token_data["expires_at"]
             user.updated_at = datetime.utcnow()
+            logger.info(f"Updated existing user: {user.id}")
         else:
             # Create new user
             user = User(
@@ -86,21 +116,24 @@ async def callback(
                 token_expires_at=token_data["expires_at"],
             )
             db.add(user)
+            logger.info(f"Created new user for Spotify ID: {profile['id']}")
 
         await db.flush()
+        await db.commit()
+        logger.info(f"Committed user to database: {user.id}")
 
-        # Create session
+        # Create session AFTER user is committed
         import secrets
 
         session_id = secrets.token_urlsafe(32)
-        _sessions[session_id] = user.id
+        _sessions[session_id] = (user.id, datetime.utcnow())
+        logger.info(f"Created session {session_id} for user {user.id}")
 
-        # Redirect to frontend with session
-        return RedirectResponse(
-            url=f"{settings.FRONTEND_URL}?session={session_id}"
-        )
+        # Return session ID as JSON (for frontend to handle redirect)
+        return {"session": session_id}
 
     except Exception as e:
+        logger.exception(f"OAuth callback failed: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Authentication failed: {str(e)}")
 
 

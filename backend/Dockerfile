@@ -28,4 +28,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/api/health || exit 1
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run with HTTPS if certs are available
+CMD ["sh", "-c", "if [ -f /app/certs/localhost+2.pem ] && [ -f /app/certs/localhost+2-key.pem ]; then uvicorn app.main:app --host 0.0.0.0 --port 8000 --ssl-keyfile=/app/certs/localhost+2-key.pem --ssl-certfile=/app/certs/localhost+2.pem; else uvicorn app.main:app --host 0.0.0.0 --port 8000; fi"]
