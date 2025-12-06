@@ -51,17 +51,17 @@ Apply: `alembic upgrade head`
 
 ### File Structure & Responsibilities
 
-| Path | Purpose |
-|------|---------|
-| `app/main.py` | FastAPI app, CORS, lifespan hooks, exception handlers |
-| `app/config.py` | Pydantic settings from `.env` (cached with `@lru_cache`) |
-| `app/database.py` | Async SQLAlchemy engine, Base class, `get_db()` dependency |
-| `app/models/` | SQLAlchemy ORM models (User, Podcast, Playlist, SyncLog) |
-| `app/schemas/` | Pydantic request/response validation schemas |
-| `app/routers/` | API endpoints organized by domain (auth, podcasts, playlists) |
-| `app/services/` | Business logic (Spotify API, encryption, playlist building) |
-| `app/jobs/scheduler.py` | APScheduler for daily playlist updates at 4 AM UTC |
-| `app/utils/holidays.py` | UK public holiday detection for `is_weekend_only` logic |
+| Path                    | Purpose                                                       |
+| ----------------------- | ------------------------------------------------------------- |
+| `app/main.py`           | FastAPI app, CORS, lifespan hooks, exception handlers         |
+| `app/config.py`         | Pydantic settings from `.env` (cached with `@lru_cache`)      |
+| `app/database.py`       | Async SQLAlchemy engine, Base class, `get_db()` dependency    |
+| `app/models/`           | SQLAlchemy ORM models (User, Podcast, Playlist, SyncLog)      |
+| `app/schemas/`          | Pydantic request/response validation schemas                  |
+| `app/routers/`          | API endpoints organized by domain (auth, podcasts, playlists) |
+| `app/services/`         | Business logic (Spotify API, encryption, playlist building)   |
+| `app/jobs/scheduler.py` | APScheduler for daily playlist updates at 4 AM UTC            |
+| `app/utils/holidays.py` | UK public holiday detection for `is_weekend_only` logic       |
 
 ### API Response Pattern
 
@@ -71,12 +71,14 @@ Frontend extracts `items` array using destructuring or indexing.
 ### Core Models & Constraints
 
 **Podcast Categories** (in `app/models/podcast.py`):
+
 - `primary`: Most important podcasts (included in all playlists)
 - `news`: Time-sensitive (only latest unplayed episodes)
 - `background`: Filler content (optional in playlists)
 - `none`: Uncategorized (default)
 
 **Podcast Attributes**:
+
 - `is_sequential`: Story-based, must consume oldest-to-newest
 - `is_weekend_only`: Only added Fri/Sat/Sun or UK holidays (computed in `app/utils/holidays.py`)
 
@@ -107,7 +109,6 @@ Frontend extracts `items` array using destructuring or indexing.
   - `get_saved_shows()`: User's podcast library (pagination via `limit`, `offset`)
   - `get_show_episodes()`: Episodes of a show
   - `create_playlist()` / `add_tracks_to_playlist()`: Playlist management
-  
 - `PlaylistBuilder` (in `app/services/playlist_builder.py`): Builds playlist content based on rules
   - Queries DB for podcasts by category
   - Filters episodes (sequential, weekend-only, unplayed)
@@ -123,26 +124,28 @@ Frontend extracts `items` array using destructuring or indexing.
 
 ### File Structure & Responsibilities
 
-| Path | Purpose |
-|------|---------|
-| `src/api/client.ts` | Axios instance with session interceptor & error handling |
-| `src/api/auth.ts`, `podcasts.ts`, `playlists.ts` | API service functions (one file per domain) |
-| `src/context/AuthContext.tsx` | Global auth state: user, isAuthenticated, login/logout methods |
-| `src/hooks/usePodcasts.ts`, `usePlaylists.ts` | React Query hooks for server state + optimistic updates |
-| `src/components/Layout/` | Header, Sidebar, MainLayout wrapper |
-| `src/components/PodcastTable/` | Podcast list with categorization & attribute toggles |
-| `src/pages/` | Page components (Login, Dashboard, Podcasts, Playlists, Settings) |
-| `src/types/index.ts` | TypeScript interfaces (User, Podcast, Playlist, etc.) |
+| Path                                             | Purpose                                                           |
+| ------------------------------------------------ | ----------------------------------------------------------------- |
+| `src/api/client.ts`                              | Axios instance with session interceptor & error handling          |
+| `src/api/auth.ts`, `podcasts.ts`, `playlists.ts` | API service functions (one file per domain)                       |
+| `src/context/AuthContext.tsx`                    | Global auth state: user, isAuthenticated, login/logout methods    |
+| `src/hooks/usePodcasts.ts`, `usePlaylists.ts`    | React Query hooks for server state + optimistic updates           |
+| `src/components/Layout/`                         | Header, Sidebar, MainLayout wrapper                               |
+| `src/components/PodcastTable/`                   | Podcast list with categorization & attribute toggles              |
+| `src/pages/`                                     | Page components (Login, Dashboard, Podcasts, Playlists, Settings) |
+| `src/types/index.ts`                             | TypeScript interfaces (User, Podcast, Playlist, etc.)             |
 
 ### Authentication & Session Management
 
 **AuthContext** (`src/context/AuthContext.tsx`):
+
 - `useAuth()` hook provides: `user`, `isAuthenticated`, `isLoading`, `login()`, `logout()`, `refetch()`
 - Session check on app load: extracts from URL query (OAuth callback) or localStorage
 - User fetch only triggered if session exists (`enabled: hasSession`)
 - 5-minute stale time for `/api/auth/me` query
 
 **Session Flow:**
+
 1. OAuth callback redirects to `/?session=xxx`
 2. `App.tsx` extracts session from URL, stores in localStorage, clears URL
 3. AuthContext queries `/api/auth/me?session=xxx`
@@ -158,6 +161,7 @@ Frontend extracts `items` array using destructuring or indexing.
 ### Podcast Categorization UI
 
 Component: `src/components/PodcastTable/PodcastTable.tsx`
+
 - Dropdown to set category: `primary`, `news`, `background`, `none`
 - Toggles for `is_sequential`, `is_weekend_only`
 - Tags display current state (color-coded by category)
