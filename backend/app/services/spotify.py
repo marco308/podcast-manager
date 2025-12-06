@@ -274,7 +274,11 @@ class SpotifyService:
             response = await client.get(
                 f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/tracks",
                 headers=self._headers,
-                params={"limit": limit, "offset": offset},
+                params={
+                    "limit": limit,
+                    "offset": offset,
+                    "fields": "items(track(uri,resume_point(fully_played))),next,total",
+                },
             )
             response.raise_for_status()
             return response.json()
