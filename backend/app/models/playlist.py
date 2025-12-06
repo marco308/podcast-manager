@@ -3,7 +3,7 @@
 from datetime import datetime
 from enum import Enum as PyEnum
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Enum
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Enum
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -25,6 +25,9 @@ class Playlist(Base):
     __tablename__ = "playlists"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     spotify_playlist_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     rule_type: Mapped[PlaylistRuleType] = mapped_column(

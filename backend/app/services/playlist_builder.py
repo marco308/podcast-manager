@@ -415,7 +415,9 @@ class PlaylistBuilder:
             List of results for each playlist update.
         """
         result = await self._db.execute(
-            select(Playlist).where(Playlist.is_enabled == True)
+            select(Playlist).where(
+                (Playlist.user_id == self._user.id) & (Playlist.is_enabled == True)
+            )
         )
         playlists = result.scalars().all()
 

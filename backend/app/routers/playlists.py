@@ -25,7 +25,9 @@ async def list_playlists(
     db: AsyncSession = Depends(get_db),
 ) -> PlaylistListResponse:
     """List all managed playlists."""
-    result = await db.execute(select(Playlist).order_by(Playlist.name))
+    result = await db.execute(
+        select(Playlist).where(Playlist.user_id == user_id).order_by(Playlist.name)
+    )
     playlists = result.scalars().all()
 
     return PlaylistListResponse(items=list(playlists), total=len(playlists))
@@ -39,6 +41,7 @@ async def create_playlist(
 ) -> Playlist:
     """Create a new playlist mapping."""
     playlist = Playlist(
+        user_id=user_id,
         name=playlist_data.name,
         spotify_playlist_id=playlist_data.spotify_playlist_id,
         rule_type=PlaylistRuleType(playlist_data.rule_type.value),
@@ -57,7 +60,11 @@ async def get_playlist(
     db: AsyncSession = Depends(get_db),
 ) -> Playlist:
     """Get a playlist by ID."""
-    result = await db.execute(select(Playlist).where(Playlist.id == playlist_id))
+    result = await db.execute(
+        select(Playlist).where(
+            (Playlist.id == playlist_id) & (Playlist.user_id == user_id)
+        )
+    )
     playlist = result.scalar_one_or_none()
 
     if not playlist:
@@ -74,7 +81,11 @@ async def update_playlist(
     db: AsyncSession = Depends(get_db),
 ) -> Playlist:
     """Update playlist configuration."""
-    result = await db.execute(select(Playlist).where(Playlist.id == playlist_id))
+    result = await db.execute(
+        select(Playlist).where(
+            (Playlist.id == playlist_id) & (Playlist.user_id == user_id)
+        )
+    )
     playlist = result.scalar_one_or_none()
 
     if not playlist:
@@ -98,7 +109,11 @@ async def delete_playlist(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
     """Delete a playlist mapping."""
-    result = await db.execute(select(Playlist).where(Playlist.id == playlist_id))
+    result = await db.execute(
+        select(Playlist).where(
+            (Playlist.id == playlist_id) & (Playlist.user_id == user_id)
+        )
+    )
     playlist = result.scalar_one_or_none()
 
     if not playlist:
@@ -117,7 +132,9 @@ async def run_playlist_update(
     """Manually trigger a playlist update."""
     # Get the playlist
     playlist_result = await db.execute(
-        select(Playlist).where(Playlist.id == playlist_id)
+        select(Playlist).where(
+            (Playlist.id == playlist_id) & (Playlist.user_id == user_id)
+        )
     )
     playlist = playlist_result.scalar_one_or_none()
 
