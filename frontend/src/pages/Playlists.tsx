@@ -16,6 +16,8 @@ import {
   Card,
   List,
   InputNumber,
+  Grid,
+  Tooltip,
 } from 'antd';
 import {
   PlusOutlined,
@@ -23,7 +25,6 @@ import {
   ThunderboltOutlined,
   DeleteOutlined,
   EditOutlined,
-  SortAscendingOutlined,
   HolderOutlined,
 } from '@ant-design/icons';
 import type { TableProps } from 'antd';
@@ -34,6 +35,7 @@ import {
   closestCenter,
   KeyboardSensor,
   PointerSensor,
+  TouchSensor,
   useSensor,
   useSensors,
   type DragEndEvent,
@@ -62,6 +64,7 @@ import type { Playlist, PlaylistRuleType, PlaylistCreate, PlaylistUpdate, Podcas
 dayjs.extend(relativeTime);
 
 const { Title, Text } = Typography;
+const { useBreakpoint } = Grid;
 
 const ruleTypeOptions: { value: PlaylistRuleType; label: string; color: string }[] = [
   { value: 'primary', label: 'Primary', color: 'blue' },
@@ -94,7 +97,12 @@ function SortableItem({ podcast, onOrderChange, updatingId }: SortableItemProps)
 
   return (
     <div ref={setNodeRef} style={style}>
-      <List.Item>
+      <List.Item
+        style={{
+          padding: '12px 0',
+          touchAction: 'none',
+        }}
+      >
         <div
           {...attributes}
           {...listeners}
@@ -103,14 +111,16 @@ function SortableItem({ podcast, onOrderChange, updatingId }: SortableItemProps)
             marginRight: 12,
             display: 'flex',
             alignItems: 'center',
+            padding: '8px',
+            touchAction: 'none',
           }}
         >
-          <HolderOutlined style={{ fontSize: 16, color: '#999' }} />
+          <HolderOutlined style={{ fontSize: 20, color: '#999' }} />
         </div>
         <List.Item.Meta
-          title={podcast.name}
+          title={<Text ellipsis style={{ maxWidth: 200 }}>{podcast.name}</Text>}
           description={
-            <Text type="secondary" style={{ fontSize: 12 }}>
+            <Text type="secondary" style={{ fontSize: 12 }} ellipsis>
               {podcast.publisher}
             </Text>
           }
@@ -121,10 +131,9 @@ function SortableItem({ podcast, onOrderChange, updatingId }: SortableItemProps)
           max={999}
           value={podcast.morning_order}
           onChange={(value) => onOrderChange(podcast.spotify_id, value)}
-          placeholder="Order"
+          placeholder="#"
           disabled={updatingId === podcast.spotify_id}
-          prefix={<SortAscendingOutlined />}
-          style={{ width: 120 }}
+          style={{ width: 70 }}
         />
       </List.Item>
     </div>
@@ -153,7 +162,17 @@ function MorningOrderSection() {
   }, [newsPodcasts]);
 
   const sensors = useSensors(
-    useSensor(PointerSensor),
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: {
+        delay: 200,
+        tolerance: 5,
+      },
+    }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     })
@@ -268,6 +287,8 @@ export function Playlists() {
   const deletePlaylist = useDeletePlaylist();
   const runPlaylist = useRunPlaylist();
   const runAllPlaylists = useRunAllPlaylists();
+  const screens = useBreakpoint();
+  const isMobile = !screens.md;
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingPlaylist, setEditingPlaylist] = useState<Playlist | null>(null);
@@ -352,12 +373,29 @@ export function Playlists() {
       title: 'Name',
       dataIndex: 'name',
       key: 'name',
-      render: (name: string) => <Text strong>{name}</Text>,
+      render: (name: string, record: Playlist) => (
+        <div>
+          <Text strong>{name}</Text>
+          {isMobile && (
+            <div style={{ marginTop: 4 }}>
+              <Tag color={ruleTypeOptions.find((o) => o.value === record.rule_type)?.color}>
+                {ruleTypeOptions.find((o) => o.value === record.rule_type)?.label}
+              </Tag>
+              {record.is_enabled ? (
+                <Tag color="success">On</Tag>
+              ) : (
+                <Tag color="default">Off</Tag>
+              )}
+            </div>
+          )}
+        </div>
+      ),
     },
     {
       title: 'Rule Type',
       dataIndex: 'rule_type',
       key: 'rule_type',
+      responsive: ['md'] as const,
       render: (ruleType: PlaylistRuleType) => {
         const option = ruleTypeOptions.find((o) => o.value === ruleType);
         return <Tag color={option?.color}>{option?.label || ruleType}</Tag>;
@@ -367,6 +405,7 @@ export function Playlists() {
       title: 'Spotify Playlist',
       dataIndex: 'spotify_playlist_id',
       key: 'spotify_playlist_id',
+      responsive: ['lg'] as const,
       render: (id: string | null) =>
         id ? (
           <Text code copyable style={{ fontSize: 12 }}>
@@ -380,6 +419,7 @@ export function Playlists() {
       title: 'Enabled',
       dataIndex: 'is_enabled',
       key: 'is_enabled',
+      responsive: ['md'] as const,
       render: (enabled: boolean) =>
         enabled ? (
           <Tag color="success">Enabled</Tag>
@@ -391,6 +431,7 @@ export function Playlists() {
       title: 'Last Updated',
       dataIndex: 'last_updated_at',
       key: 'last_updated_at',
+      responsive: ['xl'] as const,
       render: (date: string | null) => (
         <Text type="secondary">
           {date ? dayjs(date).fromNow() : 'Never'}
@@ -400,21 +441,26 @@ export function Playlists() {
     {
       title: 'Actions',
       key: 'actions',
+      width: isMobile ? 100 : undefined,
       render: (_, record) => (
-        <Space>
-          <Button
-            size="small"
-            icon={<PlayCircleOutlined />}
-            onClick={() => handleRun(record.id)}
-            loading={runPlaylist.isPending}
-          >
-            Run
-          </Button>
-          <Button
-            size="small"
-            icon={<EditOutlined />}
-            onClick={() => openEditModal(record)}
-          />
+        <Space size={isMobile ? 4 : 8}>
+          <Tooltip title="Run playlist">
+            <Button
+              size="small"
+              icon={<PlayCircleOutlined />}
+              onClick={() => handleRun(record.id)}
+              loading={runPlaylist.isPending}
+            >
+              {!isMobile && 'Run'}
+            </Button>
+          </Tooltip>
+          <Tooltip title="Edit">
+            <Button
+              size="small"
+              icon={<EditOutlined />}
+              onClick={() => openEditModal(record)}
+            />
+          </Tooltip>
           <Popconfirm
             title="Delete playlist"
             description="Are you sure you want to delete this playlist mapping?"
@@ -422,7 +468,9 @@ export function Playlists() {
             okText="Delete"
             okButtonProps={{ danger: true }}
           >
-            <Button size="small" icon={<DeleteOutlined />} danger />
+            <Tooltip title="Delete">
+              <Button size="small" icon={<DeleteOutlined />} danger />
+            </Tooltip>
           </Popconfirm>
         </Space>
       ),

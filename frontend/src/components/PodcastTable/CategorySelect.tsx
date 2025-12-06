@@ -1,10 +1,12 @@
 import { Select } from 'antd';
+import type { SizeType } from 'antd/es/config-provider/SizeContext';
 import type { PodcastCategory } from '../../types';
 
 interface CategorySelectProps {
   value: PodcastCategory;
   onChange: (value: PodcastCategory) => void;
   loading?: boolean;
+  size?: SizeType;
 }
 
 const categoryOptions: { value: PodcastCategory; label: string; color: string }[] = [
@@ -14,13 +16,14 @@ const categoryOptions: { value: PodcastCategory; label: string; color: string }[
   { value: 'none', label: 'None', color: '#d9d9d9' },
 ];
 
-export function CategorySelect({ value, onChange, loading }: CategorySelectProps) {
+export function CategorySelect({ value, onChange, loading, size }: CategorySelectProps) {
   return (
     <Select
       value={value}
       onChange={onChange}
       loading={loading}
-      style={{ width: 120 }}
+      size={size}
+      style={{ width: size === 'small' ? 100 : 120 }}
       options={categoryOptions.map((opt) => ({
         value: opt.value,
         label: (

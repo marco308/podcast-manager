@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Table, Avatar, Switch, message, Typography, Space, Tag } from 'antd';
+import { Table, Avatar, Switch, message, Typography, Space, Tag, Grid } from 'antd';
 import type { TableProps } from 'antd';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
@@ -8,6 +8,8 @@ import { CategorySelect } from './CategorySelect';
 import { useUpdatePodcast } from '../../hooks';
 
 dayjs.extend(relativeTime);
+
+const { useBreakpoint } = Grid;
 
 const { Text } = Typography;
 
@@ -19,6 +21,8 @@ interface PodcastTableProps {
 export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
   const updatePodcast = useUpdatePodcast();
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const screens = useBreakpoint();
+  const isMobile = !screens.md;
 
   const handleCategoryChange = async (spotifyId: string, category: PodcastCategory) => {
     setUpdatingId(spotifyId);
@@ -61,23 +65,30 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
       title: 'Podcast',
       key: 'podcast',
       render: (_, record) => (
-        <Space>
+        <Space size={isMobile ? 8 : 12}>
           <Avatar
             className="podcast-avatar"
             src={record.image_url}
-            size={48}
+            size={isMobile ? 40 : 48}
             shape="square"
-            style={{ borderRadius: 8 }}
+            style={{ borderRadius: 8, flexShrink: 0 }}
           >
             {record.name[0]}
           </Avatar>
-          <div style={{ minWidth: 0 }}>
+          <div style={{ minWidth: 0, flex: 1 }}>
             <Text className="podcast-name" strong style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {record.name}
             </Text>
             <Text type="secondary" style={{ fontSize: 12 }}>
               {record.publisher}
             </Text>
+            {isMobile && (
+              <div style={{ marginTop: 4 }}>
+                <Tag color="default" style={{ marginRight: 4 }}>{record.total_episodes} eps</Tag>
+                {record.is_sequential && <Tag color="blue">Seq</Tag>}
+                {record.is_weekend_only && <Tag color="purple">Wknd</Tag>}
+              </div>
+            )}
           </div>
         </Space>
       ),
@@ -87,6 +98,7 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
       dataIndex: 'total_episodes',
       key: 'total_episodes',
       align: 'center',
+      responsive: ['md'] as const,
       render: (count: number) => (
         <Tag color="default">{count}</Tag>
       ),
@@ -94,11 +106,13 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
     {
       title: 'Category',
       key: 'category',
+      width: isMobile ? 100 : undefined,
       render: (_, record) => (
         <CategorySelect
           value={record.category}
           onChange={(value) => handleCategoryChange(record.spotify_id, value)}
           loading={updatingId === record.spotify_id}
+          size={isMobile ? 'small' : 'middle'}
         />
       ),
       filters: [
@@ -113,6 +127,7 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
       title: 'Sequential',
       key: 'is_sequential',
       align: 'center',
+      responsive: ['lg'] as const,
       render: (_, record) => (
         <Switch
           checked={record.is_sequential}
@@ -131,6 +146,7 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
       title: 'Weekend Only',
       key: 'is_weekend_only',
       align: 'center',
+      responsive: ['lg'] as const,
       render: (_, record) => (
         <Switch
           checked={record.is_weekend_only}
@@ -148,6 +164,7 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
     {
       title: 'Last Synced',
       key: 'last_synced_at',
+      responsive: ['xl'] as const,
       render: (_, record) => (
         <Text type="secondary" style={{ fontSize: 12 }}>
           {record.last_synced_at

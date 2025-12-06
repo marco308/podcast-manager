@@ -20,8 +20,8 @@ body {
   min-height: 100vh;
 }
 
-/* Responsive tweaks */
-@media (max-width: 600px) {
+/* Responsive tweaks for mobile */
+@media (max-width: 768px) {
   .app-header {
     padding: 0 12px !important;
   }
@@ -35,13 +35,85 @@ body {
     padding: 12px !important;
   }
 
+  /* Content area reduced padding */
+  .ant-layout-content {
+    padding: 12px !important;
+  }
+
   .ant-card {
     border-radius: 6px;
+  }
+
+  /* Page titles */
+  .ant-typography h4 {
+    font-size: 18px !important;
+  }
+
+  /* Modal full width on mobile */
+  .ant-modal {
+    max-width: calc(100vw - 32px) !important;
+    margin: 16px auto !important;
+  }
+
+  .ant-modal-content {
+    border-radius: 12px;
+  }
+
+  /* Buttons in header areas - stack on mobile */
+  .ant-space-wrap {
+    justify-content: flex-start;
+  }
+
+  /* Form items tighter spacing */
+  .ant-form-item {
+    margin-bottom: 16px;
+  }
+
+  /* Pagination simplified */
+  .ant-pagination-total-text {
+    display: none;
+  }
+
+  .ant-pagination-options {
+    display: none;
+  }
+}
+
+/* Extra small screens */
+@media (max-width: 480px) {
+  .app-header {
+    padding: 0 8px !important;
+  }
+
+  .ant-layout>.ant-layout {
+    padding: 8px !important;
+  }
+
+  .ant-layout-content {
+    padding: 8px !important;
+  }
+
+  /* Table even more compact */
+  .ant-table-thead>tr>th,
+  .ant-table-tbody>tr>td {
+    padding: 8px !important;
+  }
+
+  /* Cards tighter padding */
+  .ant-card-body {
+    padding: 12px !important;
+  }
+
+  /* Smaller tags */
+  .ant-tag {
+    font-size: 11px;
+    padding: 0 4px;
+    margin-inline-end: 4px;
   }
 }
 
 /* Podcast table mobile tweaks */
-@media (max-width: 600px) {
+@media (max-width: 768px) {
   .podcast-avatar {
     width: 40px !important;
     height: 40px !important;
@@ -55,6 +127,36 @@ body {
   .ant-table-thead>tr>th,
   .ant-table-tbody>tr>td {
     padding: 8px 12px;
+  }
+
+  /* Category select narrower on mobile */
+  .ant-select {
+    min-width: unset !important;
+  }
+}
+
+/* Touch-friendly improvements */
+@media (pointer: coarse) {
+  /* Larger touch targets for switches */
+  .ant-switch {
+    min-width: 44px;
+    min-height: 24px;
+  }
+
+  /* Larger touch targets for buttons */
+  .ant-btn-sm {
+    min-height: 32px;
+    min-width: 32px;
+  }
+
+  /* Better tap targets for list items */
+  .ant-list-item {
+    min-height: 48px;
+  }
+
+  /* Improve dropdown trigger area */
+  .ant-dropdown-trigger {
+    padding: 8px;
   }
 }
 
