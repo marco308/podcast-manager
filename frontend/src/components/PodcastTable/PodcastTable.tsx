@@ -1,6 +1,7 @@
-import { useState } from 'react';
-import { Table, Avatar, Switch, message, Typography, Space, Tag, Grid } from 'antd';
+import { useState, useEffect } from 'react';
+import { Table, Avatar, Switch, message, Typography, Space, Tag, Grid, Drawer, Form, Divider, Card, Segmented, Empty } from 'antd';
 import type { TableProps } from 'antd';
+import { RightOutlined, AppstoreOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import type { Podcast, PodcastCategory } from '../../types';
@@ -10,7 +11,6 @@ import { useUpdatePodcast } from '../../hooks';
 dayjs.extend(relativeTime);
 
 const { useBreakpoint } = Grid;
-
 const { Text } = Typography;
 
 interface PodcastTableProps {
@@ -18,11 +18,31 @@ interface PodcastTableProps {
   loading?: boolean;
 }
 
+type ViewMode = 'cards' | 'table';
+
 export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
   const updatePodcast = useUpdatePodcast();
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [selectedPodcast, setSelectedPodcast] = useState<Podcast | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const screens = useBreakpoint();
   const isMobile = !screens.md;
+  const [viewMode, setViewMode] = useState<ViewMode>('cards');
+
+  // Default to cards on mobile, table on desktop
+  useEffect(() => {
+    setViewMode(isMobile ? 'cards' : 'table');
+  }, [isMobile]);
+
+  const openPodcastDrawer = (podcast: Podcast) => {
+    setSelectedPodcast(podcast);
+    setDrawerOpen(true);
+  };
+
+  const closePodcastDrawer = () => {
+    setDrawerOpen(false);
+    setSelectedPodcast(null);
+  };
 
   const handleCategoryChange = async (spotifyId: string, category: PodcastCategory) => {
     setUpdatingId(spotifyId);
@@ -65,11 +85,11 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
       title: 'Podcast',
       key: 'podcast',
       render: (_, record) => (
-        <Space size={isMobile ? 8 : 12}>
+        <Space size={12}>
           <Avatar
             className="podcast-avatar"
             src={record.image_url}
-            size={isMobile ? 40 : 48}
+            size={48}
             shape="square"
             style={{ borderRadius: 8, flexShrink: 0 }}
           >
@@ -82,13 +102,6 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
             <Text type="secondary" style={{ fontSize: 12 }}>
               {record.publisher}
             </Text>
-            {isMobile && (
-              <div style={{ marginTop: 4 }}>
-                <Tag color="default" style={{ marginRight: 4 }}>{record.total_episodes} eps</Tag>
-                {record.is_sequential && <Tag color="blue">Seq</Tag>}
-                {record.is_weekend_only && <Tag color="purple">Wknd</Tag>}
-              </div>
-            )}
           </div>
         </Space>
       ),
@@ -98,7 +111,7 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
       dataIndex: 'total_episodes',
       key: 'total_episodes',
       align: 'center',
-      responsive: ['md'] as const,
+      width: 100,
       render: (count: number) => (
         <Tag color="default">{count}</Tag>
       ),
@@ -106,13 +119,12 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
     {
       title: 'Category',
       key: 'category',
-      width: isMobile ? 100 : undefined,
+      width: 130,
       render: (_, record) => (
         <CategorySelect
           value={record.category}
           onChange={(value) => handleCategoryChange(record.spotify_id, value)}
           loading={updatingId === record.spotify_id}
-          size={isMobile ? 'small' : 'middle'}
         />
       ),
       filters: [
@@ -127,7 +139,7 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
       title: 'Sequential',
       key: 'is_sequential',
       align: 'center',
-      responsive: ['lg'] as const,
+      width: 100,
       render: (_, record) => (
         <Switch
           checked={record.is_sequential}
@@ -146,7 +158,7 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
       title: 'Weekend Only',
       key: 'is_weekend_only',
       align: 'center',
-      responsive: ['lg'] as const,
+      width: 120,
       render: (_, record) => (
         <Switch
           checked={record.is_weekend_only}
@@ -164,7 +176,7 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
     {
       title: 'Last Synced',
       key: 'last_synced_at',
-      responsive: ['xl'] as const,
+      width: 120,
       render: (_, record) => (
         <Text type="secondary" style={{ fontSize: 12 }}>
           {record.last_synced_at
@@ -180,21 +192,205 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
     },
   ];
 
+  // Card view for mobile
+  const renderCardView = () => {
+    if (podcasts.length === 0) {
+      return <Empty description="No podcasts found" />;
+    }
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {podcasts.map((podcast) => (
+          <Card
+            key={podcast.spotify_id}
+            size="small"
+            hoverable
+            onClick={() => openPodcastDrawer(podcast)}
+            style={{ cursor: 'pointer', overflow: 'hidden' }}
+            styles={{ body: { padding: 12 } }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <Avatar
+                src={podcast.image_url}
+                size={48}
+                shape="square"
+                style={{ borderRadius: 8, flexShrink: 0 }}
+              >
+                {podcast.name[0]}
+              </Avatar>
+              <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+                <div style={{
+                  fontWeight: 600,
+                  marginBottom: 2,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}>
+                  {podcast.name}
+                </div>
+                <div style={{
+                  fontSize: 12,
+                  color: 'rgba(0, 0, 0, 0.45)',
+                  marginBottom: 4,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}>
+                  {podcast.publisher}
+                </div>
+                <Space size={4} wrap>
+                  <Tag
+                    color={
+                      podcast.category === 'primary' ? 'blue' :
+                      podcast.category === 'news' ? 'green' :
+                      podcast.category === 'background' ? 'purple' : 'default'
+                    }
+                    style={{ margin: 0 }}
+                  >
+                    {podcast.category}
+                  </Tag>
+                  <Tag color="default" style={{ margin: 0 }}>{podcast.total_episodes} eps</Tag>
+                  {podcast.is_sequential && <Tag color="blue" style={{ margin: 0 }}>Seq</Tag>}
+                  {podcast.is_weekend_only && <Tag color="purple" style={{ margin: 0 }}>Wknd</Tag>}
+                </Space>
+              </div>
+              <RightOutlined style={{ color: '#999', fontSize: 12, flexShrink: 0 }} />
+            </div>
+          </Card>
+        ))}
+      </div>
+    );
+  };
+
   return (
-    <Table
-      dataSource={podcasts}
-      columns={columns}
-      rowKey="spotify_id"
-      loading={loading}
-      pagination={{
-        pageSize: 20,
-        showSizeChanger: true,
-        showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} podcasts`,
-      }}
-      size="middle"
-      rowClassName={(record) => {
-        return record.category !== 'none' ? `category-${record.category}` : '';
-      }}
-    />
+    <>
+      {/* View Toggle */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+        <Segmented
+          value={viewMode}
+          onChange={(value) => setViewMode(value as ViewMode)}
+          options={[
+            { value: 'cards', icon: <AppstoreOutlined /> },
+            { value: 'table', icon: <UnorderedListOutlined /> },
+          ]}
+          size={isMobile ? 'small' : 'middle'}
+        />
+      </div>
+
+      {/* Card View */}
+      {viewMode === 'cards' && renderCardView()}
+
+      {/* Table View */}
+      {viewMode === 'table' && (
+        <div style={{ overflowX: 'auto' }}>
+          <Table
+            dataSource={podcasts}
+            columns={columns}
+            rowKey="spotify_id"
+            loading={loading}
+            pagination={{
+              pageSize: 20,
+              showSizeChanger: true,
+              showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} podcasts`,
+            }}
+            size="middle"
+            rowClassName={(record) => {
+              return record.category !== 'none' ? `category-${record.category}` : '';
+            }}
+          />
+        </div>
+      )}
+
+      {/* Settings Drawer */}
+      <Drawer
+        title="Podcast Settings"
+        placement="bottom"
+        onClose={closePodcastDrawer}
+        open={drawerOpen}
+        height="auto"
+        styles={{
+          body: { paddingBottom: 24 },
+        }}
+      >
+        {selectedPodcast && (
+          <div>
+            <Space style={{ marginBottom: 16 }}>
+              <Avatar
+                src={selectedPodcast.image_url}
+                size={56}
+                shape="square"
+                style={{ borderRadius: 8 }}
+              >
+                {selectedPodcast.name[0]}
+              </Avatar>
+              <div>
+                <Text strong style={{ fontSize: 16, display: 'block' }}>
+                  {selectedPodcast.name}
+                </Text>
+                <Text type="secondary">{selectedPodcast.publisher}</Text>
+              </div>
+            </Space>
+
+            <Divider style={{ margin: '16px 0' }} />
+
+            <Form layout="vertical">
+              <Form.Item label="Category" style={{ marginBottom: 16 }}>
+                <CategorySelect
+                  value={selectedPodcast.category}
+                  onChange={(value) => {
+                    handleCategoryChange(selectedPodcast.spotify_id, value);
+                    setSelectedPodcast({ ...selectedPodcast, category: value });
+                  }}
+                  loading={updatingId === selectedPodcast.spotify_id}
+                />
+              </Form.Item>
+
+              <Form.Item
+                label="Sequential"
+                extra="Play episodes in order (oldest first)"
+                style={{ marginBottom: 16 }}
+              >
+                <Switch
+                  checked={selectedPodcast.is_sequential}
+                  onChange={(checked) => {
+                    handleSequentialChange(selectedPodcast.spotify_id, checked);
+                    setSelectedPodcast({ ...selectedPodcast, is_sequential: checked });
+                  }}
+                  loading={updatingId === selectedPodcast.spotify_id}
+                />
+              </Form.Item>
+
+              <Form.Item
+                label="Weekend Only"
+                extra="Only add to playlists on weekends/holidays"
+                style={{ marginBottom: 16 }}
+              >
+                <Switch
+                  checked={selectedPodcast.is_weekend_only}
+                  onChange={(checked) => {
+                    handleWeekendOnlyChange(selectedPodcast.spotify_id, checked);
+                    setSelectedPodcast({ ...selectedPodcast, is_weekend_only: checked });
+                  }}
+                  loading={updatingId === selectedPodcast.spotify_id}
+                />
+              </Form.Item>
+
+              <Divider style={{ margin: '16px 0' }} />
+
+              <Space direction="vertical" size={4}>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {selectedPodcast.total_episodes} episodes
+                </Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  Last synced: {selectedPodcast.last_synced_at
+                    ? dayjs(selectedPodcast.last_synced_at).fromNow()
+                    : 'Never'}
+                </Text>
+              </Space>
+            </Form>
+          </div>
+        )}
+      </Drawer>
+    </>
   );
 }
