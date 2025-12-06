@@ -446,8 +446,6 @@ export function Playlists() {
 
   return (
     <div>
-      <MorningOrderSection />
-
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <div>
           <Title level={4} style={{ marginBottom: 4 }}>Playlists</Title>
@@ -475,6 +473,8 @@ export function Playlists() {
         rowKey="id"
         pagination={false}
       />
+
+      <MorningOrderSection />
 
       <Modal
         title={editingPlaylist ? 'Edit Playlist' : 'Add Playlist'}
