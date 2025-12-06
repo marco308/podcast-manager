@@ -20,6 +20,7 @@ export function Header() {
 
   return (
     <AntHeader
+      className="app-header"
       style={{
         display: 'flex',
         alignItems: 'center',
@@ -40,7 +41,7 @@ export function Header() {
         <Dropdown menu={{ items: menuItems }} placement="bottomRight">
           <Space style={{ cursor: 'pointer' }}>
             <Avatar icon={<UserOutlined />} />
-            <Text>{user.display_name || user.spotify_id}</Text>
+            <Text className="header-username">{user.display_name || user.spotify_id}</Text>
           </Space>
         </Dropdown>
       )}

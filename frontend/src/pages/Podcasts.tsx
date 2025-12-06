@@ -37,21 +37,23 @@ export function Podcasts() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
+        <div style={{ minWidth: 0 }}>
           <Title level={4} style={{ marginBottom: 4 }}>Podcasts</Title>
           <Text type="secondary">
             Manage your podcast subscriptions and assign categories
           </Text>
         </div>
-        <Button
-          type="primary"
-          icon={<SyncOutlined spin={syncPodcasts.isPending} />}
-          onClick={handleSync}
-          loading={syncPodcasts.isPending}
-        >
-          Sync from Spotify
-        </Button>
+        <div>
+          <Button
+            type="primary"
+            icon={<SyncOutlined spin={syncPodcasts.isPending} />}
+            onClick={handleSync}
+            loading={syncPodcasts.isPending}
+          >
+            Sync from Spotify
+          </Button>
+        </div>
       </div>
 
       {noPodcasts ? (
@@ -77,7 +79,9 @@ export function Podcasts() {
           showIcon
         />
       ) : (
-        <PodcastTable podcasts={podcasts} loading={isLoading} />
+        <div style={{ overflowX: 'auto' }}>
+          <PodcastTable podcasts={podcasts} loading={isLoading} />
+        </div>
       )}
     </div>
   );

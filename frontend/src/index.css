@@ -20,6 +20,44 @@ body {
   min-height: 100vh;
 }
 
+/* Responsive tweaks */
+@media (max-width: 600px) {
+  .app-header {
+    padding: 0 12px !important;
+  }
+
+  .header-username {
+    display: none;
+  }
+
+  /* Reduce content padding on small screens */
+  .ant-layout>.ant-layout {
+    padding: 12px !important;
+  }
+
+  .ant-card {
+    border-radius: 6px;
+  }
+}
+
+/* Podcast table mobile tweaks */
+@media (max-width: 600px) {
+  .podcast-avatar {
+    width: 40px !important;
+    height: 40px !important;
+  }
+
+  .podcast-name {
+    font-size: 14px;
+  }
+
+  /* Make table controls and cells more compact */
+  .ant-table-thead>tr>th,
+  .ant-table-tbody>tr>td {
+    padding: 8px 12px;
+  }
+}
+
 /* Remove default focus outlines, Ant Design handles this */
 *:focus {
   outline: none;

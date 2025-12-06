@@ -60,10 +60,10 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
     {
       title: 'Podcast',
       key: 'podcast',
-      width: 400,
       render: (_, record) => (
         <Space>
           <Avatar
+            className="podcast-avatar"
             src={record.image_url}
             size={48}
             shape="square"
@@ -71,8 +71,8 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
           >
             {record.name[0]}
           </Avatar>
-          <div>
-            <Text strong style={{ display: 'block' }}>
+          <div style={{ minWidth: 0 }}>
+            <Text className="podcast-name" strong style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {record.name}
             </Text>
             <Text type="secondary" style={{ fontSize: 12 }}>
@@ -86,7 +86,6 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
       title: 'Episodes',
       dataIndex: 'total_episodes',
       key: 'total_episodes',
-      width: 100,
       align: 'center',
       render: (count: number) => (
         <Tag color="default">{count}</Tag>
@@ -95,7 +94,6 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
     {
       title: 'Category',
       key: 'category',
-      width: 140,
       render: (_, record) => (
         <CategorySelect
           value={record.category}
@@ -114,7 +112,6 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
     {
       title: 'Sequential',
       key: 'is_sequential',
-      width: 100,
       align: 'center',
       render: (_, record) => (
         <Switch
@@ -133,7 +130,6 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
     {
       title: 'Weekend Only',
       key: 'is_weekend_only',
-      width: 120,
       align: 'center',
       render: (_, record) => (
         <Switch
@@ -152,7 +148,6 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
     {
       title: 'Last Synced',
       key: 'last_synced_at',
-      width: 140,
       render: (_, record) => (
         <Text type="secondary" style={{ fontSize: 12 }}>
           {record.last_synced_at

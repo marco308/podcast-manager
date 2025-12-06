@@ -446,33 +446,37 @@ export function Playlists() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
+        <div style={{ minWidth: 0 }}>
           <Title level={4} style={{ marginBottom: 4 }}>Playlists</Title>
           <Text type="secondary">
             Manage your automated playlist mappings
           </Text>
         </div>
-        <Space>
-          <Button
-            icon={<ThunderboltOutlined />}
-            onClick={handleRunAll}
-            loading={runAllPlaylists.isPending}
-          >
-            Update All
-          </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>
-            Add Playlist
-          </Button>
-        </Space>
+        <div>
+          <Space wrap>
+            <Button
+              icon={<ThunderboltOutlined />}
+              onClick={handleRunAll}
+              loading={runAllPlaylists.isPending}
+            >
+              Update All
+            </Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>
+              Add Playlist
+            </Button>
+          </Space>
+        </div>
       </div>
 
-      <Table
-        dataSource={playlists}
-        columns={columns}
-        rowKey="id"
-        pagination={false}
-      />
+      <div style={{ overflowX: 'auto' }}>
+        <Table
+          dataSource={playlists}
+          columns={columns}
+          rowKey="id"
+          pagination={false}
+        />
+      </div>
 
       <MorningOrderSection />
 

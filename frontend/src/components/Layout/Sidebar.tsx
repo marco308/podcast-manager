@@ -44,6 +44,8 @@ export function Sidebar() {
   return (
     <Sider
       width={200}
+      breakpoint="md"
+      collapsedWidth={0}
       style={{
         background: '#fff',
         borderRight: '1px solid #f0f0f0',
