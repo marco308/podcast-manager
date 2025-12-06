@@ -109,7 +109,7 @@ class PlaylistBuilder:
             max_episodes: Maximum number of episodes to fetch.
 
         Returns:
-            List of unplayed episodes.
+            List of unplayed episodes (excluding subscriber-only/restricted content).
         """
         spotify = await self._get_spotify_client()
 
@@ -126,9 +126,21 @@ class PlaylistBuilder:
             if not ep:
                 continue
 
+            # Skip episodes that are not playable (restricted/subscriber-only)
+            if not ep.get("is_playable", True):
+                logger.debug(f"Skipping non-playable episode: {ep.get('name')}")
+                continue
+
+            # Skip episodes with restrictions
+            restrictions = ep.get("restrictions", {})
+            if restrictions and restrictions.get("reason"):
+                logger.debug(f"Skipping restricted episode: {ep.get('name')} - Reason: {restrictions.get('reason')}")
+                continue
+
             # Check resume_point for playback status
             resume_point = ep.get("resume_point", {})
             fully_played = resume_point.get("fully_played", False)
+
 
             if not fully_played:
                 unplayed.append(
