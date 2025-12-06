@@ -56,11 +56,11 @@ async def callback(
     state: str | None = Query(None),
     error: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
-) -> dict[str, str]:
+) -> RedirectResponse:
     """Handle Spotify OAuth callback.
 
     Exchanges the authorization code for tokens, creates/updates user,
-    and returns session ID.
+    then redirects to the frontend with the session ID in the query string.
     """
     logger.info(f"Callback received: code={code}, state={state}, error={error}")
     
@@ -129,8 +129,11 @@ async def callback(
         _sessions[session_id] = (user.id, datetime.utcnow())
         logger.info(f"Created session {session_id} for user {user.id}")
 
-        # Return session ID as JSON (for frontend to handle redirect)
-        return {"session": session_id}
+        # Redirect the browser back to the frontend with the session ID
+        frontend_base = settings.FRONTEND_URL.rstrip("/")
+        redirect_url = f"{frontend_base}/?session={session_id}"
+        logger.info(f"Redirecting to frontend with session: {redirect_url}")
+        return RedirectResponse(url=redirect_url)
 
     except Exception as e:
         logger.exception(f"OAuth callback failed: {str(e)}")
