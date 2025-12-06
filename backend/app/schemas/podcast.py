@@ -35,6 +35,7 @@ class PodcastResponse(PodcastBase):
     category: PodcastCategory
     is_sequential: bool
     is_weekend_only: bool
+    morning_order: int | None
     last_synced_at: datetime | None
     created_at: datetime
     updated_at: datetime
@@ -46,6 +47,7 @@ class PodcastUpdate(BaseModel):
     category: PodcastCategory | None = None
     is_sequential: bool | None = None
     is_weekend_only: bool | None = None
+    morning_order: int | None = None
 
 
 class PodcastListResponse(BaseModel):

@@ -22,6 +22,7 @@ export interface Podcast {
   category: PodcastCategory;
   is_sequential: boolean;
   is_weekend_only: boolean;
+  morning_order: number | null;
   last_synced_at: string | null;
   created_at: string;
   updated_at: string;
@@ -31,6 +32,7 @@ export interface PodcastUpdate {
   category?: PodcastCategory;
   is_sequential?: boolean;
   is_weekend_only?: boolean;
+  morning_order?: number | null;
 }
 
 // Playlist types

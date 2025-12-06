@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Typography,
   Button,
@@ -13,6 +13,9 @@ import {
   message,
   Popconfirm,
   Alert,
+  Card,
+  List,
+  InputNumber,
 } from 'antd';
 import {
   PlusOutlined,
@@ -20,10 +23,29 @@ import {
   ThunderboltOutlined,
   DeleteOutlined,
   EditOutlined,
+  SortAscendingOutlined,
+  HolderOutlined,
 } from '@ant-design/icons';
 import type { TableProps } from 'antd';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import {
   usePlaylists,
   useCreatePlaylist,
@@ -31,9 +53,11 @@ import {
   useDeletePlaylist,
   useRunPlaylist,
   useRunAllPlaylists,
+  usePodcasts,
+  useUpdatePodcast,
 } from '../hooks';
 import { LoadingSpinner } from '../components';
-import type { Playlist, PlaylistRuleType, PlaylistCreate, PlaylistUpdate } from '../types';
+import type { Playlist, PlaylistRuleType, PlaylistCreate, PlaylistUpdate, Podcast } from '../types';
 
 dayjs.extend(relativeTime);
 
@@ -45,6 +69,197 @@ const ruleTypeOptions: { value: PlaylistRuleType; label: string; color: string }
   { value: 'morning', label: 'Morning', color: 'orange' },
   { value: 'background', label: 'Background', color: 'purple' },
 ];
+
+interface SortableItemProps {
+  podcast: Podcast;
+  onOrderChange: (spotifyId: string, order: number | null) => void;
+  updatingId: string | null;
+}
+
+function SortableItem({ podcast, onOrderChange, updatingId }: SortableItemProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: podcast.spotify_id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style}>
+      <List.Item>
+        <div
+          {...attributes}
+          {...listeners}
+          style={{
+            cursor: 'grab',
+            marginRight: 12,
+            display: 'flex',
+            alignItems: 'center',
+          }}
+        >
+          <HolderOutlined style={{ fontSize: 16, color: '#999' }} />
+        </div>
+        <List.Item.Meta
+          title={podcast.name}
+          description={
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {podcast.publisher}
+            </Text>
+          }
+        />
+        <InputNumber
+          size="small"
+          min={1}
+          max={999}
+          value={podcast.morning_order}
+          onChange={(value) => onOrderChange(podcast.spotify_id, value)}
+          placeholder="Order"
+          disabled={updatingId === podcast.spotify_id}
+          prefix={<SortAscendingOutlined />}
+          style={{ width: 120 }}
+        />
+      </List.Item>
+    </div>
+  );
+}
+
+function MorningOrderSection() {
+  const { data: newsPodcasts, isLoading } = usePodcasts('news');
+  const updatePodcast = useUpdatePodcast();
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [localPodcasts, setLocalPodcasts] = useState<Podcast[]>([]);
+
+  // Update local state when data changes
+  useEffect(() => {
+    if (newsPodcasts) {
+      const sorted = [...newsPodcasts].sort((a, b) => {
+        if (a.morning_order === null && b.morning_order === null) {
+          return a.name.localeCompare(b.name);
+        }
+        if (a.morning_order === null) return 1;
+        if (b.morning_order === null) return -1;
+        return a.morning_order - b.morning_order;
+      });
+      setLocalPodcasts(sorted);
+    }
+  }, [newsPodcasts]);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (!over || active.id === over.id) {
+      return;
+    }
+
+    const oldIndex = localPodcasts.findIndex((p) => p.spotify_id === active.id);
+    const newIndex = localPodcasts.findIndex((p) => p.spotify_id === over.id);
+
+    const newOrder = arrayMove(localPodcasts, oldIndex, newIndex);
+    setLocalPodcasts(newOrder);
+
+    // Update morning_order for all affected podcasts
+    try {
+      const updates = newOrder.map((podcast, index) => ({
+        spotifyId: podcast.spotify_id,
+        order: index + 1,
+      }));
+
+      // Batch update all podcasts
+      await Promise.all(
+        updates.map((update) =>
+          updatePodcast.mutateAsync({
+            spotifyId: update.spotifyId,
+            data: { morning_order: update.order },
+          })
+        )
+      );
+
+      message.success('Order updated');
+    } catch {
+      message.error('Failed to update order');
+      // Revert on error
+      if (newsPodcasts) {
+        setLocalPodcasts(newsPodcasts);
+      }
+    }
+  };
+
+  const handleOrderChange = async (spotifyId: string, order: number | null) => {
+    setUpdatingId(spotifyId);
+    try {
+      await updatePodcast.mutateAsync({ spotifyId, data: { morning_order: order } });
+      message.success('Morning order updated');
+    } catch {
+      message.error('Failed to update order');
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  if (isLoading) {
+    return <LoadingSpinner tip="Loading news podcasts..." />;
+  }
+
+  if (!newsPodcasts || newsPodcasts.length === 0) {
+    return (
+      <Card title="Morning Playlist Order" style={{ marginBottom: 24 }}>
+        <Text type="secondary">
+          No NEWS category podcasts found. Categorize podcasts as NEWS to set morning order.
+        </Text>
+      </Card>
+    );
+  }
+
+  return (
+    <Card
+      title="Morning Playlist Order"
+      style={{ marginBottom: 24 }}
+      extra={
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          Drag to reorder or enter numbers manually
+        </Text>
+      }
+    >
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleDragEnd}
+      >
+        <SortableContext
+          items={localPodcasts.map((p) => p.spotify_id)}
+          strategy={verticalListSortingStrategy}
+        >
+          <List
+            dataSource={localPodcasts}
+            renderItem={(podcast) => (
+              <SortableItem
+                key={podcast.spotify_id}
+                podcast={podcast}
+                onOrderChange={handleOrderChange}
+                updatingId={updatingId}
+              />
+            )}
+          />
+        </SortableContext>
+      </DndContext>
+    </Card>
+  );
+}
 
 export function Playlists() {
   const { data: playlists, isLoading, error } = usePlaylists();
@@ -231,6 +446,8 @@ export function Playlists() {
 
   return (
     <div>
+      <MorningOrderSection />
+
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <div>
           <Title level={4} style={{ marginBottom: 4 }}>Playlists</Title>

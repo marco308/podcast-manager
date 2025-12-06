@@ -232,16 +232,49 @@ class PlaylistBuilder:
         return [ep.uri for ep in latest_episodes]
 
     async def build_morning_playlist(self) -> list[str]:
-        """Build morning playlist: subset of news playlist for morning listening.
-
-        This is essentially the same as news playlist but could be customized
-        with specific ordering or time limits.
+        """Build morning playlist: latest episode from NEWS podcasts, ordered by morning_order.
 
         Returns:
-            List of episode URIs for the playlist.
+            List of episode URIs ordered by user preference (morning_order), then release date.
         """
-        # Morning playlist is a subset of news - same logic for now
-        return await self.build_news_playlist()
+        podcasts = await self._get_podcasts_by_category(PodcastCategory.NEWS)
+        is_weekend = is_weekend_or_holiday()
+
+        latest_episodes: list[tuple[Episode, int | None]] = []  # (episode, morning_order)
+
+        for podcast in podcasts:
+            # Skip weekend-only podcasts on weekdays
+            if podcast.is_weekend_only and not is_weekend:
+                continue
+
+            episodes = await self._get_unplayed_episodes(podcast, max_episodes=10)
+
+            if episodes:
+                # Sort by release date descending and take the newest
+                sorted_eps = self._sort_episodes(episodes, sequential=False)
+                latest_episodes.append((sorted_eps[0], podcast.morning_order))
+
+        # Sort by morning_order (nulls last), then by release date (newest first)
+        # Note: release_date is an ISO string (YYYY-MM-DD), so reverse=True sorts newest first
+        latest_episodes.sort(
+            key=lambda x: (
+                x[1] if x[1] is not None else float('inf'),  # morning_order (nulls last)
+                x[0].release_date or ""  # release date as string (will be reversed)
+            ),
+            reverse=False  # Don't reverse - we want ascending order for morning_order
+        )
+        
+        # Now reverse only the episodes with the same morning_order by release_date
+        # Group by morning_order and sort each group by release_date descending
+        from itertools import groupby
+        sorted_by_order = []
+        for key, group in groupby(latest_episodes, key=lambda x: x[1] if x[1] is not None else float('inf')):
+            group_list = list(group)
+            # Sort this group by release_date descending (newest first)
+            group_list.sort(key=lambda x: x[0].release_date or "", reverse=True)
+            sorted_by_order.extend(group_list)
+
+        return [ep.uri for ep, _ in sorted_by_order]
 
     async def build_background_playlist(self) -> list[str]:
         """Build background playlist: unplayed episodes from background podcasts.

@@ -111,6 +111,8 @@ async def update_podcast(
         podcast.is_sequential = update_data.is_sequential
     if update_data.is_weekend_only is not None:
         podcast.is_weekend_only = update_data.is_weekend_only
+    if update_data.morning_order is not None:
+        podcast.morning_order = update_data.morning_order
 
     podcast.updated_at = datetime.utcnow()
 
