@@ -51,20 +51,70 @@ export function Settings() {
             <Tag color="green" style={{ marginLeft: 8 }}>v{APP_VERSION}</Tag>
           </div>
           <Paragraph style={{ marginBottom: 0 }}>
-            Automatically organizes your podcast episodes into smart playlists based on your preferences.
+            A powerful Spotify podcast organizer that automatically creates and maintains smart playlists
+            based on your listening preferences and custom rules.
           </Paragraph>
+
+          <Divider style={{ margin: '12px 0' }}>
+            <Text strong>Features</Text>
+          </Divider>
+
+          <div>
+            <Text strong style={{ fontSize: 14 }}>🎯 Smart Categorization</Text>
+            <Paragraph style={{ marginTop: 8, marginBottom: 0 }}>
+              <Text type="secondary">
+                <Text strong>Primary</Text> — Your main podcasts, all unplayed episodes
+                <br />
+                <Text strong>News</Text> — Time-sensitive content, only the latest episode per show
+                <br />
+                <Text strong>Background</Text> — Casual listening content, all unplayed episodes
+                <br />
+                <Text strong>Morning</Text> — Custom morning routine playlists
+              </Text>
+            </Paragraph>
+          </div>
+
+          <div>
+            <Text strong style={{ fontSize: 14 }}>⚙️ Podcast Attributes</Text>
+            <Paragraph style={{ marginTop: 8, marginBottom: 0 }}>
+              <Text type="secondary">
+                <Text strong>Sequential</Text> — Story-based podcasts always play oldest-to-newest to maintain narrative continuity
+                <br />
+                <Text strong>Weekend Only</Text> — Podcasts that only appear on Fri/Sat/Sun and UK public holidays
+              </Text>
+            </Paragraph>
+          </div>
+
+          <div>
+            <Text strong style={{ fontSize: 14 }}>📋 Flexible Playlist Ordering</Text>
+            <Paragraph style={{ marginTop: 8, marginBottom: 0 }}>
+              <Text type="secondary">
+                <Text strong>Default</Text> — Category-based automatic ordering
+                <br />
+                <Text strong>Custom Order</Text> — Drag-and-drop podcast ordering (respects sequential constraint)
+                <br />
+                <Text strong>Chronological</Text> — Sort by release date (oldest or newest first)
+                <br />
+                <em>Note: Sequential podcasts always maintain oldest-first ordering regardless of mode</em>
+              </Text>
+            </Paragraph>
+          </div>
+
+          <div>
+            <Text strong style={{ fontSize: 14 }}>🔄 Automation</Text>
+            <Paragraph style={{ marginTop: 8, marginBottom: 0 }}>
+              <Text type="secondary">
+                Automatic daily syncs keep your Spotify library and playlists up to date.
+                Manually trigger updates anytime for instant refresh.
+              </Text>
+            </Paragraph>
+          </div>
+
           <Divider style={{ margin: '12px 0' }} />
+
           <Paragraph style={{ marginBottom: 0 }}>
-            <Text type="secondary">
-              <Text strong>Primary</Text> — Your main shows, all unplayed episodes
-              <br />
-              <Text strong>News</Text> — Only the latest episode per show
-              <br />
-              <Text strong>Background</Text> — Casual listening, all unplayed
-              <br />
-              <Text strong>Sequential</Text> — Plays oldest unplayed first (for serialized content)
-              <br />
-              <Text strong>Weekend Only</Text> — Appears only on Fri/Sat/Sun and UK holidays
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              Built with FastAPI, React, and Spotify Web API
             </Text>
           </Paragraph>
         </Space>

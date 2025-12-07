@@ -26,4 +26,10 @@ export const podcastsApi = {
     const response = await apiClient.post<SyncResult>('/podcasts/sync');
     return response.data;
   },
+
+  // Unfollow a podcast from Spotify and remove from database
+  async unfollow(spotifyId: string): Promise<{ message: string }> {
+    const response = await apiClient.delete<{ message: string }>(`/podcasts/${spotifyId}`);
+    return response.data;
+  },
 };

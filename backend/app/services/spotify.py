@@ -383,3 +383,20 @@ class SpotifyService:
                 break
 
         return all_shows
+
+    async def unfollow_show(self, show_id: str) -> None:
+        """Unfollow/remove a show from the user's library.
+
+        Args:
+            show_id: Spotify show ID to unfollow.
+
+        Raises:
+            httpx.HTTPStatusError: If the request fails.
+        """
+        async with httpx.AsyncClient() as client:
+            response = await client.delete(
+                f"{SPOTIFY_API_BASE}/me/shows",
+                headers=self._headers,
+                params={"ids": show_id},
+            )
+            response.raise_for_status()

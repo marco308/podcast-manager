@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     SPOTIFY_SCOPES: str = (
         "user-read-playback-position "
         "user-library-read "
+        "user-library-modify "
         "playlist-modify-public "
         "playlist-modify-private"
     )

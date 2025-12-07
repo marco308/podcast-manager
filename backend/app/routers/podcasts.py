@@ -120,6 +120,41 @@ async def update_podcast(
     return podcast
 
 
+@router.delete("/{spotify_id}")
+async def unfollow_podcast(
+    spotify_id: str,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    """Unfollow a podcast from Spotify and optionally remove from local database."""
+    user, access_token = await get_user_with_token(user_id, db)
+
+    # Check if podcast exists in our database
+    result = await db.execute(
+        select(Podcast).where(Podcast.spotify_id == spotify_id)
+    )
+    podcast = result.scalar_one_or_none()
+
+    if not podcast:
+        raise HTTPException(status_code=404, detail="Podcast not found")
+
+    # Unfollow from Spotify
+    spotify = SpotifyService(access_token=access_token)
+    try:
+        await spotify.unfollow_show(spotify_id)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to unfollow podcast on Spotify: {str(e)}"
+        )
+
+    # Remove from local database
+    await db.delete(podcast)
+    await db.flush()
+
+    return {"message": f"Successfully unfollowed '{podcast.name}'"}
+
+
 @router.post("/sync")
 async def sync_podcasts(
     user_id: int = Depends(get_current_user_id),

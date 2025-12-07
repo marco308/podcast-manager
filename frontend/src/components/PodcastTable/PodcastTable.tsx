@@ -1,12 +1,12 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Table, Avatar, Switch, message, Typography, Space, Tag, Grid, Drawer, Form, Divider, Card, Segmented, Empty, Input } from 'antd';
+import { Table, Avatar, Switch, message, Typography, Space, Tag, Grid, Drawer, Form, Divider, Card, Segmented, Empty, Input, Button, Popconfirm } from 'antd';
 import type { TableProps } from 'antd';
-import { RightOutlined, AppstoreOutlined, UnorderedListOutlined, SearchOutlined } from '@ant-design/icons';
+import { RightOutlined, AppstoreOutlined, UnorderedListOutlined, SearchOutlined, UserDeleteOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import type { Podcast, PodcastCategory } from '../../types';
 import { CategorySelect } from './CategorySelect';
-import { useUpdatePodcast } from '../../hooks';
+import { useUpdatePodcast, useUnfollowPodcast } from '../../hooks';
 
 dayjs.extend(relativeTime);
 
@@ -22,6 +22,7 @@ type ViewMode = 'cards' | 'table';
 
 export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
   const updatePodcast = useUpdatePodcast();
+  const unfollowPodcast = useUnfollowPodcast();
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [selectedPodcast, setSelectedPodcast] = useState<Podcast | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -90,6 +91,19 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
       message.success(checked ? 'Marked as weekend only' : 'Removed weekend flag');
     } catch {
       message.error('Failed to update');
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const handleUnfollow = async (spotifyId: string, podcastName: string) => {
+    setUpdatingId(spotifyId);
+    try {
+      await unfollowPodcast.mutateAsync(spotifyId);
+      message.success(`Unfollowed "${podcastName}"`);
+      closePodcastDrawer();
+    } catch {
+      message.error('Failed to unfollow podcast');
     } finally {
       setUpdatingId(null);
     }
@@ -204,6 +218,29 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
         if (!b.last_synced_at) return -1;
         return new Date(a.last_synced_at).getTime() - new Date(b.last_synced_at).getTime();
       },
+    },
+    {
+      title: 'Actions',
+      key: 'actions',
+      align: 'center',
+      width: 100,
+      render: (_, record) => (
+        <Popconfirm
+          title="Unfollow podcast"
+          description={`Are you sure you want to unfollow "${record.name}"? This will remove it from Spotify and delete it from this app.`}
+          onConfirm={() => handleUnfollow(record.spotify_id, record.name)}
+          okText="Unfollow"
+          cancelText="Cancel"
+          okButtonProps={{ danger: true }}
+        >
+          <Button
+            danger
+            icon={<UserDeleteOutlined />}
+            loading={updatingId === record.spotify_id}
+            size="small"
+          />
+        </Popconfirm>
+      ),
     },
   ];
 
@@ -408,7 +445,7 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
 
               <Divider style={{ margin: '16px 0' }} />
 
-              <Space direction="vertical" size={4}>
+              <Space direction="vertical" size={4} style={{ marginBottom: 16 }}>
                 <Text type="secondary" style={{ fontSize: 12 }}>
                   {selectedPodcast.total_episodes} episodes
                 </Text>
@@ -418,6 +455,26 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
                     : 'Never'}
                 </Text>
               </Space>
+
+              <Divider style={{ margin: '16px 0' }} />
+
+              <Popconfirm
+                title="Unfollow podcast"
+                description={`Are you sure you want to unfollow "${selectedPodcast.name}"? This will remove it from Spotify and delete it from this app.`}
+                onConfirm={() => handleUnfollow(selectedPodcast.spotify_id, selectedPodcast.name)}
+                okText="Unfollow"
+                cancelText="Cancel"
+                okButtonProps={{ danger: true }}
+              >
+                <Button
+                  danger
+                  icon={<UserDeleteOutlined />}
+                  loading={updatingId === selectedPodcast.spotify_id}
+                  block
+                >
+                  Unfollow Podcast
+                </Button>
+              </Popconfirm>
             </Form>
           </div>
         )}

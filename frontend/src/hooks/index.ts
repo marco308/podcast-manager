@@ -4,6 +4,7 @@ export {
   usePodcast,
   useUpdatePodcast,
   useSyncPodcasts,
+  useUnfollowPodcast,
   podcastKeys,
 } from './usePodcasts';
 export {

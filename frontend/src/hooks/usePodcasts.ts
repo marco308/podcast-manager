@@ -59,3 +59,16 @@ export function useSyncPodcasts() {
     },
   });
 }
+
+// Hook to unfollow a podcast
+export function useUnfollowPodcast() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (spotifyId: string) => podcastsApi.unfollow(spotifyId),
+    onSuccess: () => {
+      // Invalidate all podcast queries to refetch fresh data
+      queryClient.invalidateQueries({ queryKey: podcastKeys.all });
+    },
+  });
+}
