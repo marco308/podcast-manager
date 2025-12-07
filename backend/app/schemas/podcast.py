@@ -24,6 +24,7 @@ class PodcastBase(BaseModel):
     image_url: str | None = None
     publisher: str | None = None
     total_episodes: int = 0
+    unplayed_episodes: int = 0
 
 
 class PodcastResponse(PodcastBase):

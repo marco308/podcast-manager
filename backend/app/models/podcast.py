@@ -31,6 +31,7 @@ class Podcast(Base):
     image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     publisher: Mapped[str | None] = mapped_column(String(255), nullable=True)
     total_episodes: Mapped[int] = mapped_column(Integer, default=0)
+    unplayed_episodes: Mapped[int] = mapped_column(Integer, default=0)
 
     # Custom categorization fields
     category: Mapped[PodcastCategory] = mapped_column(

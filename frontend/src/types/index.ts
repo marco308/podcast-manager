@@ -19,6 +19,7 @@ export interface Podcast {
   image_url: string | null;
   publisher: string | null;
   total_episodes: number;
+  unplayed_episodes: number;
   category: PodcastCategory;
   is_sequential: boolean;
   is_weekend_only: boolean;

@@ -138,13 +138,16 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
     },
     {
       title: 'Episodes',
-      dataIndex: 'total_episodes',
-      key: 'total_episodes',
+      key: 'episodes',
       align: 'center',
-      width: 100,
-      render: (count: number) => (
-        <Tag color="default">{count}</Tag>
+      width: 120,
+      render: (_, record) => (
+        <Space direction="vertical" size={2} style={{ width: '100%' }}>
+          <Tag color="default">{record.total_episodes} total</Tag>
+          <Tag color="blue">{record.unplayed_episodes} unplayed</Tag>
+        </Space>
       ),
+      sorter: (a, b) => a.unplayed_episodes - b.unplayed_episodes,
     },
     {
       title: 'Category',
@@ -303,7 +306,8 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
                     {podcast.category}
                   </Tag>
                   <Tag color="default" style={{ margin: 0 }}>{podcast.total_episodes} eps</Tag>
-                  {podcast.is_sequential && <Tag color="blue" style={{ margin: 0 }}>Seq</Tag>}
+                  <Tag color="blue" style={{ margin: 0 }}>{podcast.unplayed_episodes} unplayed</Tag>
+                  {podcast.is_sequential && <Tag color="orange" style={{ margin: 0 }}>Seq</Tag>}
                   {podcast.is_weekend_only && <Tag color="purple" style={{ margin: 0 }}>Wknd</Tag>}
                 </Space>
               </div>

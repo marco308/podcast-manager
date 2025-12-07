@@ -138,7 +138,7 @@ class SpotifyService:
     async def get_show_episodes(
         self, show_id: str, limit: int = 50, offset: int = 0
     ) -> dict[str, Any]:
-        """Get episodes for a specific show.
+        """Get episodes for a specific show with user's playback state.
 
         Args:
             show_id: Spotify show ID.
@@ -146,16 +146,32 @@ class SpotifyService:
             offset: Index of the first episode to return.
 
         Returns:
-            Paginated list of episodes.
+            Paginated list of episodes with resume_point data.
         """
         async with httpx.AsyncClient() as client:
+            # Use /me/shows/{id} endpoint to get user-specific data including resume points
             response = await client.get(
-                f"{SPOTIFY_API_BASE}/shows/{show_id}/episodes",
+                f"{SPOTIFY_API_BASE}/shows/{show_id}",
                 headers=self._headers,
-                params={"limit": limit, "offset": offset},
+                params={
+                    "market": "from_token",
+                },
             )
             response.raise_for_status()
-            return response.json()
+            show_data = response.json()
+
+            # Now fetch episodes with resume points from the episodes endpoint
+            episodes_response = await client.get(
+                f"{SPOTIFY_API_BASE}/shows/{show_id}/episodes",
+                headers=self._headers,
+                params={
+                    "limit": limit,
+                    "offset": offset,
+                    "market": "from_token",
+                },
+            )
+            episodes_response.raise_for_status()
+            return episodes_response.json()
 
     async def get_playlist(self, playlist_id: str) -> dict[str, Any]:
         """Get a playlist by ID.

@@ -195,6 +195,27 @@ async def sync_podcasts(
             images = show.get("images", [])
             image_url = images[0]["url"] if images else None
 
+            # Count unplayed episodes by fetching episodes with resume_point
+            unplayed_count = 0
+            try:
+                episodes_data = await spotify.get_show_episodes(spotify_id, limit=50)
+                episodes = episodes_data.get("items", [])
+
+                for episode in episodes:
+                    resume_point = episode.get("resume_point", {})
+                    fully_played = resume_point.get("fully_played", False)
+                    if not fully_played:
+                        unplayed_count += 1
+
+                # If there are more than 50 episodes, approximate based on first 50
+                total_eps = show.get("total_episodes", 0)
+                if total_eps > 50 and len(episodes) > 0:
+                    unplayed_ratio = unplayed_count / len(episodes)
+                    unplayed_count = int(total_eps * unplayed_ratio)
+            except Exception:
+                # If we can't fetch episodes, keep previous count or 0
+                unplayed_count = podcast.unplayed_episodes if podcast else 0
+
             if podcast:
                 # Update existing podcast
                 podcast.name = show.get("name", podcast.name)
@@ -202,6 +223,7 @@ async def sync_podcasts(
                 podcast.image_url = image_url
                 podcast.publisher = show.get("publisher")
                 podcast.total_episodes = show.get("total_episodes", 0)
+                podcast.unplayed_episodes = unplayed_count
                 podcast.last_synced_at = datetime.utcnow()
             else:
                 # Create new podcast
@@ -212,6 +234,7 @@ async def sync_podcasts(
                     image_url=image_url,
                     publisher=show.get("publisher"),
                     total_episodes=show.get("total_episodes", 0),
+                    unplayed_episodes=unplayed_count,
                     last_synced_at=datetime.utcnow(),
                 )
                 db.add(podcast)
