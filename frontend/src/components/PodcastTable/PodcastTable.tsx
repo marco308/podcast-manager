@@ -27,6 +27,7 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
   const [selectedPodcast, setSelectedPodcast] = useState<Podcast | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [pageSize, setPageSize] = useState(20);
   const screens = useBreakpoint();
   const isMobile = !screens.md;
   const [viewMode, setViewMode] = useState<ViewMode>('cards');
@@ -357,9 +358,11 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
             rowKey="spotify_id"
             loading={loading}
             pagination={{
-              pageSize: 20,
+              pageSize: pageSize,
               showSizeChanger: true,
+              pageSizeOptions: ['10', '20', '50', '100'],
               showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} podcasts`,
+              onShowSizeChange: (_, size) => setPageSize(size),
             }}
             size="middle"
             rowClassName={(record) => {
