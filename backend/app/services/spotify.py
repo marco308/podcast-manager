@@ -249,11 +249,16 @@ class SpotifyService:
             playlist_id: Spotify playlist ID.
             uris: List of Spotify URIs to remove (e.g., spotify:episode:xxx).
         """
+        import json as _json
+
         async with httpx.AsyncClient() as client:
+            # Some httpx/delete implementations don't accept `json` kwarg.
+            # Send raw JSON in the request body via `content` instead.
+            body = _json.dumps({"tracks": [{"uri": uri} for uri in uris]})
             response = await client.delete(
                 f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/tracks",
-                headers=self._headers,
-                json={"tracks": [{"uri": uri} for uri in uris]},
+                headers={**self._headers, "Content-Type": "application/json"},
+                content=body,
             )
             response.raise_for_status()
 

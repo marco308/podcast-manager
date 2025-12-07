@@ -121,8 +121,24 @@ class PlaylistBuilder:
             logger.error(f"Failed to fetch episodes for {podcast.name}: {e}")
             return []
 
+        # The "shows/{id}/episodes" endpoint does not reliably include a
+        # `resume_point` for the current user. Fetch full episode objects
+        # via the "episodes" endpoint (in batches) so we can read
+        # `resume_point.fully_played` to determine playback status.
+        episode_ids = [ep.get("id") for ep in episodes_data if ep and ep.get("id")]
+
+        detailed_episodes: list[dict[str, Any]] = []
+        try:
+            for i in range(0, len(episode_ids), 50):
+                batch = episode_ids[i : i + 50]
+                batch_details = await spotify.get_episodes(batch)
+                detailed_episodes.extend(batch_details)
+        except Exception as e:
+            logger.error(f"Failed to fetch detailed episodes for {podcast.name}: {e}")
+            return []
+
         unplayed = []
-        for ep in episodes_data:
+        for ep in detailed_episodes:
             if not ep:
                 continue
 
@@ -137,17 +153,16 @@ class PlaylistBuilder:
                 logger.debug(f"Skipping restricted episode: {ep.get('name')} - Reason: {restrictions.get('reason')}")
                 continue
 
-            # Check resume_point for playback status
-            resume_point = ep.get("resume_point", {})
+            # Check resume_point for playback status (from episodes endpoint)
+            resume_point = ep.get("resume_point") or {}
             fully_played = resume_point.get("fully_played", False)
-
 
             if not fully_played:
                 unplayed.append(
                     Episode(
                         id=ep["id"],
-                        uri=ep["uri"],
-                        name=ep["name"],
+                        uri=ep.get("uri") or f"spotify:episode:{ep['id']}",
+                        name=ep.get("name", ""),
                         release_date=ep.get("release_date", ""),
                         duration_ms=ep.get("duration_ms", 0),
                         fully_played=False,

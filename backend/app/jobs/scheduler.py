@@ -317,44 +317,74 @@ async def remove_played_episodes_from_playlists() -> None:
                             spotify_client = SpotifyService(access_token=access_token)
 
                             # Get all tracks in playlist
-                            played_uris = []
                             offset = 0
                             limit = 50
 
+                            # Collect episode ids found in the playlist so we can
+                            # fetch detailed episode objects (which include
+                            # `resume_point`) since playlist track objects may not.
+                            playlist_episode_ids: list[str] = []
+
                             while True:
                                 tracks_data = await spotify_client.get_playlist_tracks(
-                                    playlist.spotify_id, limit=limit, offset=offset
+                                    playlist.spotify_playlist_id, limit=limit, offset=offset
                                 )
                                 tracks = tracks_data.get("items", [])
 
                                 if not tracks:
                                     break
 
-                                # Check each track for playback status
                                 for track in tracks:
                                     if track and "track" in track:
                                         episode = track["track"]
-                                        resume_point = episode.get("resume_point", {})
-                                        if resume_point.get("fully_played", False):
-                                            played_uris.append(episode["uri"])
+                                        uri = episode.get("uri")
+                                        if uri and uri.startswith("spotify:episode:"):
+                                            ep_id = uri.split(":")[-1]
+                                            playlist_episode_ids.append(ep_id)
 
                                 offset += limit
                                 if not tracks_data.get("next"):
                                     break
 
+                            # Fetch detailed episode objects in batches and
+                            # determine which are fully played for this user.
+                            played_uris: list[str] = []
+                            try:
+                                for i in range(0, len(playlist_episode_ids), 50):
+                                    batch_ids = playlist_episode_ids[i : i + 50]
+                                    details = await spotify_client.get_episodes(batch_ids)
+                                    for ep in details:
+                                        if not ep:
+                                            continue
+                                        resume_point = ep.get("resume_point") or {}
+                                        if resume_point.get("fully_played", False):
+                                            played_uris.append(ep.get("uri") or f"spotify:episode:{ep['id']}")
+                            except Exception as e:
+                                logger.error(f"Failed to fetch episode details for playlist cleanup: {e}")
+
                             # Remove played episodes if any found
                             if played_uris:
+                                logger.info(
+                                    f"Playlist {playlist.name} ({playlist.spotify_playlist_id}) - found {len(played_uris)} fully-played episodes: {played_uris}"
+                                )
                                 # Remove in batches to avoid timeouts
                                 for i in range(0, len(played_uris), 50):
                                     batch = played_uris[i : i + 50]
-                                    await spotify_client.remove_tracks_from_playlist(
-                                        playlist.spotify_id, batch
-                                    )
-                                    total_removed += len(batch)
-                                    logger.info(
-                                        f"Removed {len(batch)} played episodes from "
-                                        f"playlist {playlist.name} (user {user.id})"
-                                    )
+                                    try:
+                                        logger.info(
+                                            f"Attempting to remove batch of {len(batch)} from playlist {playlist.name} (user {user.id}): {batch}"
+                                        )
+                                        await spotify_client.remove_tracks_from_playlist(
+                                            playlist.spotify_playlist_id, batch
+                                        )
+                                        total_removed += len(batch)
+                                        logger.info(
+                                            f"Removed {len(batch)} played episodes from playlist {playlist.name} (user {user.id})"
+                                        )
+                                    except Exception as e:
+                                        logger.error(
+                                            f"Failed to remove batch from playlist {playlist.name} (user {user.id}): {e} - batch: {batch}"
+                                        )
 
                         except Exception as e:
                             logger.error(
