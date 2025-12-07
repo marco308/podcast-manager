@@ -41,7 +41,8 @@ class Podcast(Base):
     )
     is_sequential: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_weekend_only: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    morning_order: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    morning_order: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # DEPRECATED: use playlist_order
+    playlist_order: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
 
     # Sync tracking
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

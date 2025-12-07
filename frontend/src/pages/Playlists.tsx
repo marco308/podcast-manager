@@ -118,7 +118,16 @@ function SortableItem({ podcast, onOrderChange, updatingId }: SortableItemProps)
           <HolderOutlined style={{ fontSize: 20, color: '#999' }} />
         </div>
         <List.Item.Meta
-          title={<Text ellipsis style={{ maxWidth: 200 }}>{podcast.name}</Text>}
+          title={
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Text ellipsis style={{ maxWidth: 150 }}>{podcast.name}</Text>
+              {podcast.is_sequential && (
+                <Tooltip title="Sequential podcast - episodes always play oldest-first">
+                  <Tag color="blue" style={{ fontSize: 10, margin: 0 }}>SEQUENTIAL</Tag>
+                </Tooltip>
+              )}
+            </div>
+          }
           description={
             <Text type="secondary" style={{ fontSize: 12 }} ellipsis>
               {podcast.publisher}
@@ -129,7 +138,7 @@ function SortableItem({ podcast, onOrderChange, updatingId }: SortableItemProps)
           size="small"
           min={1}
           max={999}
-          value={podcast.morning_order}
+          value={podcast.playlist_order || podcast.morning_order}
           onChange={(value) => onOrderChange(podcast.spotify_id, value)}
           placeholder="#"
           disabled={updatingId === podcast.spotify_id}
@@ -140,26 +149,47 @@ function SortableItem({ podcast, onOrderChange, updatingId }: SortableItemProps)
   );
 }
 
-function MorningOrderSection() {
-  const { data: newsPodcasts, isLoading } = usePodcasts('news');
+interface PlaylistOrderingSectionProps {
+  playlist: Playlist | null;
+}
+
+function PlaylistOrderingSection({ playlist }: PlaylistOrderingSectionProps) {
+  // Only show if playlist exists and has custom ordering mode
+  if (!playlist || playlist.ordering_mode !== 'podcast_order') {
+    return null;
+  }
+
+  // Map rule_type to category for fetching podcasts
+  const categoryMap: Record<PlaylistRuleType, string> = {
+    primary: 'primary',
+    news: 'news',
+    morning: 'news', // Morning playlists use NEWS category podcasts
+    background: 'background',
+  };
+
+  const category = categoryMap[playlist.rule_type] as 'primary' | 'news' | 'background' | 'none';
+
+  const { data: podcasts, isLoading } = usePodcasts(category);
   const updatePodcast = useUpdatePodcast();
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [localPodcasts, setLocalPodcasts] = useState<Podcast[]>([]);
 
   // Update local state when data changes
   useEffect(() => {
-    if (newsPodcasts) {
-      const sorted = [...newsPodcasts].sort((a, b) => {
-        if (a.morning_order === null && b.morning_order === null) {
+    if (podcasts) {
+      const sorted = [...podcasts].sort((a, b) => {
+        const aOrder = a.playlist_order ?? a.morning_order;
+        const bOrder = b.playlist_order ?? b.morning_order;
+        if (aOrder === null && bOrder === null) {
           return a.name.localeCompare(b.name);
         }
-        if (a.morning_order === null) return 1;
-        if (b.morning_order === null) return -1;
-        return a.morning_order - b.morning_order;
+        if (aOrder === null) return 1;
+        if (bOrder === null) return -1;
+        return aOrder - bOrder;
       });
       setLocalPodcasts(sorted);
     }
-  }, [newsPodcasts]);
+  }, [podcasts]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -191,7 +221,7 @@ function MorningOrderSection() {
     const newOrder = arrayMove(localPodcasts, oldIndex, newIndex);
     setLocalPodcasts(newOrder);
 
-    // Update morning_order for all affected podcasts
+    // Update playlist_order for all affected podcasts
     try {
       const updates = newOrder.map((podcast, index) => ({
         spotifyId: podcast.spotify_id,
@@ -203,7 +233,7 @@ function MorningOrderSection() {
         updates.map((update) =>
           updatePodcast.mutateAsync({
             spotifyId: update.spotifyId,
-            data: { morning_order: update.order },
+            data: { playlist_order: update.order },
           })
         )
       );
@@ -212,8 +242,8 @@ function MorningOrderSection() {
     } catch {
       message.error('Failed to update order');
       // Revert on error
-      if (newsPodcasts) {
-        setLocalPodcasts(newsPodcasts);
+      if (podcasts) {
+        setLocalPodcasts(podcasts);
       }
     }
   };
@@ -221,8 +251,8 @@ function MorningOrderSection() {
   const handleOrderChange = async (spotifyId: string, order: number | null) => {
     setUpdatingId(spotifyId);
     try {
-      await updatePodcast.mutateAsync({ spotifyId, data: { morning_order: order } });
-      message.success('Morning order updated');
+      await updatePodcast.mutateAsync({ spotifyId, data: { playlist_order: order } });
+      message.success('Playlist order updated');
     } catch {
       message.error('Failed to update order');
     } finally {
@@ -231,22 +261,25 @@ function MorningOrderSection() {
   };
 
   if (isLoading) {
-    return <LoadingSpinner tip="Loading news podcasts..." />;
+    return <LoadingSpinner tip="Loading podcasts..." />;
   }
 
-  if (!newsPodcasts || newsPodcasts.length === 0) {
+  if (!podcasts || podcasts.length === 0) {
+    const categoryLabel = category.toUpperCase();
     return (
-      <Card title="Morning Playlist Order" style={{ marginBottom: 24 }}>
+      <Card title={`${playlist.name} - Podcast Order`} style={{ marginBottom: 24 }}>
         <Text type="secondary">
-          No NEWS category podcasts found. Categorize podcasts as NEWS to set morning order.
+          No {categoryLabel} category podcasts found. Categorize podcasts as {categoryLabel} to set order.
         </Text>
       </Card>
     );
   }
 
+  const hasSequentialPodcasts = podcasts.some(p => p.is_sequential);
+
   return (
     <Card
-      title="Morning Playlist Order"
+      title={`${playlist.name} - Podcast Order`}
       style={{ marginBottom: 24 }}
       extra={
         <Text type="secondary" style={{ fontSize: 12 }}>
@@ -254,6 +287,15 @@ function MorningOrderSection() {
         </Text>
       }
     >
+      {hasSequentialPodcasts && (
+        <Alert
+          type="info"
+          message="Sequential podcasts detected"
+          description="Podcasts marked as sequential (story-based) will always play oldest-to-newest regardless of ordering."
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+      )}
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
@@ -292,12 +334,23 @@ export function Playlists() {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingPlaylist, setEditingPlaylist] = useState<Playlist | null>(null);
+  const [selectedOrderingPlaylist, setSelectedOrderingPlaylist] = useState<Playlist | null>(null);
   const [form] = Form.useForm();
+
+  // Automatically select the first playlist with podcast_order mode when playlists load
+  useEffect(() => {
+    if (playlists && !selectedOrderingPlaylist) {
+      const podcastOrderPlaylist = playlists.find(p => p.ordering_mode === 'podcast_order');
+      if (podcastOrderPlaylist) {
+        setSelectedOrderingPlaylist(podcastOrderPlaylist);
+      }
+    }
+  }, [playlists, selectedOrderingPlaylist]);
 
   const openCreateModal = () => {
     setEditingPlaylist(null);
     form.resetFields();
-    form.setFieldsValue({ is_enabled: true });
+    form.setFieldsValue({ is_enabled: true, ordering_mode: 'default' });
     setIsModalOpen(true);
   };
 
@@ -308,6 +361,7 @@ export function Playlists() {
       spotify_playlist_id: playlist.spotify_playlist_id,
       rule_type: playlist.rule_type,
       is_enabled: playlist.is_enabled,
+      ordering_mode: playlist.ordering_mode || 'default',
     });
     setIsModalOpen(true);
   };
@@ -320,6 +374,7 @@ export function Playlists() {
           name: values.name,
           spotify_playlist_id: values.spotify_playlist_id,
           is_enabled: values.is_enabled,
+          ordering_mode: values.ordering_mode,
         };
         await updatePlaylist.mutateAsync({ id: editingPlaylist.id, data: updateData });
         message.success('Playlist updated');
@@ -329,6 +384,7 @@ export function Playlists() {
           spotify_playlist_id: values.spotify_playlist_id,
           rule_type: values.rule_type,
           is_enabled: values.is_enabled,
+          ordering_mode: values.ordering_mode || 'default',
         };
         await createPlaylist.mutateAsync(createData);
         message.success('Playlist created');
@@ -526,7 +582,32 @@ export function Playlists() {
         />
       </div>
 
-      <MorningOrderSection />
+      {playlists && playlists.some(p => p.ordering_mode === 'podcast_order') && (
+        <Card style={{ marginBottom: 24, marginTop: 24 }}>
+          <div style={{ marginBottom: 16 }}>
+            <Text strong>Playlist Custom Ordering</Text>
+            <div style={{ marginTop: 8 }}>
+              <Select
+                style={{ width: '100%', maxWidth: 400 }}
+                placeholder="Select a playlist to configure ordering"
+                value={selectedOrderingPlaylist?.id}
+                onChange={(playlistId) => {
+                  const playlist = playlists.find(p => p.id === playlistId);
+                  setSelectedOrderingPlaylist(playlist || null);
+                }}
+                options={playlists
+                  .filter(p => p.ordering_mode === 'podcast_order')
+                  .map(p => ({
+                    value: p.id,
+                    label: p.name,
+                  }))}
+              />
+            </div>
+          </div>
+        </Card>
+      )}
+
+      <PlaylistOrderingSection playlist={selectedOrderingPlaylist} />
 
       <Modal
         title={editingPlaylist ? 'Edit Playlist' : 'Add Playlist'}
@@ -563,6 +644,53 @@ export function Playlists() {
             extra="The ID of an existing Spotify playlist to update, or leave blank to create a new one"
           >
             <Input placeholder="e.g., 37i9dQZF1DX..." />
+          </Form.Item>
+          <Form.Item
+            name="ordering_mode"
+            label="Ordering Mode"
+            extra="How should episodes be ordered in this playlist?"
+          >
+            <Select
+              placeholder="Select ordering mode"
+              options={[
+                {
+                  value: 'default',
+                  label: <div>
+                    <div>Default (by category)</div>
+                    <Text type="secondary" style={{ fontSize: 11 }}>
+                      Use standard sorting for this category
+                    </Text>
+                  </div>
+                },
+                {
+                  value: 'podcast_order',
+                  label: <div>
+                    <div>Custom podcast order</div>
+                    <Text type="secondary" style={{ fontSize: 11 }}>
+                      Manually order podcasts (sequential podcasts always oldest-first)
+                    </Text>
+                  </div>
+                },
+                {
+                  value: 'chronological_asc',
+                  label: <div>
+                    <div>Oldest first</div>
+                    <Text type="secondary" style={{ fontSize: 11 }}>
+                      Sort episodes by release date (oldest first)
+                    </Text>
+                  </div>
+                },
+                {
+                  value: 'chronological_desc',
+                  label: <div>
+                    <div>Newest first</div>
+                    <Text type="secondary" style={{ fontSize: 11 }}>
+                      Sort episodes by release date (newest first for non-sequential podcasts)
+                    </Text>
+                  </div>
+                },
+              ]}
+            />
           </Form.Item>
           <Form.Item name="is_enabled" label="Enabled" valuePropName="checked">
             <Switch />

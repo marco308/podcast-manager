@@ -15,12 +15,22 @@ class PlaylistRuleType(str, Enum):
     BACKGROUND = "background"
 
 
+class PlaylistOrderingMode(str, Enum):
+    """Playlist ordering modes."""
+
+    DEFAULT = "default"
+    PODCAST_ORDER = "podcast_order"
+    CHRONOLOGICAL_ASC = "chronological_asc"
+    CHRONOLOGICAL_DESC = "chronological_desc"
+
+
 class PlaylistBase(BaseModel):
     """Base playlist schema."""
 
     name: str
     rule_type: PlaylistRuleType
     is_enabled: bool = True
+    ordering_mode: PlaylistOrderingMode = PlaylistOrderingMode.DEFAULT
 
 
 class PlaylistCreate(PlaylistBase):
@@ -46,6 +56,7 @@ class PlaylistUpdate(BaseModel):
     name: str | None = None
     spotify_playlist_id: str | None = None
     is_enabled: bool | None = None
+    ordering_mode: PlaylistOrderingMode | None = None
 
 
 class PlaylistListResponse(BaseModel):

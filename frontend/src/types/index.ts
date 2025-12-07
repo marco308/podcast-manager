@@ -22,7 +22,8 @@ export interface Podcast {
   category: PodcastCategory;
   is_sequential: boolean;
   is_weekend_only: boolean;
-  morning_order: number | null;
+  morning_order: number | null;  // DEPRECATED: use playlist_order
+  playlist_order: number | null;
   last_synced_at: string | null;
   created_at: string;
   updated_at: string;
@@ -32,11 +33,13 @@ export interface PodcastUpdate {
   category?: PodcastCategory;
   is_sequential?: boolean;
   is_weekend_only?: boolean;
-  morning_order?: number | null;
+  morning_order?: number | null;  // DEPRECATED: use playlist_order
+  playlist_order?: number | null;
 }
 
 // Playlist types
 export type PlaylistRuleType = 'primary' | 'news' | 'morning' | 'background';
+export type PlaylistOrderingMode = 'default' | 'podcast_order' | 'chronological_asc' | 'chronological_desc';
 
 export interface Playlist {
   id: number;
@@ -44,6 +47,7 @@ export interface Playlist {
   spotify_playlist_id: string | null;
   rule_type: PlaylistRuleType;
   is_enabled: boolean;
+  ordering_mode: PlaylistOrderingMode;
   last_updated_at: string | null;
   created_at: string;
 }
@@ -53,12 +57,14 @@ export interface PlaylistCreate {
   spotify_playlist_id?: string;
   rule_type: PlaylistRuleType;
   is_enabled?: boolean;
+  ordering_mode?: PlaylistOrderingMode;
 }
 
 export interface PlaylistUpdate {
   name?: string;
   spotify_playlist_id?: string;
   is_enabled?: boolean;
+  ordering_mode?: PlaylistOrderingMode;
 }
 
 // Sync types

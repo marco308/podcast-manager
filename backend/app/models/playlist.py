@@ -19,6 +19,15 @@ class PlaylistRuleType(str, PyEnum):
     BACKGROUND = "background"
 
 
+class PlaylistOrderingMode(str, PyEnum):
+    """Playlist ordering modes."""
+
+    DEFAULT = "default"  # Use rule_type default logic (backward compatible)
+    PODCAST_ORDER = "podcast_order"  # Order by podcast.playlist_order field
+    CHRONOLOGICAL_ASC = "chronological_asc"  # Oldest episodes first
+    CHRONOLOGICAL_DESC = "chronological_desc"  # Newest episodes first
+
+
 class Playlist(Base):
     """Playlist model storing configuration for managed playlists."""
 
@@ -34,6 +43,11 @@ class Playlist(Base):
         Enum(PlaylistRuleType), nullable=False
     )
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    ordering_mode: Mapped[PlaylistOrderingMode] = mapped_column(
+        Enum(PlaylistOrderingMode),
+        default=PlaylistOrderingMode.DEFAULT,
+        nullable=False,
+    )
 
     # Tracking
     last_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

@@ -40,12 +40,15 @@ async def create_playlist(
     db: AsyncSession = Depends(get_db),
 ) -> Playlist:
     """Create a new playlist mapping."""
+    from app.models.playlist import PlaylistOrderingMode
+
     playlist = Playlist(
         user_id=user_id,
         name=playlist_data.name,
         spotify_playlist_id=playlist_data.spotify_playlist_id,
         rule_type=PlaylistRuleType(playlist_data.rule_type.value),
         is_enabled=playlist_data.is_enabled,
+        ordering_mode=PlaylistOrderingMode(playlist_data.ordering_mode.value) if playlist_data.ordering_mode else PlaylistOrderingMode.DEFAULT,
     )
     db.add(playlist)
     await db.flush()
@@ -81,6 +84,8 @@ async def update_playlist(
     db: AsyncSession = Depends(get_db),
 ) -> Playlist:
     """Update playlist configuration."""
+    from app.models.playlist import PlaylistOrderingMode
+
     result = await db.execute(
         select(Playlist).where(
             (Playlist.id == playlist_id) & (Playlist.user_id == user_id)
@@ -97,6 +102,8 @@ async def update_playlist(
         playlist.spotify_playlist_id = update_data.spotify_playlist_id
     if update_data.is_enabled is not None:
         playlist.is_enabled = update_data.is_enabled
+    if update_data.ordering_mode is not None:
+        playlist.ordering_mode = PlaylistOrderingMode(update_data.ordering_mode.value)
 
     await db.flush()
     return playlist
