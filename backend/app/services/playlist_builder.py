@@ -253,7 +253,7 @@ class PlaylistBuilder:
         elif ordering_mode == PlaylistOrderingMode.PODCAST_ORDER.value and podcasts:
             # Create podcast_id -> (order, is_sequential) mapping
             podcast_order_map = {
-                p.spotify_id: (p.playlist_order or float('inf'), p.is_sequential)
+                p.spotify_id: (p.playlist_order if p.playlist_order is not None else float('inf'), p.is_sequential)
                 for p in podcasts
             }
 
