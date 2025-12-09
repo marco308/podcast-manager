@@ -8,6 +8,17 @@ import { setSession } from './api/client';
 import { authApi } from './api';
 import './App.css';
 
+// Create React Query client (before session handling so we can clear cache if needed)
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 1000 * 60 * 5, // 5 minutes
+      retry: 1,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
+
 // Extract session or OAuth code from URL immediately (before React renders)
 // This handles the OAuth callback redirect
 const urlParams = new URLSearchParams(window.location.search);
@@ -29,20 +40,11 @@ if (oauthCode && !sessionFromUrl) {
     });
 } else if (sessionFromUrl) {
   setSession(sessionFromUrl);
+  // Clear any cached auth errors from previous sessions
+  queryClient.clear();
   // Clean up URL
   window.history.replaceState({}, '', window.location.pathname);
 }
-
-// Create React Query client
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 1000 * 60 * 5, // 5 minutes
-      retry: 1,
-      refetchOnWindowFocus: false,
-    },
-  },
-});
 
 // Ant Design theme configuration
 const theme = {
