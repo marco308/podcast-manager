@@ -335,6 +335,7 @@ export function Playlists() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingPlaylist, setEditingPlaylist] = useState<Playlist | null>(null);
   const [selectedOrderingPlaylist, setSelectedOrderingPlaylist] = useState<Playlist | null>(null);
+  const [runningPlaylistId, setRunningPlaylistId] = useState<number | null>(null);
   const [form] = Form.useForm();
 
   // Automatically select the first playlist with podcast_order mode when playlists load
@@ -405,12 +406,15 @@ export function Playlists() {
   };
 
   const handleRun = async (id: number) => {
+    setRunningPlaylistId(id);
     try {
       const result = await runPlaylist.mutateAsync(id);
       message.success(result.message);
     } catch (err: unknown) {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
       message.error(detail || 'Failed to update playlist');
+    } finally {
+      setRunningPlaylistId(null);
     }
   };
 
@@ -464,9 +468,13 @@ export function Playlists() {
       responsive: ['lg'] as const,
       render: (id: string | null) =>
         id ? (
-          <Text code copyable style={{ fontSize: 12 }}>
-            {id}
-          </Text>
+          <a
+            href={`https://open.spotify.com/playlist/${id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Open in Spotify
+          </a>
         ) : (
           <Text type="secondary">Not linked</Text>
         ),
@@ -505,7 +513,7 @@ export function Playlists() {
               size="small"
               icon={<PlayCircleOutlined />}
               onClick={() => handleRun(record.id)}
-              loading={runPlaylist.isPending}
+              loading={runningPlaylistId === record.id}
             >
               {!isMobile && 'Run'}
             </Button>
