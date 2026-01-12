@@ -1,0 +1,88 @@
+version: '3.8'
+
+networks:
+  traefik-public:
+    external: true
+  podcast-internal:
+    driver: overlay
+
+volumes:
+  podcast_data:
+    driver: local
+
+services:
+  backend:
+    image: podcast-manager-backend:latest
+    networks:
+      - traefik-public
+      - podcast-internal
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:///./data/podcast_manager.db
+    volumes:
+      - podcast_data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname == HomeBase
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.podcastmanager-api.rule=Host(`api-podcastmanager.marcuslab.uk`) && PathPrefix(`/api`)"
+        - "traefik.http.routers.podcastmanager-api.entrypoints=websecure"
+        - "traefik.http.routers.podcastmanager-api.tls.certresolver=letsencrypt"
+        - "traefik.http.routers.podcastmanager-api.priority=100"
+        - "traefik.http.services.podcastmanager-api.loadbalancer.server.port=8000"
+        - "traefik.http.services.podcastmanager-api.loadbalancer.healthcheck.path=/api/health"
+        - "traefik.http.services.podcastmanager-api.loadbalancer.healthcheck.interval=30s"
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+
+  frontend:
+    image: podcast-manager-frontend:latest
+    networks:
+      - traefik-public
+      - podcast-internal
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname == HomeBase
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.podcastmanager-frontend.rule=Host(`podcastmanager.marcuslab.uk`)"
+        - "traefik.http.routers.podcastmanager-frontend.entrypoints=websecure"
+        - "traefik.http.routers.podcastmanager-frontend.tls.certresolver=letsencrypt"
+        - "traefik.http.routers.podcastmanager-frontend.priority=1"
+        - "traefik.http.services.podcastmanager-frontend.loadbalancer.server.port=80"
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
