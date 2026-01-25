@@ -1,7 +1,8 @@
-import { Typography, Card, Descriptions, Button, Space, Divider, message, Tag } from 'antd';
+import { Typography, Card, Descriptions, Button, Space, Divider, message, Tag, Segmented } from 'antd';
 import { LogoutOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
-import { useAuth } from '../hooks';
+import { useAuth, useTheme } from '../hooks';
+import type { ThemePreference } from '../context';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -9,6 +10,7 @@ const APP_VERSION = '1.0.0';
 
 export function Settings() {
   const { user, logout } = useAuth();
+  const { themePreference, setThemePreference } = useTheme();
 
   const handleLogout = async () => {
     try {
@@ -42,6 +44,33 @@ export function Settings() {
         <Button icon={<LogoutOutlined />} danger onClick={handleLogout}>
           Logout
         </Button>
+      </Card>
+
+      <Card title="Appearance" style={{ marginBottom: 24 }}>
+        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+          <div>
+            <Text strong>Theme</Text>
+            <div style={{ marginTop: 8 }}>
+              <Segmented
+                value={themePreference}
+                onChange={(value) => setThemePreference(value as ThemePreference)}
+                options={[
+                  { label: 'Light', value: 'light' },
+                  { label: 'Dark', value: 'dark' },
+                  { label: 'System', value: 'system' },
+                  { label: 'Auto', value: 'auto' },
+                ]}
+              />
+            </div>
+            <Paragraph style={{ marginTop: 8, marginBottom: 0 }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                <Text strong>System</Text> — Follows your device's appearance setting
+                <br />
+                <Text strong>Auto</Text> — Uses system preference, or switches to dark mode between 7 PM and 7 AM
+              </Text>
+            </Paragraph>
+          </div>
+        </Space>
       </Card>
 
       <Card title="About">

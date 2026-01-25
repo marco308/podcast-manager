@@ -1,4 +1,4 @@
-import { Layout, Menu } from 'antd';
+import { Layout, Menu, theme } from 'antd';
 import {
   DashboardOutlined,
   CustomerServiceOutlined,
@@ -36,6 +36,7 @@ const menuItems: MenuProps['items'] = [
 export function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { token } = theme.useToken();
 
   const handleMenuClick: MenuProps['onClick'] = ({ key }) => {
     navigate(key);
@@ -47,8 +48,8 @@ export function Sidebar() {
       breakpoint="md"
       collapsedWidth={0}
       style={{
-        background: '#fff',
-        borderRight: '1px solid #f0f0f0',
+        background: token.colorBgContainer,
+        borderRight: `1px solid ${token.colorBorderSecondary}`,
       }}
     >
       <Menu
