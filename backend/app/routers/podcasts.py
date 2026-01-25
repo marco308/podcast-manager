@@ -1,6 +1,6 @@
 """Podcasts router for managing podcast metadata."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -9,8 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.podcast import Podcast, PodcastCategory
+from app.models.session import Session
 from app.models.user import User
-from app.routers.auth import get_current_user_id
+from app.routers.auth import get_current_user_id, validate_csrf_token
 from app.schemas.podcast import (
     PodcastResponse,
     PodcastUpdate,
@@ -92,7 +93,7 @@ async def get_podcast(
 async def update_podcast(
     spotify_id: str,
     update_data: PodcastUpdate,
-    user_id: int = Depends(get_current_user_id),
+    session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
 ) -> Podcast:
     """Update podcast metadata (category, attributes)."""
@@ -116,7 +117,7 @@ async def update_podcast(
     if update_data.playlist_order is not None:
         podcast.playlist_order = update_data.playlist_order
 
-    podcast.updated_at = datetime.utcnow()
+    podcast.updated_at = datetime.now(timezone.utc)
 
     await db.flush()
     return podcast
@@ -125,11 +126,11 @@ async def update_podcast(
 @router.delete("/{spotify_id}")
 async def unfollow_podcast(
     spotify_id: str,
-    user_id: int = Depends(get_current_user_id),
+    session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
     """Unfollow a podcast from Spotify and optionally remove from local database."""
-    user, access_token = await get_user_with_token(user_id, db)
+    user, access_token = await get_user_with_token(session.user_id, db)
 
     # Check if podcast exists in our database
     result = await db.execute(
@@ -159,11 +160,11 @@ async def unfollow_podcast(
 
 @router.post("/sync")
 async def sync_podcasts(
-    user_id: int = Depends(get_current_user_id),
+    session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Sync subscribed podcasts from Spotify."""
-    user, access_token = await get_user_with_token(user_id, db)
+    user, access_token = await get_user_with_token(session.user_id, db)
 
     spotify = SpotifyService(access_token=access_token)
 
@@ -226,7 +227,7 @@ async def sync_podcasts(
                 podcast.publisher = show.get("publisher")
                 podcast.total_episodes = show.get("total_episodes", 0)
                 podcast.unplayed_episodes = unplayed_count
-                podcast.last_synced_at = datetime.utcnow()
+                podcast.last_synced_at = datetime.now(timezone.utc)
             else:
                 # Create new podcast
                 podcast = Podcast(
@@ -237,7 +238,7 @@ async def sync_podcasts(
                     publisher=show.get("publisher"),
                     total_episodes=show.get("total_episodes", 0),
                     unplayed_episodes=unplayed_count,
-                    last_synced_at=datetime.utcnow(),
+                    last_synced_at=datetime.now(timezone.utc),
                 )
                 db.add(podcast)
                 new_count += 1

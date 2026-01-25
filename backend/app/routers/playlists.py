@@ -6,8 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.playlist import Playlist, PlaylistRuleType
+from app.models.session import Session
 from app.models.user import User
-from app.routers.auth import get_current_user_id
+from app.routers.auth import get_current_user_id, validate_csrf_token
 from app.schemas.playlist import (
     PlaylistCreate,
     PlaylistResponse,
@@ -36,14 +37,14 @@ async def list_playlists(
 @router.post("", response_model=PlaylistResponse)
 async def create_playlist(
     playlist_data: PlaylistCreate,
-    user_id: int = Depends(get_current_user_id),
+    session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
 ) -> Playlist:
     """Create a new playlist mapping."""
     from app.models.playlist import PlaylistOrderingMode
 
     playlist = Playlist(
-        user_id=user_id,
+        user_id=session.user_id,
         name=playlist_data.name,
         spotify_playlist_id=playlist_data.spotify_playlist_id,
         rule_type=PlaylistRuleType(playlist_data.rule_type.value),
@@ -80,7 +81,7 @@ async def get_playlist(
 async def update_playlist(
     playlist_id: int,
     update_data: PlaylistUpdate,
-    user_id: int = Depends(get_current_user_id),
+    session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
 ) -> Playlist:
     """Update playlist configuration."""
@@ -88,7 +89,7 @@ async def update_playlist(
 
     result = await db.execute(
         select(Playlist).where(
-            (Playlist.id == playlist_id) & (Playlist.user_id == user_id)
+            (Playlist.id == playlist_id) & (Playlist.user_id == session.user_id)
         )
     )
     playlist = result.scalar_one_or_none()
@@ -112,13 +113,13 @@ async def update_playlist(
 @router.delete("/{playlist_id}")
 async def delete_playlist(
     playlist_id: int,
-    user_id: int = Depends(get_current_user_id),
+    session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
     """Delete a playlist mapping."""
     result = await db.execute(
         select(Playlist).where(
-            (Playlist.id == playlist_id) & (Playlist.user_id == user_id)
+            (Playlist.id == playlist_id) & (Playlist.user_id == session.user_id)
         )
     )
     playlist = result.scalar_one_or_none()
@@ -133,14 +134,14 @@ async def delete_playlist(
 @router.post("/{playlist_id}/run")
 async def run_playlist_update(
     playlist_id: int,
-    user_id: int = Depends(get_current_user_id),
+    session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Manually trigger a playlist update."""
     # Get the playlist
     playlist_result = await db.execute(
         select(Playlist).where(
-            (Playlist.id == playlist_id) & (Playlist.user_id == user_id)
+            (Playlist.id == playlist_id) & (Playlist.user_id == session.user_id)
         )
     )
     playlist = playlist_result.scalar_one_or_none()
@@ -149,7 +150,7 @@ async def run_playlist_update(
         raise HTTPException(status_code=404, detail="Playlist not found")
 
     # Get the user
-    user_result = await db.execute(select(User).where(User.id == user_id))
+    user_result = await db.execute(select(User).where(User.id == session.user_id))
     user = user_result.scalar_one_or_none()
 
     if not user:
@@ -174,12 +175,12 @@ async def run_playlist_update(
 
 @router.post("/run-all")
 async def run_all_playlist_updates(
-    user_id: int = Depends(get_current_user_id),
+    session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Manually trigger all enabled playlist updates."""
     # Get the user
-    user_result = await db.execute(select(User).where(User.id == user_id))
+    user_result = await db.execute(select(User).where(User.id == session.user_id))
     user = user_result.scalar_one_or_none()
 
     if not user:

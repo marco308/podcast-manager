@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     # Frontend URL for redirects
     FRONTEND_URL: str = "http://localhost:5173"
 
+    # Cookie domain for cross-subdomain sharing (e.g., ".marcuslab.uk")
+    # Leave empty for same-origin cookies (local development)
+    COOKIE_DOMAIN: str = ""
+
     # Scheduler
     PLAYLIST_UPDATE_HOUR: int = 4
     PLAYLIST_UPDATE_MINUTE: int = 0

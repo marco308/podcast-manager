@@ -1,7 +1,7 @@
 """APScheduler setup and job management."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -13,6 +13,7 @@ from app.database import async_session_maker
 from app.models.playlist import Playlist
 from app.models.sync_log import SyncLog, SyncStatus
 from app.models.user import User
+from app.jobs.session_cleanup import cleanup_expired_sessions
 from app.services.encryption import get_encryption_service
 from app.services.playlist_builder import PlaylistBuilder
 from app.services.spotify import SpotifyService
@@ -38,7 +39,7 @@ async def refresh_all_tokens() -> None:
             for user in users:
                 try:
                     # Check if token will expire in the next 15 minutes
-                    if (user.token_expires_at.timestamp() - datetime.utcnow().timestamp()) < 900:
+                    if (user.token_expires_at.timestamp() - datetime.now(timezone.utc).timestamp()) < 900:
                         refresh_token = encryption.decrypt(user.refresh_token)
                         spotify = SpotifyService()
                         token_data = await spotify.refresh_access_token(refresh_token)
@@ -70,7 +71,7 @@ async def update_all_playlists() -> None:
             sync_log = SyncLog(
                 job_type="playlist_update",
                 status=SyncStatus.RUNNING,
-                started_at=datetime.utcnow(),
+                started_at=datetime.now(timezone.utc),
             )
             db.add(sync_log)
             await db.flush()
@@ -101,7 +102,7 @@ async def update_all_playlists() -> None:
 
             # Update sync log
             sync_log.status = SyncStatus.SUCCESS if not errors else SyncStatus.FAILED
-            sync_log.completed_at = datetime.utcnow()
+            sync_log.completed_at = datetime.now(timezone.utc)
             sync_log.details = (
                 f"Updated {total_playlists} playlists with {total_episodes} episodes. "
                 f"Errors: {len(errors)}"
@@ -152,6 +153,15 @@ def init_scheduler() -> None:
         IntervalTrigger(minutes=5),
         id="remove_played_episodes",
         name="Remove Played Episodes",
+        replace_existing=True,
+    )
+
+    # Session cleanup every hour
+    scheduler.add_job(
+        cleanup_expired_sessions,
+        IntervalTrigger(hours=1),
+        id="session_cleanup",
+        name="Cleanup Expired Sessions",
         replace_existing=True,
     )
 
@@ -298,7 +308,7 @@ async def remove_played_episodes_from_playlists() -> None:
                         try:
                             # Get Spotify client with valid token
                             access_token = encryption.decrypt(user.access_token)
-                            if datetime.utcnow() >= user.token_expires_at:
+                            if datetime.now(timezone.utc) >= user.token_expires_at:
                                 refresh_token = encryption.decrypt(user.refresh_token)
                                 spotify = SpotifyService()
                                 token_data = await spotify.refresh_access_token(

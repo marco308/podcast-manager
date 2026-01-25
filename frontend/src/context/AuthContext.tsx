@@ -8,7 +8,7 @@ import {
 } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { authApi } from '../api';
-import { getSession, clearSession } from '../api/client';
+import { clearCsrfToken } from '../api/client';
 import type { User } from '../types';
 
 interface AuthContextType {
@@ -25,14 +25,19 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const [isInitialized, setIsInitialized] = useState(false);
-  
-  // Check if we have a session (set in App.tsx or from previous login)
-  const hasSession = !!getSession();
 
-  // Query current user - only if we have a session
+  // Check authentication status via cookie-based session
+  const { data: isAuthenticated, isLoading: isStatusLoading } = useQuery({
+    queryKey: ['auth', 'status'],
+    queryFn: authApi.checkStatus,
+    retry: false,
+    staleTime: 30 * 1000, // 30 seconds
+  });
+
+  // Query current user - only if authenticated
   const {
     data: user,
-    isLoading,
+    isLoading: isUserLoading,
     refetch,
     isError,
   } = useQuery({
@@ -40,15 +45,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     queryFn: authApi.getMe,
     retry: false,
     staleTime: 5 * 60 * 1000, // 5 minutes
-    enabled: hasSession, // Only fetch if we have a session
+    enabled: isAuthenticated === true,
   });
 
-  // Mark as initialized after first query or if no session
+  // Mark as initialized after first status check
   useEffect(() => {
-    if (!hasSession || !isLoading) {
+    if (!isStatusLoading) {
       setIsInitialized(true);
     }
-  }, [isLoading, hasSession]);
+  }, [isStatusLoading]);
 
   // Login redirects to Spotify OAuth
   const login = useCallback(() => {
@@ -62,15 +67,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       // Ignore logout errors
     }
-    clearSession();
+    clearCsrfToken();
     queryClient.clear();
     window.location.href = '/login';
   }, [queryClient]);
 
   const value: AuthContextType = {
     user: user ?? null,
-    isLoading: !isInitialized || (hasSession && isLoading),
-    isAuthenticated: hasSession && !!user && !isError,
+    isLoading: !isInitialized || (isAuthenticated === true && isUserLoading),
+    isAuthenticated: isAuthenticated === true && !!user && !isError,
     login,
     logout,
     refetch,

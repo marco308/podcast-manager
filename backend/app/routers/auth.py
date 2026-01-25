@@ -1,52 +1,122 @@
-"""Authentication router for Spotify OAuth2 flow."""
+"""Authentication router for Spotify OAuth2 flow with secure cookie-based sessions."""
 
 import logging
-from datetime import datetime, timedelta
+import secrets
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import get_db
+from app.models.session import Session
 from app.models.user import User
 from app.schemas.user import UserResponse
 from app.services.encryption import get_encryption_service
+from app.services.session import SessionService, get_session_service
 from app.services.spotify import SpotifyService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
-# In-memory session store with expiration
-# Maps session_id -> (user_id, created_at)
-_sessions: dict[str, tuple[int, datetime]] = {}
+settings = get_settings()
+
+# Cookie configuration
+COOKIE_NAME = "session_id"
+CSRF_COOKIE_NAME = "csrf_token"
+COOKIE_MAX_AGE = 24 * 60 * 60  # 24 hours in seconds
 
 
-def get_current_user_id(session_id: str | None = Query(None, alias="session")) -> int:
-    """Get current user ID from session."""
-    if not session_id or session_id not in _sessions:
-        logger.warning(f"Session not found: {session_id}, available: {list(_sessions.keys())}")
+def get_cookie_settings() -> dict:
+    """Get cookie configuration based on environment."""
+    cookie_settings = {
+        "httponly": True,
+        "secure": True,  # Always True since we use HTTPS
+        "samesite": "lax",  # "lax" allows OAuth redirects
+        "max_age": COOKIE_MAX_AGE,
+        "path": "/",
+    }
+    # Add domain for cross-subdomain cookies (e.g., ".marcuslab.uk")
+    if settings.COOKIE_DOMAIN:
+        cookie_settings["domain"] = settings.COOKIE_DOMAIN
+    return cookie_settings
+
+
+def set_session_cookies(response: Response, session: Session) -> None:
+    """Set session and CSRF cookies on the response."""
+    cookie_settings = get_cookie_settings()
+
+    # Session cookie (HTTP-only)
+    response.set_cookie(key=COOKIE_NAME, value=session.session_id, **cookie_settings)
+
+    # CSRF cookie (NOT HTTP-only so JavaScript can read it)
+    csrf_settings = {**cookie_settings, "httponly": False}
+    response.set_cookie(key=CSRF_COOKIE_NAME, value=session.csrf_token, **csrf_settings)
+
+
+def clear_session_cookies(response: Response) -> None:
+    """Clear session cookies from the response."""
+    delete_kwargs: dict = {"path": "/"}
+    if settings.COOKIE_DOMAIN:
+        delete_kwargs["domain"] = settings.COOKIE_DOMAIN
+    response.delete_cookie(key=COOKIE_NAME, **delete_kwargs)
+    response.delete_cookie(key=CSRF_COOKIE_NAME, **delete_kwargs)
+
+
+async def get_current_session(
+    session_id: str | None = Cookie(None, alias=COOKIE_NAME),
+    db: AsyncSession = Depends(get_db),
+    session_service: SessionService = Depends(get_session_service),
+) -> Session:
+    """Get current session from cookie and validate it."""
+    if not session_id:
+        logger.warning("No session cookie provided")
         raise HTTPException(status_code=401, detail="Not authenticated")
-    
-    user_id, created_at = _sessions[session_id]
-    
-    # Check if session expired (24 hours)
-    if datetime.utcnow() - created_at > timedelta(hours=24):
-        del _sessions[session_id]
-        logger.info(f"Session expired: {session_id}")
-        raise HTTPException(status_code=401, detail="Session expired")
-    
-    return user_id
+
+    session = await session_service.get_session(db, session_id)
+
+    if not session:
+        logger.warning(f"Session not found or expired: {session_id[:8]}...")
+        raise HTTPException(status_code=401, detail="Session expired or invalid")
+
+    # Update last accessed timestamp
+    await session_service.update_last_accessed(db, session)
+
+    return session
+
+
+async def get_current_user_id(
+    session: Session = Depends(get_current_session),
+) -> int:
+    """Get current user ID from session."""
+    return session.user_id
+
+
+def validate_csrf_token(
+    x_csrf_token: str | None = Header(None, alias="X-CSRF-Token"),
+    session: Session = Depends(get_current_session),
+) -> Session:
+    """Validate CSRF token for state-changing operations.
+
+    Use this dependency on POST, PUT, PATCH, DELETE endpoints.
+    """
+    if not x_csrf_token:
+        raise HTTPException(status_code=403, detail="CSRF token missing")
+
+    if not secrets.compare_digest(x_csrf_token, session.csrf_token):
+        raise HTTPException(status_code=403, detail="CSRF token invalid")
+
+    return session
 
 
 @router.get("/login")
 async def login() -> RedirectResponse:
     """Redirect to Spotify authorization page."""
-    settings = get_settings()
     auth_url = settings.spotify_auth_url
-    logger.info(f"Redirecting to Spotify auth URL: {auth_url}")
+    logger.info("Redirecting to Spotify auth URL")
     return RedirectResponse(url=auth_url)
 
 
@@ -56,23 +126,25 @@ async def callback(
     state: str | None = Query(None),
     error: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
+    session_service: SessionService = Depends(get_session_service),
 ) -> RedirectResponse:
     """Handle Spotify OAuth callback.
 
     Exchanges the authorization code for tokens, creates/updates user,
-    then redirects to the frontend with the session ID in the query string.
+    creates a database session, sets cookies, then redirects to frontend.
     """
-    logger.info(f"Callback received: code={code}, state={state}, error={error}")
-    
+    logger.info(
+        f"Callback received: code={'present' if code else 'missing'}, error={error}"
+    )
+
     if error:
         logger.error(f"OAuth error: {error}")
         raise HTTPException(status_code=400, detail=f"OAuth error: {error}")
-    
+
     if not code:
         logger.error("No authorization code provided")
         raise HTTPException(status_code=400, detail="No authorization code provided")
-    
-    settings = get_settings()
+
     encryption = get_encryption_service()
 
     try:
@@ -103,7 +175,7 @@ async def callback(
             user.access_token = encrypted_access
             user.refresh_token = encrypted_refresh
             user.token_expires_at = token_data["expires_at"]
-            user.updated_at = datetime.utcnow()
+            user.updated_at = datetime.now(timezone.utc)
             logger.info(f"Updated existing user: {user.id}")
         else:
             # Create new user
@@ -122,22 +194,22 @@ async def callback(
         await db.commit()
         logger.info(f"Committed user to database: {user.id}")
 
-        # Create session AFTER user is committed
-        import secrets
+        # Create database-backed session
+        session = await session_service.create_session(db, user.id)
+        await db.commit()
+        logger.info(f"Created session for user {user.id}")
 
-        session_id = secrets.token_urlsafe(32)
-        _sessions[session_id] = (user.id, datetime.utcnow())
-        logger.info(f"Created session {session_id} for user {user.id}")
-
-        # Redirect the browser back to the frontend with the session ID
+        # Create redirect response with cookies
         frontend_base = settings.FRONTEND_URL.rstrip("/")
-        redirect_url = f"{frontend_base}/?session={session_id}"
-        logger.info(f"Redirecting to frontend with session: {redirect_url}")
-        return RedirectResponse(url=redirect_url)
+        response = RedirectResponse(url=frontend_base, status_code=302)
+        set_session_cookies(response, session)
+
+        logger.info("Redirecting to frontend with session cookie")
+        return response
 
     except Exception as e:
         logger.exception(f"OAuth callback failed: {str(e)}")
-        raise HTTPException(status_code=400, detail=f"Authentication failed: {str(e)}")
+        raise HTTPException(status_code=400, detail="Authentication failed")
 
 
 @router.get("/me", response_model=UserResponse)
@@ -155,20 +227,41 @@ async def get_me(
     return user
 
 
+@router.get("/csrf-token")
+async def get_csrf_token(
+    session: Session = Depends(get_current_session),
+) -> dict[str, str]:
+    """Get CSRF token for the current session.
+
+    The frontend can call this to get the CSRF token if the cookie
+    isn't accessible (fallback endpoint).
+    """
+    return {"csrf_token": session.csrf_token}
+
+
 @router.post("/logout")
 async def logout(
-    session_id: str = Query(..., alias="session"),
+    response: Response,
+    session: Session = Depends(get_current_session),
+    db: AsyncSession = Depends(get_db),
+    session_service: SessionService = Depends(get_session_service),
 ) -> dict[str, str]:
     """Clear session and log out."""
-    if session_id in _sessions:
-        del _sessions[session_id]
+    await session_service.delete_session(db, session.session_id)
+    await db.commit()
+    clear_session_cookies(response)
     return {"message": "Logged out successfully"}
 
 
 @router.get("/status")
 async def auth_status(
-    session_id: str | None = Query(None, alias="session"),
+    session_id: str | None = Cookie(None, alias=COOKIE_NAME),
+    db: AsyncSession = Depends(get_db),
+    session_service: SessionService = Depends(get_session_service),
 ) -> dict[str, bool]:
     """Check if user is authenticated."""
-    is_authenticated = session_id is not None and session_id in _sessions
-    return {"authenticated": is_authenticated}
+    if not session_id:
+        return {"authenticated": False}
+
+    session = await session_service.get_session(db, session_id)
+    return {"authenticated": session is not None}

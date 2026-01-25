@@ -1,22 +1,26 @@
 import axios, { type AxiosError, type AxiosInstance } from 'axios';
 import type { ApiError } from '../types';
 
-// Session storage key
-const SESSION_KEY = 'podcast_manager_session';
+// CSRF token storage (read from cookie)
+let csrfToken: string | null = null;
 
-// Get session from localStorage
-export function getSession(): string | null {
-  return localStorage.getItem(SESSION_KEY);
+// Get CSRF token from cookie
+function getCsrfTokenFromCookie(): string | null {
+  const match = document.cookie.match(/(?:^|; )csrf_token=([^;]*)/);
+  return match ? decodeURIComponent(match[1]) : null;
 }
 
-// Set session in localStorage
-export function setSession(sessionId: string): void {
-  localStorage.setItem(SESSION_KEY, sessionId);
+// Get CSRF token (from cookie or cached)
+export function getCsrfToken(): string | null {
+  if (!csrfToken) {
+    csrfToken = getCsrfTokenFromCookie();
+  }
+  return csrfToken;
 }
 
-// Clear session from localStorage
-export function clearSession(): void {
-  localStorage.removeItem(SESSION_KEY);
+// Clear CSRF token (called on logout)
+export function clearCsrfToken(): void {
+  csrfToken = null;
 }
 
 // Create axios instance with base configuration
@@ -25,17 +29,19 @@ const apiClient: AxiosInstance = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  // CRITICAL: Include cookies in requests
+  withCredentials: true,
 });
 
-// Request interceptor to add session parameter
+// Request interceptor to add CSRF token for state-changing requests
 apiClient.interceptors.request.use((config) => {
-  const session = getSession();
-  if (session) {
-    // Add session as query parameter
-    config.params = {
-      ...config.params,
-      session,
-    };
+  // Add CSRF token for POST, PUT, PATCH, DELETE requests
+  const method = config.method?.toUpperCase();
+  if (method && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+    const token = getCsrfToken();
+    if (token) {
+      config.headers['X-CSRF-Token'] = token;
+    }
   }
   return config;
 });
@@ -46,11 +52,19 @@ apiClient.interceptors.response.use(
   (error: AxiosError<ApiError>) => {
     // Handle 401 Unauthorized - redirect to login
     if (error.response?.status === 401) {
-      clearSession();
+      clearCsrfToken();
       // Only redirect if not already on login page
       if (window.location.pathname !== '/login') {
         window.location.href = '/login';
       }
+    }
+    // Handle 403 Forbidden (CSRF failure) - clear cached token and retry
+    if (
+      error.response?.status === 403 &&
+      error.response?.data?.detail?.includes('CSRF')
+    ) {
+      // Clear cached token so next request reads fresh from cookie
+      csrfToken = null;
     }
     return Promise.reject(error);
   }

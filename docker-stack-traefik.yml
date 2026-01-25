@@ -20,6 +20,7 @@ services:
       - .env
     environment:
       - DATABASE_URL=sqlite+aiosqlite:///./data/podcast_manager.db
+      - COOKIE_DOMAIN=.marcuslab.uk
     volumes:
       - podcast_data:/app/data
     healthcheck:
