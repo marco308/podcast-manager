@@ -9,42 +9,42 @@ This document outlines issues identified during a comprehensive code review of t
 
 ## Summary
 
-| Severity | Count |
-|----------|-------|
-| Critical | 5 |
-| High | 6 |
-| Medium | 16 |
-| Low | 12 |
-| **Total** | **39** |
+| Severity | Count | Fixed |
+|----------|-------|-------|
+| Critical | 5 | 3 |
+| High | 6 | 2 |
+| Medium | 16 | 2 |
+| Low | 12 | 0 |
+| **Total** | **39** | **7** |
 
 ---
 
 ## Critical Security Issues
 
-### 1. Session Management Security Vulnerability
+### 1. ~~Session Management Security Vulnerability~~ ✅ FIXED
 
-- **File:** `backend/app/routers/auth.py:22-41`
-- **Issue:** In-memory session store using Python dictionary
-  - Sessions stored in volatile memory, lost on server restart
-  - No session persistence to database
-  - No session revocation mechanism
-  - Sessions exposed in URL query parameters (`?session=xxx`)
-  - Session IDs passed via URL in OAuth callback
-- **Risk:** HIGH - Session hijacking, XSS vulnerability through URL exposure
-- **Recommendation:**
-  - Store sessions in database with proper encryption
-  - Use secure HTTP-only cookies instead of URL query parameters
-  - Implement session expiration and cleanup
+- **File:** `backend/app/routers/auth.py`
+- **Issue:** ~~In-memory session store using Python dictionary~~
+- **Status:** **FIXED** (2026-01-25)
+- **Resolution:**
+  - Created database-backed sessions (`backend/app/models/session.py`)
+  - Implemented HTTP-only secure cookies instead of URL parameters
+  - Added CSRF token protection with double-submit cookie pattern
+  - Added session cleanup background job (`backend/app/jobs/session_cleanup.py`)
+  - Sessions persist across server restarts
+  - Cross-subdomain cookie sharing configured for production
 
-### 2. Deprecated datetime.utcnow() Usage
+### 2. ~~Deprecated datetime.utcnow() Usage~~ ✅ FIXED
 
-- **Files:**
-  - `backend/app/routers/auth.py:36, 106, 129`
-  - `backend/app/jobs/scheduler.py:41, 73, 104, 301`
-  - `backend/app/services/spotify.py:63, 95`
-- **Issue:** Using deprecated `datetime.utcnow()` instead of `datetime.now(timezone.utc)` (deprecated as of Python 3.12)
-- **Risk:** MEDIUM - Code will break in Python 3.12+
-- **Action:** Replace all `datetime.utcnow()` with `datetime.now(timezone.utc)`
+- **Files:** Multiple backend files
+- **Issue:** ~~Using deprecated `datetime.utcnow()` instead of `datetime.now(timezone.utc)`~~
+- **Status:** **FIXED** (2026-01-25)
+- **Resolution:** Replaced all `datetime.utcnow()` with `datetime.now(timezone.utc)` in:
+  - `backend/app/routers/auth.py`
+  - `backend/app/routers/podcasts.py`
+  - `backend/app/routers/playlists.py`
+  - `backend/app/jobs/scheduler.py`
+  - `backend/app/services/session.py` (new file)
 
 ### 3. Debug Mode Enabled in Production
 
@@ -53,12 +53,12 @@ This document outlines issues identified during a comprehensive code review of t
 - **Risk:** MEDIUM - Information disclosure about internal system
 - **Action:** Set `DEBUG=false` for production
 
-### 4. Bare Exception Handlers
+### 4. ~~Bare Exception Handlers~~ ✅ FIXED
 
-- **File:** `backend/app/database.py:41`
-- **Issue:** Catches all exceptions with `except Exception:` without logging or proper handling
-- **Risk:** MEDIUM - Silent failures, difficult debugging
-- **Note:** 18 similar bare `except Exception` handlers found across the codebase
+- **File:** `backend/app/database.py`, `backend/app/routers/podcasts.py`
+- **Issue:** ~~Catches all exceptions with `except Exception:` without logging or proper handling~~
+- **Status:** **FIXED** (2026-01-25)
+- **Resolution:** Added proper logging to all bare exception handlers. Silent failures now logged with context for debugging.
 
 ### 5. CORS Configuration Too Permissive
 
@@ -81,12 +81,12 @@ This document outlines issues identified during a comprehensive code review of t
 - **Risk:** MEDIUM - Potential for unexpected behavior with malformed input
 - **Recommendation:** Add validation using Pydantic models
 
-### 8. Error Information Disclosure in API Responses
+### 8. ~~Error Information Disclosure in API Responses~~ ✅ FIXED
 
-- **File:** `backend/app/routers/auth.py:140`
-- **Issue:** Exception details returned directly to client: `detail=f"Authentication failed: {str(e)}"`
-- **Risk:** MEDIUM - Internal error information disclosure
-- **Recommendation:** Log full error server-side, return generic message to client
+- **File:** `backend/app/routers/auth.py`, `backend/app/routers/podcasts.py`
+- **Issue:** ~~Exception details returned directly to client~~
+- **Status:** **FIXED** (2026-01-25)
+- **Resolution:** Full errors now logged server-side with `logger.exception()`. Generic error messages returned to clients without exposing internal details.
 
 ### 9. Missing HTTPS Enforcement in Frontend
 
@@ -107,12 +107,17 @@ This document outlines issues identified during a comprehensive code review of t
 - **Issue:** Delete operation doesn't explicitly commit transaction
 - **Risk:** LOW-MEDIUM - Relies on dependency injection to commit; potential data consistency issues
 
-### 12. No CSRF Token Implementation
+### 12. ~~No CSRF Token Implementation~~ ✅ FIXED
 
 - **Files:** Frontend and Backend
-- **Issue:** No CSRF token validation on state-changing operations
-- **Risk:** MEDIUM - CSRF attack possible
-- **Recommendation:** Implement CSRF token exchange in OAuth flow
+- **Issue:** ~~No CSRF token validation on state-changing operations~~
+- **Status:** **FIXED** (2026-01-25)
+- **Resolution:**
+  - CSRF token generated on session creation and stored in database
+  - CSRF token sent via non-HTTP-only cookie for JavaScript access
+  - Frontend reads CSRF token from cookie and sends via `X-CSRF-Token` header
+  - Backend validates CSRF token on all POST/PATCH/DELETE endpoints
+  - Implemented in `backend/app/routers/auth.py`, `podcasts.py`, `playlists.py`
 
 ---
 
@@ -138,11 +143,12 @@ This document outlines issues identified during a comprehensive code review of t
 - **Risk:** MEDIUM - Exposure of sensitive data in logs
 - **Recommendation:** Remove or redact sensitive information from logs
 
-### 16. Weak Session Expiration Validation
+### 16. ~~Weak Session Expiration Validation~~ ✅ FIXED
 
-- **File:** `backend/app/routers/auth.py:36`
-- **Issue:** Session expiration only checked on request, not enforced proactively
-- **Risk:** LOW-MEDIUM - Expired sessions could be reused briefly
+- **File:** `backend/app/services/session.py`
+- **Issue:** ~~Session expiration only checked on request, not enforced proactively~~
+- **Status:** **FIXED** (2026-01-25)
+- **Resolution:** Sessions now have `expires_at` timestamp validated on every request. Background job runs hourly to delete expired sessions from database.
 
 ### 17. Missing API Documentation
 
@@ -150,12 +156,12 @@ This document outlines issues identified during a comprehensive code review of t
 - **Risk:** LOW - Makes API harder to understand for security audits
 - **Recommendation:** Enable FastAPI's automatic Swagger documentation
 
-### 18. Unencrypted SQLite Database
+### 18. Unencrypted SQLite Database — WON'T FIX
 
 - **File:** `.env:29`
 - **Issue:** `DATABASE_URL=sqlite+aiosqlite:///./data/podcast_manager.db` - SQLite files unencrypted on disk
 - **Risk:** MEDIUM - If server compromised, database fully exposed
-- **Recommendation:** Use PostgreSQL with encryption at rest, or encrypt SQLite
+- **Status:** **WON'T FIX** - SQLite is intentional for simplicity. Sensitive tokens are already encrypted at rest with Fernet. Host-level disk encryption recommended if needed.
 
 ### 19. No Request Size Limits
 
@@ -231,11 +237,11 @@ This document outlines issues identified during a comprehensive code review of t
 
 ## Missing Features / Implementations
 
-### 29. No Multi-User Session Isolation
+### 29. ~~No Multi-User Session Isolation~~ ✅ FIXED
 
-- **Issue:** Session store is global and not user-specific validation
-- **Risk:** MEDIUM - Users could theoretically access each other's sessions
-- **Recommendation:** Validate `user_id` matches `session_id`
+- **Issue:** ~~Session store is global and not user-specific validation~~
+- **Status:** **FIXED** (2026-01-25)
+- **Resolution:** Sessions now stored in database with `user_id` foreign key. Each session is uniquely tied to a user and validated on every request via `backend/app/services/session.py`.
 
 ### 30. No Account Deletion
 
@@ -267,21 +273,24 @@ The following security practices are correctly implemented:
 3. **Frontend Security Headers:** nginx.conf includes security headers
 4. **Token Encryption:** Spotify tokens encrypted at rest with Fernet
 5. **Current Python Version:** Python 3.11 is appropriately current
+6. **Secure Session Management:** Database-backed sessions with HTTP-only secure cookies (added 2026-01-25)
+7. **CSRF Protection:** Double-submit cookie pattern with token validation (added 2026-01-25)
+8. **Session Cleanup:** Automated hourly cleanup of expired sessions (added 2026-01-25)
 
 ---
 
 ## Recommended Immediate Actions
 
-| Priority | Action |
-|----------|--------|
-| 1 | **CRITICAL:** Replace session management with database-backed secure sessions |
-| 2 | **HIGH:** Replace `datetime.utcnow()` with `datetime.now(timezone.utc)` |
-| 3 | **HIGH:** Set `DEBUG=false` in production |
-| 4 | **HIGH:** Implement proper error handling with exception logging |
-| 5 | **HIGH:** Add input validation and rate limiting |
-| 6 | **MEDIUM:** Implement CSRF token protection |
-| 7 | **MEDIUM:** Add comprehensive test suite |
-| 8 | **MEDIUM:** Implement audit logging |
+| Priority | Action | Status |
+|----------|--------|--------|
+| 1 | ~~**CRITICAL:** Replace session management with database-backed secure sessions~~ | ✅ Done |
+| 2 | ~~**HIGH:** Replace `datetime.utcnow()` with `datetime.now(timezone.utc)`~~ | ✅ Done |
+| 3 | **HIGH:** Set `DEBUG=false` in production | Pending |
+| 4 | ~~**HIGH:** Implement proper error handling with exception logging~~ | ✅ Done |
+| 5 | **HIGH:** Add input validation and rate limiting | Pending |
+| 6 | ~~**MEDIUM:** Implement CSRF token protection~~ | ✅ Done |
+| 7 | **MEDIUM:** Add comprehensive test suite | Pending |
+| 8 | **MEDIUM:** Implement audit logging | Pending |
 
 ---
 

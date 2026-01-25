@@ -1,9 +1,12 @@
 """Podcasts router for managing podcast metadata."""
 
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+
+logger = logging.getLogger(__name__)
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -146,9 +149,10 @@ async def unfollow_podcast(
     try:
         await spotify.unfollow_show(spotify_id)
     except Exception as e:
+        logger.exception(f"Failed to unfollow podcast {spotify_id} on Spotify: {e}")
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to unfollow podcast on Spotify: {str(e)}"
+            detail="Failed to unfollow podcast on Spotify"
         )
 
     # Remove from local database
@@ -215,8 +219,9 @@ async def sync_podcasts(
                 if total_eps > 50 and len(episodes) > 0:
                     unplayed_ratio = unplayed_count / len(episodes)
                     unplayed_count = int(total_eps * unplayed_ratio)
-            except Exception:
+            except Exception as e:
                 # If we can't fetch episodes, keep previous count or 0
+                logger.warning(f"Failed to fetch episodes for {spotify_id}: {e}")
                 unplayed_count = podcast.unplayed_episodes if podcast else 0
 
             if podcast:
