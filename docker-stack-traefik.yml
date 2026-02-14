@@ -74,11 +74,17 @@ services:
           - node.hostname == HomeBase
       labels:
         - "traefik.enable=true"
+        # HTTPS router
         - "traefik.http.routers.podcastmanager-frontend.rule=Host(`podcastmanager.marcuslab.uk`)"
         - "traefik.http.routers.podcastmanager-frontend.entrypoints=websecure"
         - "traefik.http.routers.podcastmanager-frontend.tls.certresolver=letsencrypt"
-        - "traefik.http.routers.podcastmanager-frontend.priority=1"
         - "traefik.http.services.podcastmanager-frontend.loadbalancer.server.port=80"
+        # HTTP to HTTPS redirect
+        - "traefik.http.routers.podcastmanager-frontend-http.rule=Host(`podcastmanager.marcuslab.uk`)"
+        - "traefik.http.routers.podcastmanager-frontend-http.entrypoints=web"
+        - "traefik.http.routers.podcastmanager-frontend-http.middlewares=podcastmanager-redirect-to-https"
+        - "traefik.http.middlewares.podcastmanager-redirect-to-https.redirectscheme.scheme=https"
+        - "traefik.http.middlewares.podcastmanager-redirect-to-https.redirectscheme.permanent=true"
       restart_policy:
         condition: any
         delay: 5s

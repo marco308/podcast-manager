@@ -48,10 +48,11 @@ export function Dashboard() {
 
   // Calculate stats
   const totalPodcasts = podcasts?.length || 0;
-  const categorizedPodcasts = podcasts?.filter((p) => p.category !== 'none').length || 0;
-  const primaryCount = podcasts?.filter((p) => p.category === 'primary').length || 0;
-  const newsCount = podcasts?.filter((p) => p.category === 'news').length || 0;
-  const backgroundCount = podcasts?.filter((p) => p.category === 'background').length || 0;
+  const categorizedPodcasts = podcasts?.filter((p) => p.categories.length > 0).length || 0;
+  const primaryCount = podcasts?.filter((p) => p.categories.includes('primary')).length || 0;
+  const newsCount = podcasts?.filter((p) => p.categories.includes('news')).length || 0;
+  const backgroundCount = podcasts?.filter((p) => p.categories.includes('background')).length || 0;
+  const weekendCount = podcasts?.filter((p) => p.categories.includes('weekend')).length || 0;
 
   // Find last sync time
   const lastSyncedPodcast = podcasts
@@ -146,6 +147,7 @@ export function Dashboard() {
                 <Tag color="blue" style={{ margin: 0 }}>Primary: {primaryCount}</Tag>
                 <Tag color="green" style={{ margin: 0 }}>News: {newsCount}</Tag>
                 <Tag color="purple" style={{ margin: 0 }}>Background: {backgroundCount}</Tag>
+                <Tag color="orange" style={{ margin: 0 }}>Weekend: {weekendCount}</Tag>
               </div>
             </Space>
           </Card>

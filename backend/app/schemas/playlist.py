@@ -13,6 +13,7 @@ class PlaylistRuleType(str, Enum):
     NEWS = "news"
     MORNING = "morning"
     BACKGROUND = "background"
+    WEEKEND = "weekend"
 
 
 class PlaylistOrderingMode(str, Enum):

@@ -61,13 +61,13 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
     setSelectedPodcast(null);
   };
 
-  const handleCategoryChange = async (spotifyId: string, category: PodcastCategory) => {
+  const handleCategoriesChange = async (spotifyId: string, categories: PodcastCategory[]) => {
     setUpdatingId(spotifyId);
     try {
-      await updatePodcast.mutateAsync({ spotifyId, data: { category } });
-      message.success('Category updated');
+      await updatePodcast.mutateAsync({ spotifyId, data: { categories } });
+      message.success('Categories updated');
     } catch {
-      message.error('Failed to update category');
+      message.error('Failed to update categories');
     } finally {
       setUpdatingId(null);
     }
@@ -150,13 +150,13 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
       sorter: (a, b) => a.unplayed_episodes - b.unplayed_episodes,
     },
     {
-      title: 'Category',
-      key: 'category',
-      width: 130,
+      title: 'Categories',
+      key: 'categories',
+      width: 200,
       render: (_, record) => (
         <CategorySelect
-          value={record.category}
-          onChange={(value) => handleCategoryChange(record.spotify_id, value)}
+          value={record.categories}
+          onChange={(value) => handleCategoriesChange(record.spotify_id, value)}
           loading={updatingId === record.spotify_id}
         />
       ),
@@ -164,9 +164,13 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
         { text: 'Primary', value: 'primary' },
         { text: 'News', value: 'news' },
         { text: 'Background', value: 'background' },
-        { text: 'None', value: 'none' },
+        { text: 'Weekend', value: 'weekend' },
+        { text: 'Uncategorized', value: '_uncategorized' },
       ],
-      onFilter: (value, record) => record.category === value,
+      onFilter: (value, record) => {
+        if (value === '_uncategorized') return record.categories.length === 0;
+        return record.categories.includes(value as PodcastCategory);
+      },
     },
     {
       title: 'Sequential',
@@ -295,16 +299,24 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
                   {podcast.publisher}
                 </div>
                 <Space size={4} wrap>
-                  <Tag
-                    color={
-                      podcast.category === 'primary' ? 'blue' :
-                      podcast.category === 'news' ? 'green' :
-                      podcast.category === 'background' ? 'purple' : 'default'
-                    }
-                    style={{ margin: 0 }}
-                  >
-                    {podcast.category}
-                  </Tag>
+                  {podcast.categories.length > 0 ? (
+                    podcast.categories.map((cat) => (
+                      <Tag
+                        key={cat}
+                        color={
+                          cat === 'primary' ? 'blue' :
+                          cat === 'news' ? 'green' :
+                          cat === 'background' ? 'purple' :
+                          cat === 'weekend' ? 'orange' : 'default'
+                        }
+                        style={{ margin: 0 }}
+                      >
+                        {cat}
+                      </Tag>
+                    ))
+                  ) : (
+                    <Tag color="default" style={{ margin: 0 }}>uncategorized</Tag>
+                  )}
                   <Tag color="default" style={{ margin: 0 }}>{podcast.total_episodes} eps</Tag>
                   <Tag color="blue" style={{ margin: 0 }}>{podcast.unplayed_episodes} unplayed</Tag>
                   {podcast.is_sequential && <Tag color="orange" style={{ margin: 0 }}>Seq</Tag>}
@@ -370,7 +382,7 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
             }}
             size="middle"
             rowClassName={(record) => {
-              return record.category !== 'none' ? `category-${record.category}` : '';
+              return record.categories.length > 0 ? `category-${record.categories[0]}` : '';
             }}
           />
         </div>
@@ -409,12 +421,12 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
             <Divider style={{ margin: '16px 0' }} />
 
             <Form layout="vertical">
-              <Form.Item label="Category" style={{ marginBottom: 16 }}>
+              <Form.Item label="Categories" style={{ marginBottom: 16 }}>
                 <CategorySelect
-                  value={selectedPodcast.category}
+                  value={selectedPodcast.categories}
                   onChange={(value) => {
-                    handleCategoryChange(selectedPodcast.spotify_id, value);
-                    setSelectedPodcast({ ...selectedPodcast, category: value });
+                    handleCategoriesChange(selectedPodcast.spotify_id, value);
+                    setSelectedPodcast({ ...selectedPodcast, categories: value });
                   }}
                   loading={updatingId === selectedPodcast.spotify_id}
                 />

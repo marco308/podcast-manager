@@ -11,7 +11,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models.podcast import Podcast, PodcastCategory
+from app.models.podcast import Podcast
 from app.models.session import Session
 from app.models.user import User
 from app.routers.auth import get_current_user_id, validate_csrf_token
@@ -56,12 +56,15 @@ async def list_podcasts(
     query = select(Podcast)
 
     if category:
-        query = query.where(Podcast.category == PodcastCategory(category.value))
+        category_filter = Podcast.categories.op("LIKE")(f'%"{category.value}"%')
+        query = query.where(category_filter)
 
     # Get total count
     count_query = select(func.count()).select_from(Podcast)
     if category:
-        count_query = count_query.where(Podcast.category == PodcastCategory(category.value))
+        count_query = count_query.where(
+            Podcast.categories.op("LIKE")(f'%"{category.value}"%')
+        )
 
     total_result = await db.execute(count_query)
     total = total_result.scalar() or 0
@@ -109,8 +112,8 @@ async def update_podcast(
         raise HTTPException(status_code=404, detail="Podcast not found")
 
     # Update fields if provided
-    if update_data.category is not None:
-        podcast.category = PodcastCategory(update_data.category.value)
+    if update_data.categories is not None:
+        podcast.categories = [cat.value for cat in update_data.categories]
     if update_data.is_sequential is not None:
         podcast.is_sequential = update_data.is_sequential
     if update_data.is_weekend_only is not None:

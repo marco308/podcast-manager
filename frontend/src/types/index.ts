@@ -9,7 +9,7 @@ export interface User {
 }
 
 // Podcast types
-export type PodcastCategory = 'primary' | 'news' | 'background' | 'none';
+export type PodcastCategory = 'primary' | 'news' | 'background' | 'weekend';
 
 export interface Podcast {
   id: number;
@@ -20,7 +20,7 @@ export interface Podcast {
   publisher: string | null;
   total_episodes: number;
   unplayed_episodes: number;
-  category: PodcastCategory;
+  categories: PodcastCategory[];
   is_sequential: boolean;
   is_weekend_only: boolean;
   morning_order: number | null;  // DEPRECATED: use playlist_order
@@ -31,7 +31,7 @@ export interface Podcast {
 }
 
 export interface PodcastUpdate {
-  category?: PodcastCategory;
+  categories?: PodcastCategory[];
   is_sequential?: boolean;
   is_weekend_only?: boolean;
   morning_order?: number | null;  // DEPRECATED: use playlist_order
@@ -39,7 +39,7 @@ export interface PodcastUpdate {
 }
 
 // Playlist types
-export type PlaylistRuleType = 'primary' | 'news' | 'morning' | 'background';
+export type PlaylistRuleType = 'primary' | 'news' | 'morning' | 'background' | 'weekend';
 export type PlaylistOrderingMode = 'default' | 'podcast_order' | 'chronological_asc' | 'chronological_desc';
 
 export interface Playlist {

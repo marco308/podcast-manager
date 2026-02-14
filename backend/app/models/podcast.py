@@ -3,7 +3,7 @@
 from datetime import datetime
 from enum import Enum as PyEnum
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, Enum
+from sqlalchemy import Boolean, DateTime, Integer, String, Text, JSON
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -16,7 +16,7 @@ class PodcastCategory(str, PyEnum):
     PRIMARY = "primary"
     NEWS = "news"
     BACKGROUND = "background"
-    NONE = "none"
+    WEEKEND = "weekend"
 
 
 class Podcast(Base):
@@ -34,11 +34,11 @@ class Podcast(Base):
     unplayed_episodes: Mapped[int] = mapped_column(Integer, default=0)
 
     # Custom categorization fields
-    category: Mapped[PodcastCategory] = mapped_column(
-        Enum(PodcastCategory),
-        default=PodcastCategory.NONE,
+    categories: Mapped[list[str]] = mapped_column(
+        JSON,
+        default=list,
         nullable=False,
-        index=True,
+        server_default="[]",
     )
     is_sequential: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_weekend_only: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -56,5 +56,9 @@ class Podcast(Base):
         DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
+    def has_category(self, category: PodcastCategory) -> bool:
+        """Check if this podcast belongs to the given category."""
+        return category.value in (self.categories or [])
+
     def __repr__(self) -> str:
-        return f"<Podcast(id={self.id}, name={self.name}, category={self.category})>"
+        return f"<Podcast(id={self.id}, name={self.name}, categories={self.categories})>"

@@ -59,7 +59,7 @@ import {
   useUpdatePodcast,
 } from '../hooks';
 import { LoadingSpinner } from '../components';
-import type { Playlist, PlaylistRuleType, PlaylistCreate, PlaylistUpdate, Podcast } from '../types';
+import type { Playlist, PlaylistRuleType, PlaylistCreate, PlaylistUpdate, Podcast, PodcastCategory } from '../types';
 
 dayjs.extend(relativeTime);
 
@@ -71,6 +71,7 @@ const ruleTypeOptions: { value: PlaylistRuleType; label: string; color: string }
   { value: 'news', label: 'News', color: 'green' },
   { value: 'morning', label: 'Morning', color: 'orange' },
   { value: 'background', label: 'Background', color: 'purple' },
+  { value: 'weekend', label: 'Weekend', color: 'orange' },
 ];
 
 interface SortableItemProps {
@@ -165,9 +166,10 @@ function PlaylistOrderingSection({ playlist }: PlaylistOrderingSectionProps) {
     news: 'news',
     morning: 'news', // Morning playlists use NEWS category podcasts
     background: 'background',
+    weekend: 'weekend',
   };
 
-  const category = categoryMap[playlist.rule_type] as 'primary' | 'news' | 'background' | 'none';
+  const category = categoryMap[playlist.rule_type] as PodcastCategory;
 
   const { data: podcasts, isLoading } = usePodcasts(category);
   const updatePodcast = useUpdatePodcast();

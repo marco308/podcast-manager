@@ -17,6 +17,7 @@ class PlaylistRuleType(str, PyEnum):
     NEWS = "news"
     MORNING = "morning"
     BACKGROUND = "background"
+    WEEKEND = "weekend"
 
 
 class PlaylistOrderingMode(str, PyEnum):
