@@ -1,12 +1,15 @@
 """Spotify Web API client service."""
 
+import asyncio
+import logging
 from datetime import datetime, timedelta
 from typing import Any
-from urllib.parse import quote
 
 import httpx
 
 from app.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 SPOTIFY_API_BASE = "https://api.spotify.com/v1"
 SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token"
@@ -191,12 +194,11 @@ class SpotifyService:
             return response.json()
 
     async def create_playlist(
-        self, user_id: str, name: str, description: str = "", public: bool = False
+        self, name: str, description: str = "", public: bool = False
     ) -> dict[str, Any]:
         """Create a new playlist.
 
         Args:
-            user_id: Spotify user ID.
             name: Playlist name.
             description: Playlist description.
             public: Whether the playlist should be public.
@@ -205,10 +207,8 @@ class SpotifyService:
             Created playlist data.
         """
         async with httpx.AsyncClient() as client:
-            # URL-encode the user_id to handle special characters like #
-            encoded_user_id = quote(user_id, safe="")
             response = await client.post(
-                f"{SPOTIFY_API_BASE}/users/{encoded_user_id}/playlists",
+                f"{SPOTIFY_API_BASE}/me/playlists",
                 headers=self._headers,
                 json={
                     "name": name,
@@ -232,7 +232,7 @@ class SpotifyService:
             # Spotify limits to 100 items per request
             if len(uris) <= 100:
                 response = await client.put(
-                    f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/tracks",
+                    f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/items",
                     headers=self._headers,
                     json={"uris": uris},
                 )
@@ -240,7 +240,7 @@ class SpotifyService:
             else:
                 # First replace with first 100
                 response = await client.put(
-                    f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/tracks",
+                    f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/items",
                     headers=self._headers,
                     json={"uris": uris[:100]},
                 )
@@ -250,7 +250,7 @@ class SpotifyService:
                 for i in range(100, len(uris), 100):
                     batch = uris[i : i + 100]
                     response = await client.post(
-                        f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/tracks",
+                        f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/items",
                         headers=self._headers,
                         json={"uris": batch},
                     )
@@ -268,11 +268,9 @@ class SpotifyService:
         import json as _json
 
         async with httpx.AsyncClient() as client:
-            # Some httpx/delete implementations don't accept `json` kwarg.
-            # Send raw JSON in the request body via `content` instead.
-            body = _json.dumps({"tracks": [{"uri": uri} for uri in uris]})
+            body = _json.dumps({"items": [{"uri": uri} for uri in uris]})
             response = await client.delete(
-                f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/tracks",
+                f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/items",
                 headers={**self._headers, "Content-Type": "application/json"},
                 content=body,
             )
@@ -293,12 +291,12 @@ class SpotifyService:
         """
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/tracks",
+                f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/items",
                 headers=self._headers,
                 params={
                     "limit": limit,
                     "offset": offset,
-                    "fields": "items(track(uri,resume_point(fully_played))),next,total",
+                    "fields": "items(item(uri,resume_point(fully_played))),next,total",
                 },
             )
             response.raise_for_status()
@@ -325,7 +323,7 @@ class SpotifyService:
         """Get multiple episodes by IDs.
 
         Args:
-            episode_ids: List of Spotify episode IDs (max 50).
+            episode_ids: List of Spotify episode IDs.
 
         Returns:
             List of episode data.
@@ -333,16 +331,18 @@ class SpotifyService:
         if not episode_ids:
             return []
 
-        async with httpx.AsyncClient() as client:
-            # Spotify allows up to 50 episodes per request
-            response = await client.get(
-                f"{SPOTIFY_API_BASE}/episodes",
-                headers=self._headers,
-                params={"ids": ",".join(episode_ids[:50])},
-            )
-            response.raise_for_status()
-            data = response.json()
-            return data.get("episodes", [])
+        semaphore = asyncio.Semaphore(10)
+
+        async def _fetch(episode_id: str) -> dict[str, Any] | None:
+            async with semaphore:
+                try:
+                    return await self.get_episode(episode_id)
+                except Exception:
+                    logger.warning("Failed to fetch episode %s, skipping", episode_id)
+                    return None
+
+        results = await asyncio.gather(*[_fetch(eid) for eid in episode_ids])
+        return [ep for ep in results if ep is not None]
 
     async def get_show_episodes_all(
         self, show_id: str, max_episodes: int = 200
@@ -409,10 +409,13 @@ class SpotifyService:
         Raises:
             httpx.HTTPStatusError: If the request fails.
         """
+        import json as _json
+
         async with httpx.AsyncClient() as client:
+            body = _json.dumps({"ids": [show_id], "type": "show"})
             response = await client.delete(
-                f"{SPOTIFY_API_BASE}/me/shows",
-                headers=self._headers,
-                params={"ids": show_id},
+                f"{SPOTIFY_API_BASE}/me/library",
+                headers={**self._headers, "Content-Type": "application/json"},
+                content=body,
             )
             response.raise_for_status()

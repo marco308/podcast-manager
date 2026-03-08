@@ -345,8 +345,8 @@ async def remove_played_episodes_from_playlists() -> None:
                                     break
 
                                 for track in tracks:
-                                    if track and "track" in track:
-                                        episode = track["track"]
+                                    if track and "item" in track:
+                                        episode = track["item"]
                                         uri = episode.get("uri")
                                         if uri and uri.startswith("spotify:episode:"):
                                             ep_id = uri.split(":")[-1]

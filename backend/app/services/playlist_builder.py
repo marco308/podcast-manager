@@ -486,7 +486,6 @@ class PlaylistBuilder:
         )
 
         spotify_playlist = await spotify.create_playlist(
-            user_id=self._user.spotify_id,
             name=playlist.name,
             description=description,
             public=False,
