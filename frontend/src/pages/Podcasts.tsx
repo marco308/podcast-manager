@@ -37,12 +37,21 @@ export function Podcasts() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 24,
+          flexWrap: 'wrap',
+          gap: 12,
+        }}
+      >
         <div style={{ minWidth: 0 }}>
-          <Title level={4} style={{ marginBottom: 4 }}>Podcasts</Title>
-          <Text type="secondary">
-            Manage your podcast subscriptions and assign categories
-          </Text>
+          <Title level={4} style={{ marginBottom: 4 }}>
+            Podcasts
+          </Title>
+          <Text type="secondary">Manage your podcast subscriptions and assign categories</Text>
         </div>
         <div>
           <Button
@@ -62,8 +71,8 @@ export function Podcasts() {
           description={
             <Space direction="vertical">
               <Text>
-                You don't have any podcasts synced yet. Click the button above to sync your
-                podcast subscriptions from Spotify.
+                You don't have any podcasts synced yet. Click the button above to sync your podcast
+                subscriptions from Spotify.
               </Text>
               <Button
                 type="primary"

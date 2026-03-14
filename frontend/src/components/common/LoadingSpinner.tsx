@@ -7,11 +7,7 @@ interface LoadingSpinnerProps {
   fullScreen?: boolean;
 }
 
-export function LoadingSpinner({
-  size = 'large',
-  tip,
-  fullScreen = false,
-}: LoadingSpinnerProps) {
+export function LoadingSpinner({ size = 'large', tip, fullScreen = false }: LoadingSpinnerProps) {
   const spinnerContent = (
     <Spin
       indicator={<LoadingOutlined style={{ fontSize: size === 'large' ? 48 : 24 }} spin />}

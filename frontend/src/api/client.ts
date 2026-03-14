@@ -59,10 +59,7 @@ apiClient.interceptors.response.use(
       }
     }
     // Handle 403 Forbidden (CSRF failure) - clear cached token and retry
-    if (
-      error.response?.status === 403 &&
-      error.response?.data?.detail?.includes('CSRF')
-    ) {
+    if (error.response?.status === 403 && error.response?.data?.detail?.includes('CSRF')) {
       // Clear cached token so next request reads fresh from cookie
       csrfToken = null;
     }

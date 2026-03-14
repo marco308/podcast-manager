@@ -23,7 +23,7 @@ export interface Podcast {
   categories: PodcastCategory[];
   is_sequential: boolean;
   is_weekend_only: boolean;
-  morning_order: number | null;  // DEPRECATED: use playlist_order
+  morning_order: number | null; // DEPRECATED: use playlist_order
   playlist_order: number | null;
   last_synced_at: string | null;
   created_at: string;
@@ -34,13 +34,17 @@ export interface PodcastUpdate {
   categories?: PodcastCategory[];
   is_sequential?: boolean;
   is_weekend_only?: boolean;
-  morning_order?: number | null;  // DEPRECATED: use playlist_order
+  morning_order?: number | null; // DEPRECATED: use playlist_order
   playlist_order?: number | null;
 }
 
 // Playlist types
 export type PlaylistRuleType = 'primary' | 'news' | 'morning' | 'background' | 'weekend';
-export type PlaylistOrderingMode = 'default' | 'podcast_order' | 'chronological_asc' | 'chronological_desc';
+export type PlaylistOrderingMode =
+  | 'default'
+  | 'podcast_order'
+  | 'chronological_asc'
+  | 'chronological_desc';
 
 export interface Playlist {
   id: number;

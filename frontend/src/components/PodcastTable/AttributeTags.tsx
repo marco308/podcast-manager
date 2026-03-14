@@ -23,9 +23,7 @@ export function AttributeTags({ isSequential, isWeekendOnly }: AttributeTagsProp
           </Tag>
         </Tooltip>
       )}
-      {!isSequential && !isWeekendOnly && (
-        <Tag color="default">—</Tag>
-      )}
+      {!isSequential && !isWeekendOnly && <Tag color="default">—</Tag>}
     </span>
   );
 }

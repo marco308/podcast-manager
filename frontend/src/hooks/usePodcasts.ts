@@ -37,10 +37,7 @@ export function useUpdatePodcast() {
       podcastsApi.update(spotifyId, data),
     onSuccess: (updatedPodcast) => {
       // Update the specific podcast in cache
-      queryClient.setQueryData(
-        podcastKeys.detail(updatedPodcast.spotify_id),
-        updatedPodcast
-      );
+      queryClient.setQueryData(podcastKeys.detail(updatedPodcast.spotify_id), updatedPodcast);
       // Invalidate list queries to refetch
       queryClient.invalidateQueries({ queryKey: podcastKeys.lists() });
     },

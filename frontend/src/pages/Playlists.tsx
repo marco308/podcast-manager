@@ -59,7 +59,14 @@ import {
   useUpdatePodcast,
 } from '../hooks';
 import { LoadingSpinner } from '../components';
-import type { Playlist, PlaylistRuleType, PlaylistCreate, PlaylistUpdate, Podcast, PodcastCategory } from '../types';
+import type {
+  Playlist,
+  PlaylistRuleType,
+  PlaylistCreate,
+  PlaylistUpdate,
+  Podcast,
+  PodcastCategory,
+} from '../types';
 
 dayjs.extend(relativeTime);
 
@@ -81,14 +88,9 @@ interface SortableItemProps {
 }
 
 function SortableItem({ podcast, onOrderChange, updatingId }: SortableItemProps) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: podcast.spotify_id });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: podcast.spotify_id,
+  });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -121,10 +123,14 @@ function SortableItem({ podcast, onOrderChange, updatingId }: SortableItemProps)
         <List.Item.Meta
           title={
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Text ellipsis style={{ maxWidth: 150 }}>{podcast.name}</Text>
+              <Text ellipsis style={{ maxWidth: 150 }}>
+                {podcast.name}
+              </Text>
               {podcast.is_sequential && (
                 <Tooltip title="Sequential podcast - episodes always play oldest-first">
-                  <Tag color="blue" style={{ fontSize: 10, margin: 0 }}>SEQUENTIAL</Tag>
+                  <Tag color="blue" style={{ fontSize: 10, margin: 0 }}>
+                    SEQUENTIAL
+                  </Tag>
                 </Tooltip>
               )}
             </div>
@@ -271,13 +277,14 @@ function PlaylistOrderingSection({ playlist }: PlaylistOrderingSectionProps) {
     return (
       <Card title={`${playlist.name} - Podcast Order`} style={{ marginBottom: 24 }}>
         <Text type="secondary">
-          No {categoryLabel} category podcasts found. Categorize podcasts as {categoryLabel} to set order.
+          No {categoryLabel} category podcasts found. Categorize podcasts as {categoryLabel} to set
+          order.
         </Text>
       </Card>
     );
   }
 
-  const hasSequentialPodcasts = podcasts.some(p => p.is_sequential);
+  const hasSequentialPodcasts = podcasts.some((p) => p.is_sequential);
 
   return (
     <Card
@@ -298,11 +305,7 @@ function PlaylistOrderingSection({ playlist }: PlaylistOrderingSectionProps) {
           style={{ marginBottom: 16 }}
         />
       )}
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCenter}
-        onDragEnd={handleDragEnd}
-      >
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         <SortableContext
           items={localPodcasts.map((p) => p.spotify_id)}
           strategy={verticalListSortingStrategy}
@@ -343,7 +346,7 @@ export function Playlists() {
   // Automatically select the first playlist with podcast_order mode when playlists load
   useEffect(() => {
     if (playlists && !selectedOrderingPlaylist) {
-      const podcastOrderPlaylist = playlists.find(p => p.ordering_mode === 'podcast_order');
+      const podcastOrderPlaylist = playlists.find((p) => p.ordering_mode === 'podcast_order');
       if (podcastOrderPlaylist) {
         setSelectedOrderingPlaylist(podcastOrderPlaylist);
       }
@@ -443,11 +446,7 @@ export function Playlists() {
               <Tag color={ruleTypeOptions.find((o) => o.value === record.rule_type)?.color}>
                 {ruleTypeOptions.find((o) => o.value === record.rule_type)?.label}
               </Tag>
-              {record.is_enabled ? (
-                <Tag color="success">On</Tag>
-              ) : (
-                <Tag color="default">Off</Tag>
-              )}
+              {record.is_enabled ? <Tag color="success">On</Tag> : <Tag color="default">Off</Tag>}
             </div>
           )}
         </div>
@@ -487,11 +486,7 @@ export function Playlists() {
       key: 'is_enabled',
       responsive: ['md'] as const,
       render: (enabled: boolean) =>
-        enabled ? (
-          <Tag color="success">Enabled</Tag>
-        ) : (
-          <Tag color="default">Disabled</Tag>
-        ),
+        enabled ? <Tag color="success">Enabled</Tag> : <Tag color="default">Disabled</Tag>,
     },
     {
       title: 'Last Updated',
@@ -499,9 +494,7 @@ export function Playlists() {
       key: 'last_updated_at',
       responsive: ['xl'] as const,
       render: (date: string | null) => (
-        <Text type="secondary">
-          {date ? dayjs(date).fromNow() : 'Never'}
-        </Text>
+        <Text type="secondary">{date ? dayjs(date).fromNow() : 'Never'}</Text>
       ),
     },
     {
@@ -521,11 +514,7 @@ export function Playlists() {
             </Button>
           </Tooltip>
           <Tooltip title="Edit">
-            <Button
-              size="small"
-              icon={<EditOutlined />}
-              onClick={() => openEditModal(record)}
-            />
+            <Button size="small" icon={<EditOutlined />} onClick={() => openEditModal(record)} />
           </Tooltip>
           <Popconfirm
             title="Delete playlist"
@@ -560,12 +549,21 @@ export function Playlists() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 24,
+          flexWrap: 'wrap',
+          gap: 12,
+        }}
+      >
         <div style={{ minWidth: 0 }}>
-          <Title level={4} style={{ marginBottom: 4 }}>Playlists</Title>
-          <Text type="secondary">
-            Manage your automated playlist mappings
-          </Text>
+          <Title level={4} style={{ marginBottom: 4 }}>
+            Playlists
+          </Title>
+          <Text type="secondary">Manage your automated playlist mappings</Text>
         </div>
         <div>
           <Space wrap>
@@ -584,15 +582,10 @@ export function Playlists() {
       </div>
 
       <div style={{ overflowX: 'auto' }}>
-        <Table
-          dataSource={playlists}
-          columns={columns}
-          rowKey="id"
-          pagination={false}
-        />
+        <Table dataSource={playlists} columns={columns} rowKey="id" pagination={false} />
       </div>
 
-      {playlists && playlists.some(p => p.ordering_mode === 'podcast_order') && (
+      {playlists && playlists.some((p) => p.ordering_mode === 'podcast_order') && (
         <Card style={{ marginBottom: 24, marginTop: 24 }}>
           <div style={{ marginBottom: 16 }}>
             <Text strong>Playlist Custom Ordering</Text>
@@ -602,12 +595,12 @@ export function Playlists() {
                 placeholder="Select a playlist to configure ordering"
                 value={selectedOrderingPlaylist?.id}
                 onChange={(playlistId) => {
-                  const playlist = playlists.find(p => p.id === playlistId);
+                  const playlist = playlists.find((p) => p.id === playlistId);
                   setSelectedOrderingPlaylist(playlist || null);
                 }}
                 options={playlists
-                  .filter(p => p.ordering_mode === 'podcast_order')
-                  .map(p => ({
+                  .filter((p) => p.ordering_mode === 'podcast_order')
+                  .map((p) => ({
                     value: p.id,
                     label: p.name,
                   }))}
@@ -665,39 +658,47 @@ export function Playlists() {
               options={[
                 {
                   value: 'default',
-                  label: <div>
-                    <div>Default (by category)</div>
-                    <Text type="secondary" style={{ fontSize: 11 }}>
-                      Use standard sorting for this category
-                    </Text>
-                  </div>
+                  label: (
+                    <div>
+                      <div>Default (by category)</div>
+                      <Text type="secondary" style={{ fontSize: 11 }}>
+                        Use standard sorting for this category
+                      </Text>
+                    </div>
+                  ),
                 },
                 {
                   value: 'podcast_order',
-                  label: <div>
-                    <div>Custom podcast order</div>
-                    <Text type="secondary" style={{ fontSize: 11 }}>
-                      Manually order podcasts (sequential podcasts always oldest-first)
-                    </Text>
-                  </div>
+                  label: (
+                    <div>
+                      <div>Custom podcast order</div>
+                      <Text type="secondary" style={{ fontSize: 11 }}>
+                        Manually order podcasts (sequential podcasts always oldest-first)
+                      </Text>
+                    </div>
+                  ),
                 },
                 {
                   value: 'chronological_asc',
-                  label: <div>
-                    <div>Oldest first</div>
-                    <Text type="secondary" style={{ fontSize: 11 }}>
-                      Sort episodes by release date (oldest first)
-                    </Text>
-                  </div>
+                  label: (
+                    <div>
+                      <div>Oldest first</div>
+                      <Text type="secondary" style={{ fontSize: 11 }}>
+                        Sort episodes by release date (oldest first)
+                      </Text>
+                    </div>
+                  ),
                 },
                 {
                   value: 'chronological_desc',
-                  label: <div>
-                    <div>Newest first</div>
-                    <Text type="secondary" style={{ fontSize: 11 }}>
-                      Sort episodes by release date (newest first for non-sequential podcasts)
-                    </Text>
-                  </div>
+                  label: (
+                    <div>
+                      <div>Newest first</div>
+                      <Text type="secondary" style={{ fontSize: 11 }}>
+                        Sort episodes by release date (newest first for non-sequential podcasts)
+                      </Text>
+                    </div>
+                  ),
                 },
               ]}
             />
