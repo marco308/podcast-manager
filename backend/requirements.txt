@@ -16,7 +16,6 @@ apscheduler>=3.10.0,<4.0.0
 
 # Security and encryption
 cryptography>=46.0.5
-python-jose[cryptography]>=3.3.0,<4.0.0
 
 # UK public holidays
 holidays>=0.40,<1.0.0

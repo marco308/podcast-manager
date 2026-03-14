@@ -5,7 +5,7 @@ import sys
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -13,6 +13,7 @@ from app.config import get_settings
 from app.database import init_db
 from app.jobs.scheduler import get_job_status, init_scheduler, shutdown_scheduler
 from app.routers import auth_router, playlists_router, podcasts_router
+from app.routers.auth import get_current_user_id
 
 settings = get_settings()
 
@@ -70,16 +71,19 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
     )
 
 
-# CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        settings.FRONTEND_URL,
+# CORS middleware - restrict origins based on environment
+cors_origins = [settings.FRONTEND_URL]
+if settings.DEBUG:
+    cors_origins.extend([
         "https://127.0.0.1:3000",
         "https://localhost:3000",
         "http://localhost:5173",
         "http://localhost:3000",
-    ],
+    ])
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -102,8 +106,8 @@ async def health_check() -> dict:
 
 
 @app.get("/api/jobs/status")
-async def jobs_status() -> dict:
-    """Get scheduler job statuses."""
+async def jobs_status(user_id: int = Depends(get_current_user_id)) -> dict:
+    """Get scheduler job statuses. Requires authentication."""
     return {
         "jobs": get_job_status(),
     }

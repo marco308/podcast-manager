@@ -27,7 +27,9 @@ settings = get_settings()
 # Cookie configuration
 COOKIE_NAME = "session_id"
 CSRF_COOKIE_NAME = "csrf_token"
+OAUTH_STATE_COOKIE_NAME = "oauth_state"
 COOKIE_MAX_AGE = 24 * 60 * 60  # 24 hours in seconds
+OAUTH_STATE_MAX_AGE = 600  # 10 minutes for OAuth flow
 
 
 def get_cookie_settings() -> dict:
@@ -114,10 +116,23 @@ def validate_csrf_token(
 
 @router.get("/login")
 async def login() -> RedirectResponse:
-    """Redirect to Spotify authorization page."""
-    auth_url = settings.spotify_auth_url
-    logger.info("Redirecting to Spotify auth URL")
-    return RedirectResponse(url=auth_url)
+    """Redirect to Spotify authorization page with CSRF state parameter."""
+    state = secrets.token_urlsafe(32)
+    auth_url = settings.spotify_auth_url(state)
+    logger.info("Redirecting to Spotify auth URL with state parameter")
+    response = RedirectResponse(url=auth_url)
+    # Store state in a secure cookie for validation in the callback
+    state_cookie_settings = {
+        "httponly": True,
+        "secure": True,
+        "samesite": "lax",
+        "max_age": OAUTH_STATE_MAX_AGE,
+        "path": "/",
+    }
+    if settings.COOKIE_DOMAIN:
+        state_cookie_settings["domain"] = settings.COOKIE_DOMAIN
+    response.set_cookie(key=OAUTH_STATE_COOKIE_NAME, value=state, **state_cookie_settings)
+    return response
 
 
 @router.get("/callback")
@@ -125,6 +140,7 @@ async def callback(
     code: str | None = Query(None),
     state: str | None = Query(None),
     error: str | None = Query(None),
+    oauth_state: str | None = Cookie(None, alias=OAUTH_STATE_COOKIE_NAME),
     db: AsyncSession = Depends(get_db),
     session_service: SessionService = Depends(get_session_service),
 ) -> RedirectResponse:
@@ -142,6 +158,15 @@ async def callback(
     if not code:
         logger.error("No authorization code provided")
         raise HTTPException(status_code=400, detail="No authorization code provided")
+
+    # Validate OAuth state parameter to prevent CSRF attacks
+    if not state or not oauth_state:
+        logger.error("Missing OAuth state parameter or state cookie")
+        raise HTTPException(status_code=400, detail="Missing OAuth state parameter")
+
+    if not secrets.compare_digest(state, oauth_state):
+        logger.error("OAuth state mismatch - possible CSRF attack")
+        raise HTTPException(status_code=400, detail="OAuth state mismatch")
 
     encryption = get_encryption_service()
 
@@ -200,6 +225,12 @@ async def callback(
         response = RedirectResponse(url=frontend_base, status_code=302)
         set_session_cookies(response, session)
 
+        # Clear the OAuth state cookie
+        delete_kwargs: dict = {"path": "/"}
+        if settings.COOKIE_DOMAIN:
+            delete_kwargs["domain"] = settings.COOKIE_DOMAIN
+        response.delete_cookie(key=OAUTH_STATE_COOKIE_NAME, **delete_kwargs)
+
         logger.info("Redirecting to frontend with session cookie")
         return response
 
@@ -238,7 +269,7 @@ async def get_csrf_token(
 @router.post("/logout")
 async def logout(
     response: Response,
-    session: Session = Depends(get_current_session),
+    session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
     session_service: SessionService = Depends(get_session_service),
 ) -> dict[str, str]:

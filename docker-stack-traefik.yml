@@ -58,8 +58,6 @@ services:
     networks:
       - traefik-public
       - podcast-internal
-    env_file:
-      - .env
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1/health"]
       interval: 30s

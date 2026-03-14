@@ -48,9 +48,8 @@ class Settings(BaseSettings):
     PLAYLIST_UPDATE_HOUR: int = 4
     PLAYLIST_UPDATE_MINUTE: int = 0
 
-    @property
-    def spotify_auth_url(self) -> str:
-        """Build Spotify authorization URL."""
+    def spotify_auth_url(self, state: str) -> str:
+        """Build Spotify authorization URL with OAuth state parameter."""
         import urllib.parse
 
         params = {
@@ -59,6 +58,7 @@ class Settings(BaseSettings):
             "redirect_uri": self.SPOTIFY_REDIRECT_URI,
             "scope": self.SPOTIFY_SCOPES,
             "show_dialog": "true",
+            "state": state,
         }
         return f"https://accounts.spotify.com/authorize?{urllib.parse.urlencode(params)}"
 
