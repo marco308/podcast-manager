@@ -30,7 +30,6 @@ import {
 } from '@ant-design/icons';
 import type { TableProps } from 'antd';
 import dayjs from 'dayjs';
-import relativeTime from 'dayjs/plugin/relativeTime';
 import {
   DndContext,
   closestCenter,
@@ -71,8 +70,6 @@ import type {
   EpisodeMode,
 } from '../types';
 
-dayjs.extend(relativeTime);
-
 const { Title, Text } = Typography;
 const { useBreakpoint } = Grid;
 
@@ -83,7 +80,6 @@ const episodeModeOptions: { value: EpisodeMode; label: string }[] = [
 
 interface SortableItemProps {
   podcast: PlaylistPodcast;
-  playlistId: number;
   onRemove: (podcastId: number) => void;
   removing: boolean;
 }
@@ -110,6 +106,9 @@ function SortableItem({ podcast, onRemove, removing }: SortableItemProps) {
         <div
           {...attributes}
           {...listeners}
+          role="button"
+          tabIndex={0}
+          aria-label="Drag to reorder"
           style={{
             cursor: 'grab',
             marginRight: 12,
@@ -157,6 +156,7 @@ function SortableItem({ podcast, onRemove, removing }: SortableItemProps) {
             loading={removing}
             danger
             type="text"
+            aria-label="Remove from playlist"
           />
         </Tooltip>
       </List.Item>
@@ -169,11 +169,11 @@ interface PlaylistOrderingSectionProps {
 }
 
 function PlaylistOrderingSection({ playlist }: PlaylistOrderingSectionProps) {
-  if (!playlist || playlist.ordering_mode !== 'podcast_order') {
-    return null;
-  }
+  const shouldRender = playlist && playlist.ordering_mode === 'podcast_order';
 
-  const { data: playlistPodcasts, isLoading } = usePlaylistPodcasts(playlist.id);
+  const { data: playlistPodcasts, isLoading } = usePlaylistPodcasts(
+    playlist?.id ?? 0
+  );
   const { data: allPodcasts } = usePodcasts();
   const addPodcasts = useAddPodcastsToPlaylist();
   const removePodcast = useRemovePodcastFromPlaylist();
@@ -212,6 +212,8 @@ function PlaylistOrderingSection({ playlist }: PlaylistOrderingSectionProps) {
       coordinateGetter: sortableKeyboardCoordinates,
     })
   );
+
+  if (!shouldRender) return null;
 
   const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
@@ -330,7 +332,6 @@ function PlaylistOrderingSection({ playlist }: PlaylistOrderingSectionProps) {
                 <SortableItem
                   key={podcast.id}
                   podcast={podcast}
-                  playlistId={playlist.id}
                   onRemove={handleRemove}
                   removing={removingId === podcast.id}
                 />
@@ -395,8 +396,15 @@ export function Playlists() {
   };
 
   const handleSubmit = async () => {
+    let values;
     try {
-      const values = await form.validateFields();
+      values = await form.validateFields();
+    } catch {
+      // Form validation error — Ant Design shows inline errors automatically
+      return;
+    }
+
+    try {
       if (editingPlaylist) {
         const updateData: PlaylistUpdate = {
           name: values.name,
@@ -557,7 +565,7 @@ export function Playlists() {
             </Button>
           </Tooltip>
           <Tooltip title="Edit">
-            <Button size="small" icon={<EditOutlined />} onClick={() => openEditModal(record)} />
+            <Button size="small" icon={<EditOutlined />} onClick={() => openEditModal(record)} aria-label="Edit playlist" />
           </Tooltip>
           <Popconfirm
             title="Delete playlist"
@@ -567,7 +575,7 @@ export function Playlists() {
             okButtonProps={{ danger: true }}
           >
             <Tooltip title="Delete">
-              <Button size="small" icon={<DeleteOutlined />} danger />
+              <Button size="small" icon={<DeleteOutlined />} danger aria-label="Delete playlist" />
             </Tooltip>
           </Popconfirm>
         </Space>

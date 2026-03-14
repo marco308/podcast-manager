@@ -58,10 +58,22 @@ apiClient.interceptors.response.use(
         window.location.href = '/login';
       }
     }
-    // Handle 403 Forbidden (CSRF failure) - clear cached token and retry
-    if (error.response?.status === 403 && error.response?.data?.detail?.includes('CSRF')) {
-      // Clear cached token so next request reads fresh from cookie
+    // Handle 403 Forbidden (CSRF failure) - clear cached token, refresh, and retry once
+    if (
+      error.response?.status === 403 &&
+      error.response?.data?.detail?.includes('CSRF') &&
+      error.config &&
+      !(error.config as unknown as Record<string, unknown>)._csrfRetry
+    ) {
+      // Clear cached token and read fresh from cookie
       csrfToken = null;
+      const freshToken = getCsrfTokenFromCookie();
+      if (freshToken && error.config) {
+        csrfToken = freshToken;
+        error.config.headers['X-CSRF-Token'] = freshToken;
+        (error.config as unknown as Record<string, unknown>)._csrfRetry = true;
+        return apiClient.request(error.config);
+      }
     }
     return Promise.reject(error);
   }

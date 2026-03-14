@@ -7,11 +7,8 @@ import {
   CheckCircleOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
-import relativeTime from 'dayjs/plugin/relativeTime';
 import { usePodcasts, useSyncPodcasts, usePlaylists, useRunAllPlaylists } from '../hooks';
 import { LoadingSpinner } from '../components';
-
-dayjs.extend(relativeTime);
 
 const { Title, Text } = Typography;
 const { useBreakpoint } = Grid;
