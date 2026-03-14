@@ -172,12 +172,12 @@ async def delete_playlist(
 # --- Playlist-Podcast assignment endpoints ---
 
 
-@router.get("/{playlist_id}/podcasts", response_model=list[PlaylistPodcastResponse])
+@router.get("/{playlist_id}/podcasts")
 async def list_playlist_podcasts(
     playlist_id: int,
     user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
-) -> list[PlaylistPodcastResponse]:
+):
     """List podcasts assigned to a playlist, ordered by position."""
     # Verify playlist exists and belongs to user
     playlist_result = await db.execute(
@@ -198,7 +198,7 @@ async def list_playlist_podcasts(
     )
     rows = result.all()
 
-    return [
+    items = [
         PlaylistPodcastResponse(
             id=podcast.id,
             spotify_id=podcast.spotify_id,
@@ -213,6 +213,7 @@ async def list_playlist_podcasts(
         )
         for podcast, position in rows
     ]
+    return {"items": items, "total": len(items)}
 
 
 @router.post("/{playlist_id}/podcasts")

@@ -12,10 +12,12 @@ case "$COMPONENT" in
     backend)
         echo "Building backend..."
         docker build -t podcast-manager-backend:latest ./backend
-        echo "Running database migrations..."
-        docker exec $(docker ps -q -f name=podcast-manager_backend) alembic upgrade head
         echo "Updating backend service..."
         docker service update --force podcast-manager_backend
+        echo "Waiting for service to start..."
+        sleep 10
+        echo "Running database migrations..."
+        docker exec $(docker ps -q -f name=podcast-manager_backend) alembic upgrade head
         ;;
     frontend)
         echo "Building frontend..."
@@ -28,11 +30,12 @@ case "$COMPONENT" in
         docker build -t podcast-manager-backend:latest ./backend
         echo "Building frontend..."
         docker build -t podcast-manager-frontend:latest ./frontend
-        echo "Running database migrations..."
-        docker exec $(docker ps -q -f name=podcast-manager_backend) alembic upgrade head
         echo "Updating services..."
         docker service update --force podcast-manager_backend
         docker service update --force podcast-manager_frontend
+        echo "Running database migrations..."
+        sleep 5
+        docker exec $(docker ps -q -f name=podcast-manager_backend) alembic upgrade head
         ;;
     *)
         echo "Usage: $0 [backend|frontend|all]"
