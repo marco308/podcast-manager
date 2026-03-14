@@ -1,6 +1,6 @@
 # Podcast Manager
 
-A self-hosted web app that brings structure and automation to your Spotify podcast listening. It connects to your Spotify account, pulls in your subscribed podcasts, and lets you categorise them and define rules for how playlists should be built — then keeps those playlists updated automatically.
+A self-hosted web app that brings structure and automation to your Spotify podcast listening. It connects to your Spotify account, pulls in your subscribed podcasts, and lets you assign them directly to managed playlists — then keeps those playlists updated automatically.
 
 ## The Problem
 
@@ -8,50 +8,42 @@ Spotify's podcast experience is a single chronological feed. If you subscribe to
 
 ## What This App Does
 
-Podcast Manager sits on top of Spotify and adds a **categorisation + rules layer**. You tag your podcasts, define playlist rules, and the app continuously builds and maintains Spotify playlists for you.
+Podcast Manager sits on top of Spotify and adds a **playlist management layer**. You create playlists, assign podcasts to them, and the app continuously builds and maintains the corresponding Spotify playlists for you.
 
 ### Core Workflow
 
 1. **Sync** your Spotify podcast library into the app
-2. **Categorise** each podcast (primary, news, background, weekend — or multiple)
-3. **Set attributes** like sequential (oldest-first for story podcasts) or weekend-only
-4. **Create managed playlists** with rules like "all unplayed primary episodes" or "latest news episode per show"
+2. **Create playlists** with an episode mode (all unplayed or latest only)
+3. **Assign podcasts** directly to one or more playlists
+4. **Configure ordering** and set attributes like sequential (oldest-first for story podcasts)
 5. **The app handles the rest** — daily rebuilds, played-episode cleanup, token refresh
 
-### Categories
+### Episode Modes
 
-| Category | Behaviour |
-|----------|-----------|
-| **Primary** | Your must-listen shows. All unplayed episodes included. |
-| **News** | Time-sensitive content. Only the latest unplayed episode per show. |
-| **Background** | Low-priority / filler. All unplayed episodes, but in a separate playlist. |
-| **Weekend** | Only included on Fridays, Saturdays, Sundays, and UK public holidays. |
+Each playlist has an episode mode that controls how episodes are selected:
 
-Podcasts can belong to multiple categories simultaneously.
+| Mode | Behaviour |
+|------|-----------|
+| **All Unplayed** | Includes all unplayed episodes from each assigned podcast |
+| **Latest Only** | Includes only the most recent unplayed episode per assigned podcast |
+
+### Playlist Settings
+
+- **Weekend Only** — Playlist only populates on Fridays, Saturdays, Sundays, and UK public holidays
+- **Ordering Mode** — How episodes are arranged (default, podcast order, chronological asc/desc)
+- **Podcast Order** — Drag-and-drop ordering of podcasts within a playlist
 
 ### Podcast Attributes
 
 - **Sequential** — Story-based podcasts that must be consumed oldest-to-newest (e.g. serialised true crime). Always ordered oldest-first regardless of playlist settings.
-- **Weekend Only** — Episodes only appear in playlists on weekends and UK public holidays, regardless of category.
-- **Playlist Order** — Manual ordering for podcasts within custom-ordered playlists.
 
-### Playlist Rule Types
-
-Each managed playlist has a rule type that determines which episodes it pulls in:
-
-| Rule | What it does |
-|------|-------------|
-| **Primary** | All unplayed episodes from primary-category podcasts |
-| **News** | Latest unplayed episode per news-category podcast |
-| **Morning** | Same as news, but defaults to custom podcast ordering (commute playlist) |
-| **Background** | All unplayed episodes from background-category podcasts |
-| **Weekend** | All unplayed episodes from weekend-category podcasts |
+Podcasts can belong to multiple playlists simultaneously, with independent ordering per playlist.
 
 ### Ordering Modes
 
 Each playlist can be ordered differently:
 
-- **Default** — Category-appropriate (oldest-first for primary, newest-first for news)
+- **Default** — Oldest-first for "all unplayed", newest-first for "latest only"
 - **Podcast Order** — Group by podcast, ordered by your manual ranking
 - **Chronological (oldest first)** — All episodes by release date, ascending
 - **Chronological (newest first)** — All episodes by release date, descending
@@ -80,9 +72,9 @@ Once configured, the app runs four background jobs:
 
 The app has four main screens:
 
-- **Dashboard** — Quick stats (total podcasts, categorisation progress, playlist status) and one-click sync/update buttons
-- **Podcasts** — Searchable list with card and table views; inline category editing, sequential/weekend toggles, unfollow
-- **Playlists** — Playlist CRUD with rule type and ordering config; drag-and-drop podcast reordering for custom-ordered playlists
+- **Dashboard** — Quick stats (total podcasts, playlist assignment progress, playlist status) and one-click sync/update buttons
+- **Podcasts** — Searchable list with card and table views; inline playlist assignment, sequential toggle, unfollow
+- **Playlists** — Playlist CRUD with episode mode and ordering config; drag-and-drop podcast reordering; add/remove podcast assignments
 - **Settings** — Spotify account info, theme selector (light/dark/system/auto)
 
 ## Setup

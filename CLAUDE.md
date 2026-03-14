@@ -4,9 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Podcast Manager is a web application for managing podcast subscriptions with custom categorization and automated playlist generation. It integrates with Spotify to sync podcasts and create playlists based on user-defined rules.
-
-**Current Status:** Phase 1 (Foundation & Auth) complete, Phase 2 (Podcast Sync & Management) complete.
+Podcast Manager is a web application for managing podcast subscriptions with automated playlist generation. It integrates with Spotify to sync podcasts, lets users assign them directly to playlists, and keeps those playlists updated automatically.
 
 ## Commands
 
