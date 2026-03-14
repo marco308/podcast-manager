@@ -4,27 +4,24 @@ from datetime import datetime
 from enum import Enum as PyEnum
 
 from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from app.database import Base
 
 
-class PlaylistRuleType(str, PyEnum):
-    """Playlist rule types."""
+class EpisodeMode(str, PyEnum):
+    """Episode selection mode for playlists."""
 
-    PRIMARY = "primary"
-    NEWS = "news"
-    MORNING = "morning"
-    BACKGROUND = "background"
-    WEEKEND = "weekend"
+    ALL_UNPLAYED = "all_unplayed"
+    LATEST_ONLY = "latest_only"
 
 
 class PlaylistOrderingMode(str, PyEnum):
     """Playlist ordering modes."""
 
-    DEFAULT = "default"  # Use rule_type default logic (backward compatible)
-    PODCAST_ORDER = "podcast_order"  # Order by podcast.playlist_order field
+    DEFAULT = "default"  # Use default logic (backward compatible)
+    PODCAST_ORDER = "podcast_order"  # Order by position in join table
     CHRONOLOGICAL_ASC = "chronological_asc"  # Oldest episodes first
     CHRONOLOGICAL_DESC = "chronological_desc"  # Newest episodes first
 
@@ -38,8 +35,9 @@ class Playlist(Base):
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     spotify_playlist_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    rule_type: Mapped[PlaylistRuleType] = mapped_column(Enum(PlaylistRuleType), nullable=False)
+    episode_mode: Mapped[str] = mapped_column(String(20), default="all_unplayed", nullable=False)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_weekend_only: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     ordering_mode: Mapped[PlaylistOrderingMode] = mapped_column(
         Enum(PlaylistOrderingMode),
         default=PlaylistOrderingMode.DEFAULT,
@@ -52,5 +50,8 @@ class Playlist(Base):
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
+    # Relationships
+    podcast_assignments = relationship("PlaylistPodcast", back_populates="playlist", cascade="all, delete-orphan")
+
     def __repr__(self) -> str:
-        return f"<Playlist(id={self.id}, name={self.name}, rule_type={self.rule_type})>"
+        return f"<Playlist(id={self.id}, name={self.name}, episode_mode={self.episode_mode})>"

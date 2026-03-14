@@ -1,15 +1,17 @@
 """Pydantic Schemas for API validation."""
 
 from app.schemas.playlist import (
+    EpisodeMode,
     PlaylistBase,
     PlaylistCreate,
+    PlaylistPodcastAdd,
+    PlaylistPodcastReorder,
+    PlaylistPodcastResponse,
     PlaylistResponse,
-    PlaylistRuleType,
     PlaylistUpdate,
 )
 from app.schemas.podcast import (
     PodcastBase,
-    PodcastCategory,
     PodcastResponse,
     PodcastUpdate,
 )
@@ -22,10 +24,12 @@ __all__ = [
     "PodcastBase",
     "PodcastResponse",
     "PodcastUpdate",
-    "PodcastCategory",
+    "EpisodeMode",
     "PlaylistBase",
     "PlaylistResponse",
     "PlaylistCreate",
     "PlaylistUpdate",
-    "PlaylistRuleType",
+    "PlaylistPodcastAdd",
+    "PlaylistPodcastReorder",
+    "PlaylistPodcastResponse",
 ]

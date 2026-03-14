@@ -107,14 +107,17 @@ frontend/src/
 
 ## Domain Concepts
 
-**Podcast Categories:** primary, news, background, none
-- Primary: Most important podcasts
-- News: Time-sensitive, only latest episode matters
-- Background: Filler content
+**Playlist-Podcast Assignments:**
+Podcasts are directly assigned to playlists via a many-to-many join table (`playlist_podcasts`).
+Each assignment has an optional `position` for ordering within the playlist.
+
+**Playlist Settings:**
+- `episode_mode`: `all_unplayed` (all unplayed episodes) or `latest_only` (newest unplayed episode per podcast)
+- `is_weekend_only`: Playlist only populates on Fri/Sat/Sun or UK public holidays
+- `ordering_mode`: How episodes are ordered (default, podcast_order, chronological_asc, chronological_desc)
 
 **Podcast Attributes:**
 - `is_sequential`: Story-based, must be consumed oldest-to-newest
-- `is_weekend_only`: Only added to playlists on Fri/Sat/Sun or UK holidays
 
 ## Environment Setup
 

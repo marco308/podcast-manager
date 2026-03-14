@@ -1,4 +1,4 @@
-"""Playlist builder service for generating playlist content based on rules."""
+"""Playlist builder service for generating playlist content based on assignments."""
 
 import logging
 from dataclasses import dataclass
@@ -7,8 +7,9 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.playlist import Playlist, PlaylistRuleType
-from app.models.podcast import Podcast, PodcastCategory
+from app.models.playlist import Playlist, PlaylistOrderingMode
+from app.models.playlist_podcast import PlaylistPodcast
+from app.models.podcast import Podcast
 from app.models.user import User
 from app.services.encryption import get_encryption_service
 from app.services.spotify import SpotifyService
@@ -43,7 +44,7 @@ class PlaylistUpdateResult:
 
 
 class PlaylistBuilder:
-    """Service for building and updating playlists based on rules."""
+    """Service for building and updating playlists based on direct assignments."""
 
     def __init__(self, db: AsyncSession, user: User) -> None:
         """Initialize playlist builder.
@@ -82,17 +83,34 @@ class PlaylistBuilder:
         self._spotify = SpotifyService(access_token=access_token)
         return self._spotify
 
-    async def _get_podcasts_by_category(self, category: PodcastCategory) -> list[Podcast]:
-        """Get all podcasts that include the given category.
+    async def _get_playlist_podcasts(self, playlist_id: int) -> list[Podcast]:
+        """Get podcasts assigned to a playlist, ordered by position.
 
         Args:
-            category: The podcast category to filter by.
+            playlist_id: The playlist ID to get podcasts for.
 
         Returns:
-            List of podcasts that have this category.
+            List of podcasts ordered by position (nulls last).
         """
-        result = await self._db.execute(select(Podcast).where(Podcast.categories.op("LIKE")(f'%"{category.value}"%')))
-        return list(result.scalars().all())
+        result = await self._db.execute(
+            select(Podcast, PlaylistPodcast.position)
+            .join(PlaylistPodcast, PlaylistPodcast.podcast_id == Podcast.id)
+            .where(PlaylistPodcast.playlist_id == playlist_id)
+            .order_by(
+                PlaylistPodcast.position.is_(None),  # nulls last
+                PlaylistPodcast.position,
+                Podcast.name,
+            )
+        )
+        rows = result.all()
+
+        # Attach position to podcast objects for ordering
+        podcasts = []
+        for podcast, position in rows:
+            podcast._position = position  # temporary attribute for ordering
+            podcasts.append(podcast)
+
+        return podcasts
 
     async def _get_unplayed_episodes(self, podcast: Podcast, max_episodes: int = 500) -> list[Episode]:
         """Get unplayed episodes for a podcast.
@@ -187,295 +205,112 @@ class PlaylistBuilder:
         """
         from itertools import groupby
 
-        # Import the enum from models
-        from app.models.playlist import PlaylistOrderingMode
-
         if ordering_mode == PlaylistOrderingMode.CHRONOLOGICAL_ASC.value:
-            # Group by podcast to respect is_sequential
-            result = []
-
-            # Sort by release date, then group by podcast
+            # Sort by release date ascending
             sorted_eps = sorted(episodes, key=lambda e: (e.release_date, e.show_id))
+            result = []
             for _show_id, group in groupby(sorted_eps, key=lambda e: e.show_id):
-                group_list = list(group)
-                # Sequential podcasts: oldest first (already sorted correctly)
-                # Non-sequential podcasts: oldest first (already sorted correctly)
-                result.extend(group_list)
-
+                result.extend(list(group))
             return result
 
         elif ordering_mode == PlaylistOrderingMode.CHRONOLOGICAL_DESC.value:
-            # Group by podcast to respect is_sequential
-            result = []
-
-            # Sort by release date descending, then group by podcast
+            # Sort by release date descending, but respect is_sequential
             sorted_eps = sorted(episodes, key=lambda e: (e.release_date, e.show_id), reverse=True)
+            result = []
             for show_id, group in groupby(sorted_eps, key=lambda e: e.show_id):
                 podcast = next((p for p in (podcasts or []) if p.spotify_id == show_id), None)
                 group_list = list(group)
-
                 if podcast and podcast.is_sequential:
-                    # Sequential podcasts: MUST be oldest first
                     group_list.sort(key=lambda e: e.release_date)
-                # else: non-sequential stays newest first
-
                 result.extend(group_list)
-
             return result
 
         elif ordering_mode == PlaylistOrderingMode.PODCAST_ORDER.value and podcasts:
-            # Create podcast_id -> (order, is_sequential) mapping
+            # Order by position from join table (stored as _position on podcast)
             podcast_order_map = {
-                p.spotify_id: (p.playlist_order if p.playlist_order is not None else float("inf"), p.is_sequential)
+                p.spotify_id: (
+                    getattr(p, '_position', None) if getattr(p, '_position', None) is not None else float("inf"),
+                    p.is_sequential,
+                )
                 for p in podcasts
             }
 
-            # Group episodes by podcast
-            episodes_by_order: list[Episode] = []
-
-            # Sort episodes by podcast order first, then by show_id
             sorted_eps = sorted(
                 episodes,
                 key=lambda e: (
-                    podcast_order_map.get(e.show_id, (float("inf"), False))[0],  # playlist_order
-                    e.show_id,  # group by podcast
+                    podcast_order_map.get(e.show_id, (float("inf"), False))[0],
+                    e.show_id,
                 ),
             )
 
-            # Within each podcast group, respect is_sequential
+            result = []
             for show_id, group in groupby(sorted_eps, key=lambda e: e.show_id):
                 group_list = list(group)
                 podcast_info = podcast_order_map.get(show_id, (float("inf"), False))
                 is_sequential = podcast_info[1]
 
                 if is_sequential:
-                    # Sequential podcasts: MUST be oldest first
                     group_list.sort(key=lambda e: e.release_date)
                 else:
-                    # Non-sequential podcasts: newest first (default for most playlists)
                     group_list.sort(key=lambda e: e.release_date, reverse=True)
 
-                episodes_by_order.extend(group_list)
+                result.extend(group_list)
 
-            return episodes_by_order
+            return result
 
         else:
-            # DEFAULT mode - use existing rule_type logic (no reordering)
+            # DEFAULT mode - no reordering
             return episodes
 
-    async def build_primary_playlist(self, playlist: "Playlist") -> list[str]:
-        """Build primary playlist with configurable ordering.
+    async def build_playlist(self, playlist: Playlist) -> list[str]:
+        """Build playlist content based on assigned podcasts and episode mode.
 
         Args:
-            playlist: The playlist configuration
+            playlist: The playlist configuration.
 
         Returns:
             List of episode URIs for the playlist.
         """
-        podcasts = await self._get_podcasts_by_category(PodcastCategory.PRIMARY)
-        is_weekend = is_weekend_or_holiday()
+        # Check weekend restriction
+        if playlist.is_weekend_only and not is_weekend_or_holiday():
+            return []
+
+        podcasts = await self._get_playlist_podcasts(playlist.id)
+
+        if not podcasts:
+            return []
 
         all_episodes: list[Episode] = []
 
         for podcast in podcasts:
-            # Skip weekend-only podcasts on weekdays
-            if podcast.is_weekend_only and not is_weekend:
-                continue
+            if playlist.episode_mode == "all_unplayed":
+                # Get all unplayed episodes
+                episodes = await self._get_unplayed_episodes(podcast)
+                sorted_episodes = self._sort_episodes(episodes, podcast.is_sequential)
+                all_episodes.extend(sorted_episodes)
+            elif playlist.episode_mode == "latest_only":
+                # Get latest unplayed episode only
+                episodes = await self._get_unplayed_episodes(podcast, max_episodes=10)
+                if episodes:
+                    sorted_eps = self._sort_episodes(episodes, sequential=False)
+                    all_episodes.append(sorted_eps[0])
 
-            episodes = await self._get_unplayed_episodes(podcast)
-            sorted_episodes = self._sort_episodes(episodes, podcast.is_sequential)
-            all_episodes.extend(sorted_episodes)
+        # Apply ordering
+        ordering = (
+            str(playlist.ordering_mode.value)
+            if hasattr(playlist.ordering_mode, "value")
+            else str(playlist.ordering_mode)
+        )
 
-        # Apply playlist ordering
-        from app.models.playlist import PlaylistOrderingMode
-
-        if (
-            playlist.ordering_mode == PlaylistOrderingMode.DEFAULT.value
-            or playlist.ordering_mode == PlaylistOrderingMode.DEFAULT
-        ):
-            # Default: oldest first for primary
-            all_episodes.sort(key=lambda e: e.release_date)
+        if ordering == PlaylistOrderingMode.DEFAULT.value:
+            if playlist.episode_mode == "latest_only":
+                # Default for latest_only: newest first
+                all_episodes.sort(key=lambda e: e.release_date, reverse=True)
+            else:
+                # Default for all_unplayed: oldest first
+                all_episodes.sort(key=lambda e: e.release_date)
         else:
-            all_episodes = self._apply_ordering(
-                all_episodes,
-                str(playlist.ordering_mode.value)
-                if hasattr(playlist.ordering_mode, "value")
-                else str(playlist.ordering_mode),
-                podcasts,
-            )
-
-        return [ep.uri for ep in all_episodes]
-
-    async def build_news_playlist(self, playlist: "Playlist") -> list[str]:
-        """Build news playlist with configurable ordering.
-
-        Args:
-            playlist: The playlist configuration
-
-        Returns:
-            List of episode URIs for the playlist.
-        """
-        podcasts = await self._get_podcasts_by_category(PodcastCategory.NEWS)
-        is_weekend = is_weekend_or_holiday()
-
-        latest_episodes: list[Episode] = []
-
-        for podcast in podcasts:
-            # Skip weekend-only podcasts on weekdays
-            if podcast.is_weekend_only and not is_weekend:
-                continue
-
-            episodes = await self._get_unplayed_episodes(podcast, max_episodes=10)
-
-            if episodes:
-                # Sort by release date descending and take the newest
-                sorted_eps = self._sort_episodes(episodes, sequential=False)
-                latest_episodes.append(sorted_eps[0])
-
-        # Apply playlist ordering
-        from app.models.playlist import PlaylistOrderingMode
-
-        if (
-            playlist.ordering_mode == PlaylistOrderingMode.DEFAULT.value
-            or playlist.ordering_mode == PlaylistOrderingMode.DEFAULT
-        ):
-            # Default: newest first for news
-            latest_episodes.sort(key=lambda e: e.release_date, reverse=True)
-        else:
-            latest_episodes = self._apply_ordering(
-                latest_episodes,
-                str(playlist.ordering_mode.value)
-                if hasattr(playlist.ordering_mode, "value")
-                else str(playlist.ordering_mode),
-                podcasts,
-            )
-
-        return [ep.uri for ep in latest_episodes]
-
-    async def build_morning_playlist(self, playlist: "Playlist") -> list[str]:
-        """Build morning playlist with configurable ordering.
-
-        Args:
-            playlist: The playlist configuration
-
-        Returns:
-            List of episode URIs ordered by user preference (playlist_order), then release date.
-        """
-        podcasts = await self._get_podcasts_by_category(PodcastCategory.NEWS)
-        is_weekend = is_weekend_or_holiday()
-
-        latest_episodes: list[Episode] = []
-
-        for podcast in podcasts:
-            # Skip weekend-only podcasts on weekdays
-            if podcast.is_weekend_only and not is_weekend:
-                continue
-
-            episodes = await self._get_unplayed_episodes(podcast, max_episodes=10)
-
-            if episodes:
-                # Sort by release date descending and take the newest
-                sorted_eps = self._sort_episodes(episodes, sequential=False)
-                latest_episodes.append(sorted_eps[0])
-
-        # Apply playlist ordering
-        from app.models.playlist import PlaylistOrderingMode
-
-        if (
-            playlist.ordering_mode == PlaylistOrderingMode.DEFAULT.value
-            or playlist.ordering_mode == PlaylistOrderingMode.DEFAULT
-        ):
-            # Backward compatible: use playlist_order (migrated from morning_order)
-            latest_episodes = self._apply_ordering(latest_episodes, PlaylistOrderingMode.PODCAST_ORDER.value, podcasts)
-        else:
-            latest_episodes = self._apply_ordering(
-                latest_episodes,
-                str(playlist.ordering_mode.value)
-                if hasattr(playlist.ordering_mode, "value")
-                else str(playlist.ordering_mode),
-                podcasts,
-            )
-
-        return [ep.uri for ep in latest_episodes]
-
-    async def build_background_playlist(self, playlist: "Playlist") -> list[str]:
-        """Build background playlist with configurable ordering.
-
-        Args:
-            playlist: The playlist configuration
-
-        Returns:
-            List of episode URIs for the playlist.
-        """
-        podcasts = await self._get_podcasts_by_category(PodcastCategory.BACKGROUND)
-        is_weekend = is_weekend_or_holiday()
-
-        all_episodes: list[Episode] = []
-
-        for podcast in podcasts:
-            # Skip weekend-only podcasts on weekdays
-            if podcast.is_weekend_only and not is_weekend:
-                continue
-
-            episodes = await self._get_unplayed_episodes(podcast)
-            sorted_episodes = self._sort_episodes(episodes, podcast.is_sequential)
-            all_episodes.extend(sorted_episodes)
-
-        # Apply playlist ordering
-        from app.models.playlist import PlaylistOrderingMode
-
-        if (
-            playlist.ordering_mode == PlaylistOrderingMode.DEFAULT.value
-            or playlist.ordering_mode == PlaylistOrderingMode.DEFAULT
-        ):
-            # Default: oldest first
-            all_episodes.sort(key=lambda e: e.release_date)
-        else:
-            all_episodes = self._apply_ordering(
-                all_episodes,
-                str(playlist.ordering_mode.value)
-                if hasattr(playlist.ordering_mode, "value")
-                else str(playlist.ordering_mode),
-                podcasts,
-            )
-
-        return [ep.uri for ep in all_episodes]
-
-    async def build_weekend_playlist(self, playlist: "Playlist") -> list[str]:
-        """Build weekend playlist with configurable ordering.
-
-        Args:
-            playlist: The playlist configuration
-
-        Returns:
-            List of episode URIs for the playlist.
-        """
-        podcasts = await self._get_podcasts_by_category(PodcastCategory.WEEKEND)
-
-        all_episodes: list[Episode] = []
-
-        for podcast in podcasts:
-            episodes = await self._get_unplayed_episodes(podcast)
-            sorted_episodes = self._sort_episodes(episodes, podcast.is_sequential)
-            all_episodes.extend(sorted_episodes)
-
-        # Apply playlist ordering
-        from app.models.playlist import PlaylistOrderingMode
-
-        if (
-            playlist.ordering_mode == PlaylistOrderingMode.DEFAULT.value
-            or playlist.ordering_mode == PlaylistOrderingMode.DEFAULT
-        ):
-            # Default: oldest first
-            all_episodes.sort(key=lambda e: e.release_date)
-        else:
-            all_episodes = self._apply_ordering(
-                all_episodes,
-                str(playlist.ordering_mode.value)
-                if hasattr(playlist.ordering_mode, "value")
-                else str(playlist.ordering_mode),
-                podcasts,
-            )
+            all_episodes = self._apply_ordering(all_episodes, ordering, podcasts)
 
         return [ep.uri for ep in all_episodes]
 
@@ -494,15 +329,7 @@ class PlaylistBuilder:
         # Create a new Spotify playlist
         spotify = await self._get_spotify_client()
 
-        # Build description based on rule type
-        descriptions = {
-            PlaylistRuleType.PRIMARY: "Primary podcasts - auto-managed by Podcast Manager",
-            PlaylistRuleType.NEWS: "News podcasts (latest episodes only) - auto-managed by Podcast Manager",
-            PlaylistRuleType.MORNING: "Morning podcasts - auto-managed by Podcast Manager",
-            PlaylistRuleType.BACKGROUND: "Background podcasts - auto-managed by Podcast Manager",
-            PlaylistRuleType.WEEKEND: "Weekend podcasts - auto-managed by Podcast Manager",
-        }
-        description = descriptions.get(playlist.rule_type, "Auto-managed by Podcast Manager")
+        description = f"{playlist.name} - auto-managed by Podcast Manager"
 
         spotify_playlist = await spotify.create_playlist(
             name=playlist.name,
@@ -519,7 +346,7 @@ class PlaylistBuilder:
         return playlist.spotify_playlist_id
 
     async def update_playlist(self, playlist: Playlist) -> PlaylistUpdateResult:
-        """Update a single playlist based on its rule type.
+        """Update a single playlist based on its assigned podcasts.
 
         If the playlist doesn't have a Spotify playlist ID, one will be created.
 
@@ -533,25 +360,8 @@ class PlaylistBuilder:
             # Ensure Spotify playlist exists (create if needed)
             spotify_playlist_id = await self._ensure_spotify_playlist(playlist)
 
-            # Build episode list based on rule type
-            if playlist.rule_type == PlaylistRuleType.PRIMARY:
-                episode_uris = await self.build_primary_playlist(playlist)
-            elif playlist.rule_type == PlaylistRuleType.NEWS:
-                episode_uris = await self.build_news_playlist(playlist)
-            elif playlist.rule_type == PlaylistRuleType.MORNING:
-                episode_uris = await self.build_morning_playlist(playlist)
-            elif playlist.rule_type == PlaylistRuleType.BACKGROUND:
-                episode_uris = await self.build_background_playlist(playlist)
-            elif playlist.rule_type == PlaylistRuleType.WEEKEND:
-                episode_uris = await self.build_weekend_playlist(playlist)
-            else:
-                return PlaylistUpdateResult(
-                    playlist_id=playlist.id,
-                    playlist_name=playlist.name,
-                    success=False,
-                    episode_count=0,
-                    error=f"Unknown rule type: {playlist.rule_type}",
-                )
+            # Build episode list
+            episode_uris = await self.build_playlist(playlist)
 
             # Update Spotify playlist
             spotify = await self._get_spotify_client()

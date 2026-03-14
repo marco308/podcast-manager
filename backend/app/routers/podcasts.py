@@ -8,13 +8,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.models.playlist_podcast import PlaylistPodcast
 from app.models.podcast import Podcast
 from app.models.session import Session
 from app.models.user import User
 from app.routers.auth import get_current_user_id, validate_csrf_token
-from app.schemas.podcast import (
-    PodcastCategory as PodcastCategorySchema,
-)
 from app.schemas.podcast import (
     PodcastListResponse,
     PodcastResponse,
@@ -45,26 +43,58 @@ async def get_user_with_token(
     return user, access_token
 
 
+async def _get_playlist_ids_for_podcast(db: AsyncSession, podcast_id: int) -> list[int]:
+    """Get all playlist IDs that a podcast is assigned to."""
+    result = await db.execute(
+        select(PlaylistPodcast.playlist_id)
+        .where(PlaylistPodcast.podcast_id == podcast_id)
+    )
+    return [row[0] for row in result.all()]
+
+
+def _build_podcast_response(podcast: Podcast, playlist_ids: list[int]) -> PodcastResponse:
+    """Build a PodcastResponse with playlist_ids."""
+    return PodcastResponse(
+        id=podcast.id,
+        spotify_id=podcast.spotify_id,
+        name=podcast.name,
+        description=podcast.description,
+        image_url=podcast.image_url,
+        publisher=podcast.publisher,
+        total_episodes=podcast.total_episodes,
+        unplayed_episodes=podcast.unplayed_episodes,
+        is_sequential=podcast.is_sequential,
+        playlist_ids=playlist_ids,
+        last_synced_at=podcast.last_synced_at,
+        created_at=podcast.created_at,
+        updated_at=podcast.updated_at,
+    )
+
+
 @router.get("", response_model=PodcastListResponse)
 async def list_podcasts(
-    category: PodcastCategorySchema | None = Query(None),
+    playlist_id: int | None = Query(None, description="Filter by playlist membership"),
+    unassigned: bool = Query(False, description="Only return podcasts not assigned to any playlist"),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
     user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> PodcastListResponse:
-    """List all podcasts with optional category filter."""
+    """List all podcasts with optional filters."""
     query = select(Podcast)
 
-    if category:
-        category_filter = Podcast.categories.op("LIKE")(f'%"{category.value}"%')
-        query = query.where(category_filter)
+    if playlist_id is not None:
+        # Filter to podcasts in this playlist
+        query = query.join(PlaylistPodcast, PlaylistPodcast.podcast_id == Podcast.id).where(
+            PlaylistPodcast.playlist_id == playlist_id
+        )
+    elif unassigned:
+        # Filter to podcasts NOT in any playlist
+        assigned_subquery = select(PlaylistPodcast.podcast_id).distinct()
+        query = query.where(Podcast.id.not_in(assigned_subquery))
 
     # Get total count
-    count_query = select(func.count()).select_from(Podcast)
-    if category:
-        count_query = count_query.where(Podcast.categories.op("LIKE")(f'%"{category.value}"%'))
-
+    count_query = select(func.count()).select_from(query.subquery())
     total_result = await db.execute(count_query)
     total = total_result.scalar() or 0
 
@@ -73,7 +103,13 @@ async def list_podcasts(
     result = await db.execute(query)
     podcasts = result.scalars().all()
 
-    return PodcastListResponse(items=list(podcasts), total=total)
+    # Build responses with playlist_ids
+    items = []
+    for podcast in podcasts:
+        pids = await _get_playlist_ids_for_podcast(db, podcast.id)
+        items.append(_build_podcast_response(podcast, pids))
+
+    return PodcastListResponse(items=items, total=total)
 
 
 @router.get("/{spotify_id}", response_model=PodcastResponse)
@@ -81,7 +117,7 @@ async def get_podcast(
     spotify_id: str,
     user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
-) -> Podcast:
+) -> PodcastResponse:
     """Get a single podcast by Spotify ID."""
     result = await db.execute(select(Podcast).where(Podcast.spotify_id == spotify_id))
     podcast = result.scalar_one_or_none()
@@ -89,7 +125,8 @@ async def get_podcast(
     if not podcast:
         raise HTTPException(status_code=404, detail="Podcast not found")
 
-    return podcast
+    pids = await _get_playlist_ids_for_podcast(db, podcast.id)
+    return _build_podcast_response(podcast, pids)
 
 
 @router.patch("/{spotify_id}", response_model=PodcastResponse)
@@ -98,30 +135,23 @@ async def update_podcast(
     update_data: PodcastUpdate,
     session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
-) -> Podcast:
-    """Update podcast metadata (category, attributes)."""
+) -> PodcastResponse:
+    """Update podcast metadata."""
     result = await db.execute(select(Podcast).where(Podcast.spotify_id == spotify_id))
     podcast = result.scalar_one_or_none()
 
     if not podcast:
         raise HTTPException(status_code=404, detail="Podcast not found")
 
-    # Update fields if provided
-    if update_data.categories is not None:
-        podcast.categories = [cat.value for cat in update_data.categories]
     if update_data.is_sequential is not None:
         podcast.is_sequential = update_data.is_sequential
-    if update_data.is_weekend_only is not None:
-        podcast.is_weekend_only = update_data.is_weekend_only
-    if update_data.morning_order is not None:
-        podcast.morning_order = update_data.morning_order
-    if update_data.playlist_order is not None:
-        podcast.playlist_order = update_data.playlist_order
 
     podcast.updated_at = datetime.now(UTC)
 
     await db.flush()
-    return podcast
+
+    pids = await _get_playlist_ids_for_podcast(db, podcast.id)
+    return _build_podcast_response(podcast, pids)
 
 
 @router.delete("/{spotify_id}")
@@ -148,7 +178,7 @@ async def unfollow_podcast(
         logger.exception(f"Failed to unfollow podcast {spotify_id} on Spotify: {e}")
         raise HTTPException(status_code=500, detail="Failed to unfollow podcast on Spotify") from None
 
-    # Remove from local database
+    # Remove from local database (cascade will remove join table entries)
     await db.delete(podcast)
     await db.flush()
 
