@@ -3,7 +3,6 @@
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -102,9 +101,12 @@ class PlaylistBuilder:
         return list(result.scalars().all())
 
     async def _get_unplayed_episodes(
-        self, podcast: Podcast, max_episodes: int = 50
+        self, podcast: Podcast, max_episodes: int = 500
     ) -> list[Episode]:
         """Get unplayed episodes for a podcast.
+
+        Uses the show episodes endpoint directly which includes resume_point
+        and is_playable data, avoiding expensive individual episode fetches.
 
         Args:
             podcast: The podcast to get episodes for.
@@ -123,24 +125,8 @@ class PlaylistBuilder:
             logger.error(f"Failed to fetch episodes for {podcast.name}: {e}")
             return []
 
-        # The "shows/{id}/episodes" endpoint does not reliably include a
-        # `resume_point` for the current user. Fetch full episode objects
-        # via the "episodes" endpoint (in batches) so we can read
-        # `resume_point.fully_played` to determine playback status.
-        episode_ids = [ep.get("id") for ep in episodes_data if ep and ep.get("id")]
-
-        detailed_episodes: list[dict[str, Any]] = []
-        try:
-            for i in range(0, len(episode_ids), 50):
-                batch = episode_ids[i : i + 50]
-                batch_details = await spotify.get_episodes(batch)
-                detailed_episodes.extend(batch_details)
-        except Exception as e:
-            logger.error(f"Failed to fetch detailed episodes for {podcast.name}: {e}")
-            return []
-
         unplayed = []
-        for ep in detailed_episodes:
+        for ep in episodes_data:
             if not ep:
                 continue
 
@@ -155,7 +141,7 @@ class PlaylistBuilder:
                 logger.debug(f"Skipping restricted episode: {ep.get('name')} - Reason: {restrictions.get('reason')}")
                 continue
 
-            # Check resume_point for playback status (from episodes endpoint)
+            # Check resume_point for playback status
             resume_point = ep.get("resume_point") or {}
             fully_played = resume_point.get("fully_played", False)
 

@@ -129,3 +129,21 @@ SECRET_KEY=...      # Generate with secrets.token_urlsafe(32)
 ```
 
 **Important:** Use `127.0.0.1` (not `localhost`) in redirect URI to avoid Spotify OAuth errors.
+
+## Spotify API Constraints
+
+**API Docs:** https://developer.spotify.com/documentation/web-api
+
+**Dev Mode Restrictions (Feb/Mar 2026):** Spotify removed batch endpoints for Dev Mode apps:
+- `GET /episodes` (batch by IDs) — **removed**
+- `GET /shows` (batch by IDs) — **removed**
+- All other "Get Several X" batch endpoints — **removed**
+
+**Still available:**
+- `GET /episodes/{id}` — single episode fetch (used via `get_episodes()` with concurrency control)
+- `GET /shows/{id}/episodes` — paginated show episodes
+- `GET /me/shows` — user's subscribed podcasts (primary sync endpoint)
+- `GET /me/episodes` — user's saved episodes
+- All playlist endpoints, user profile, etc.
+
+**Rate limiting:** Spotify returns 429 with a `Retry-After` header. `SpotifyService._request_with_retry()` handles this automatically with up to 3 retries. All loop-called methods use this helper. Keep concurrency low (semaphore of 3) for individual episode fetches.

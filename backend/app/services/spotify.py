@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 SPOTIFY_API_BASE = "https://api.spotify.com/v1"
 SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token"
 
+MAX_RETRIES = 3
+
 
 class SpotifyService:
     """Async client for Spotify Web API."""
@@ -34,6 +36,36 @@ class SpotifyService:
         if self._access_token:
             headers["Authorization"] = f"Bearer {self._access_token}"
         return headers
+
+    async def _request_with_retry(
+        self, client: httpx.AsyncClient, method: str, url: str, **kwargs
+    ) -> httpx.Response:
+        """Make an HTTP request with automatic retry on 429 rate limit.
+
+        Retries up to MAX_RETRIES times, respecting Spotify's Retry-After header.
+
+        Args:
+            client: The httpx client to use.
+            method: HTTP method (GET, POST, PUT, DELETE).
+            url: Request URL.
+            **kwargs: Additional arguments passed to the request.
+
+        Returns:
+            The HTTP response.
+        """
+        response = await client.request(method, url, **kwargs)
+        for attempt in range(MAX_RETRIES - 1):
+            if response.status_code != 429:
+                break
+            retry_after = int(response.headers.get("Retry-After", "5"))
+            logger.warning(
+                f"Rate limited by Spotify (attempt {attempt + 2}/{MAX_RETRIES}), "
+                f"waiting {retry_after}s"
+            )
+            await asyncio.sleep(retry_after)
+            response = await client.request(method, url, **kwargs)
+        response.raise_for_status()
+        return response
 
     async def exchange_code_for_tokens(
         self, code: str
@@ -130,18 +162,18 @@ class SpotifyService:
             Paginated list of saved shows.
         """
         async with httpx.AsyncClient() as client:
-            response = await client.get(
+            resp = await self._request_with_retry(
+                client, "GET",
                 f"{SPOTIFY_API_BASE}/me/shows",
                 headers=self._headers,
                 params={"limit": limit, "offset": offset},
             )
-            response.raise_for_status()
-            return response.json()
+            return resp.json()
 
     async def get_show_episodes(
         self, show_id: str, limit: int = 50, offset: int = 0
     ) -> dict[str, Any]:
-        """Get episodes for a specific show with user's playback state.
+        """Get episodes for a specific show.
 
         Args:
             show_id: Spotify show ID.
@@ -149,22 +181,11 @@ class SpotifyService:
             offset: Index of the first episode to return.
 
         Returns:
-            Paginated list of episodes with resume_point data.
+            Paginated list of episodes.
         """
         async with httpx.AsyncClient() as client:
-            # Use /me/shows/{id} endpoint to get user-specific data including resume points
-            response = await client.get(
-                f"{SPOTIFY_API_BASE}/shows/{show_id}",
-                headers=self._headers,
-                params={
-                    "market": "from_token",
-                },
-            )
-            response.raise_for_status()
-            show_data = response.json()
-
-            # Now fetch episodes with resume points from the episodes endpoint
-            episodes_response = await client.get(
+            resp = await self._request_with_retry(
+                client, "GET",
                 f"{SPOTIFY_API_BASE}/shows/{show_id}/episodes",
                 headers=self._headers,
                 params={
@@ -173,8 +194,7 @@ class SpotifyService:
                     "market": "from_token",
                 },
             )
-            episodes_response.raise_for_status()
-            return episodes_response.json()
+            return resp.json()
 
     async def get_playlist(self, playlist_id: str) -> dict[str, Any]:
         """Get a playlist by ID.
@@ -231,30 +251,30 @@ class SpotifyService:
         async with httpx.AsyncClient() as client:
             # Spotify limits to 100 items per request
             if len(uris) <= 100:
-                response = await client.put(
+                await self._request_with_retry(
+                    client, "PUT",
                     f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/items",
                     headers=self._headers,
                     json={"uris": uris},
                 )
-                response.raise_for_status()
             else:
                 # First replace with first 100
-                response = await client.put(
+                await self._request_with_retry(
+                    client, "PUT",
                     f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/items",
                     headers=self._headers,
                     json={"uris": uris[:100]},
                 )
-                response.raise_for_status()
 
                 # Then add remaining in batches of 100
                 for i in range(100, len(uris), 100):
                     batch = uris[i : i + 100]
-                    response = await client.post(
+                    await self._request_with_retry(
+                        client, "POST",
                         f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/items",
                         headers=self._headers,
                         json={"uris": batch},
                     )
-                    response.raise_for_status()
 
     async def remove_tracks_from_playlist(
         self, playlist_id: str, uris: list[str]
@@ -269,12 +289,12 @@ class SpotifyService:
 
         async with httpx.AsyncClient() as client:
             body = _json.dumps({"items": [{"uri": uri} for uri in uris]})
-            response = await client.delete(
+            await self._request_with_retry(
+                client, "DELETE",
                 f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/items",
                 headers={**self._headers, "Content-Type": "application/json"},
                 content=body,
             )
-            response.raise_for_status()
 
     async def get_playlist_tracks(
         self, playlist_id: str, limit: int = 50, offset: int = 0
@@ -290,7 +310,8 @@ class SpotifyService:
             Paginated list of tracks in the playlist.
         """
         async with httpx.AsyncClient() as client:
-            response = await client.get(
+            resp = await self._request_with_retry(
+                client, "GET",
                 f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/items",
                 headers=self._headers,
                 params={
@@ -299,28 +320,13 @@ class SpotifyService:
                     "fields": "items(item(uri,resume_point(fully_played))),next,total",
                 },
             )
-            response.raise_for_status()
-            return response.json()
-
-    async def get_episode(self, episode_id: str) -> dict[str, Any]:
-        """Get a single episode by ID.
-
-        Args:
-            episode_id: Spotify episode ID.
-
-        Returns:
-            Episode data including resume_point if available.
-        """
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{SPOTIFY_API_BASE}/episodes/{episode_id}",
-                headers=self._headers,
-            )
-            response.raise_for_status()
-            return response.json()
+            return resp.json()
 
     async def get_episodes(self, episode_ids: list[str]) -> list[dict[str, Any]]:
-        """Get multiple episodes by IDs.
+        """Get multiple episodes by IDs using individual fetches with rate limiting.
+
+        The batch GET /episodes endpoint was deprecated by Spotify in Feb 2026
+        for Dev Mode apps, so we fetch individually with concurrency control.
 
         Args:
             episode_ids: List of Spotify episode IDs.
@@ -331,17 +337,23 @@ class SpotifyService:
         if not episode_ids:
             return []
 
-        semaphore = asyncio.Semaphore(10)
+        # Fetch sequentially to avoid Spotify 429 rate limits
+        results: list[dict[str, Any] | None] = []
 
-        async def _fetch(episode_id: str) -> dict[str, Any] | None:
-            async with semaphore:
+        async with httpx.AsyncClient() as client:
+            for episode_id in episode_ids:
                 try:
-                    return await self.get_episode(episode_id)
+                    resp = await self._request_with_retry(
+                        client, "GET",
+                        f"{SPOTIFY_API_BASE}/episodes/{episode_id}",
+                        headers=self._headers,
+                        params={"market": "from_token"},
+                    )
+                    results.append(resp.json())
                 except Exception:
                     logger.warning("Failed to fetch episode %s, skipping", episode_id)
-                    return None
+                    results.append(None)
 
-        results = await asyncio.gather(*[_fetch(eid) for eid in episode_ids])
         return [ep for ep in results if ep is not None]
 
     async def get_show_episodes_all(
@@ -409,13 +421,10 @@ class SpotifyService:
         Raises:
             httpx.HTTPStatusError: If the request fails.
         """
-        import json as _json
-
         async with httpx.AsyncClient() as client:
-            body = _json.dumps({"ids": [show_id], "type": "show"})
-            response = await client.delete(
-                f"{SPOTIFY_API_BASE}/me/library",
-                headers={**self._headers, "Content-Type": "application/json"},
-                content=body,
+            await self._request_with_retry(
+                client, "DELETE",
+                f"{SPOTIFY_API_BASE}/me/shows",
+                headers=self._headers,
+                params={"ids": show_id},
             )
-            response.raise_for_status()
