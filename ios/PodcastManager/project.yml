@@ -29,6 +29,7 @@ targets:
     info:
       path: PodcastManager/Info.plist
       properties:
+        ITSAppUsesNonExemptEncryption: false
         UILaunchScreen: {}
         CFBundleName: $(PRODUCT_NAME)
         CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
@@ -36,6 +37,7 @@ targets:
         CFBundleVersion: "1"
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         CFBundleURLTypes:
