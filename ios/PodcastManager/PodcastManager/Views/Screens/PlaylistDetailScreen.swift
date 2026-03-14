@@ -30,7 +30,7 @@ struct PlaylistDetailScreen: View {
             }
         }
         .sheet(isPresented: $showingAddSheet) {
-            AddPodcastsSheet(playlistId: playlist.id) {
+            AddPodcastsSheet(playlistId: playlist.id, existingPodcastIds: Set(podcasts.map(\.id))) {
                 await loadPodcasts()
             }
         }

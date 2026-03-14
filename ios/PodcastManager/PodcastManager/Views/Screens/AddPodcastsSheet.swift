@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AddPodcastsSheet: View {
     let playlistId: Int
+    let existingPodcastIds: Set<Int>
     let onAdded: () async -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -23,7 +24,7 @@ struct AddPodcastsSheet: View {
                     ContentUnavailableView(
                         "No Podcasts Available",
                         systemImage: "mic.slash",
-                        description: Text("All podcasts are already assigned to playlists")
+                        description: Text("All podcasts are already in this playlist")
                     )
                 } else {
                     podcastList
@@ -92,8 +93,8 @@ struct AddPodcastsSheet: View {
 
     private func loadAvailablePodcasts() async {
         do {
-            let response = try await APIClient.shared.fetchPodcasts(unassigned: true)
-            availablePodcasts = response.items
+            let response = try await APIClient.shared.fetchPodcasts(limit: 100)
+            availablePodcasts = response.items.filter { !existingPodcastIds.contains($0.id) }
             error = nil
         } catch {
             self.error = error.localizedDescription
