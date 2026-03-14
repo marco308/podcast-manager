@@ -15,7 +15,7 @@ httpx>=0.26.0,<1.0.0
 apscheduler>=3.10.0,<4.0.0
 
 # Security and encryption
-cryptography>=42.0.0,<44.0.0
+cryptography>=46.0.5
 python-jose[cryptography]>=3.3.0,<4.0.0
 
 # UK public holidays
