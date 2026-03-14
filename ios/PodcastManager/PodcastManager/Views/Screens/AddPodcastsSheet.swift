@@ -12,6 +12,15 @@ struct AddPodcastsSheet: View {
     @State private var isLoading = true
     @State private var isAdding = false
     @State private var error: String?
+    @State private var searchText = ""
+
+    private var filteredPodcasts: [Podcast] {
+        if searchText.isEmpty { return availablePodcasts }
+        return availablePodcasts.filter {
+            $0.name.localizedCaseInsensitiveContains(searchText) ||
+            ($0.publisher?.localizedCaseInsensitiveContains(searchText) ?? false)
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -52,7 +61,7 @@ struct AddPodcastsSheet: View {
     }
 
     private var podcastList: some View {
-        List(availablePodcasts) { podcast in
+        List(filteredPodcasts) { podcast in
             Button {
                 toggleSelection(podcast.id)
             } label: {
@@ -69,6 +78,7 @@ struct AddPodcastsSheet: View {
             .buttonStyle(.plain)
         }
         .listStyle(.plain)
+        .searchable(text: $searchText, prompt: "Search podcasts")
     }
 
     private func errorView(_ message: String) -> some View {
