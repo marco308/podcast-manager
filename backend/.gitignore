@@ -56,3 +56,6 @@ htmlcov/
 
 # mypy
 .mypy_cache/
+
+# Ruff
+.ruff_cache/
