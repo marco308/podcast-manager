@@ -29,12 +29,20 @@ actor APIClient {
 
     // MARK: - Podcasts
 
-    func fetchPodcasts(limit: Int = 50, offset: Int = 0) async throws -> PodcastListResponse {
-        try await get("/api/podcasts?limit=\(limit)&offset=\(offset)")
+    func fetchPodcasts(limit: Int = 50, offset: Int = 0, unassigned: Bool = false) async throws -> PodcastListResponse {
+        var path = "/api/podcasts?limit=\(limit)&offset=\(offset)"
+        if unassigned {
+            path += "&unassigned=true"
+        }
+        return try await get(path)
     }
 
     func syncPodcasts() async throws -> SyncResponse {
         try await post("/api/podcasts/sync")
+    }
+
+    func updatePodcast(spotifyId: String, isSequential: Bool) async throws -> Podcast {
+        try await patch("/api/podcasts/\(spotifyId)", body: ["is_sequential": isSequential])
     }
 
     // MARK: - Playlists
@@ -51,6 +59,21 @@ actor APIClient {
         try await post("/api/playlists/run-all")
     }
 
+    // MARK: - Playlist Podcasts
+
+    func fetchPlaylistPodcasts(playlistId: Int) async throws -> PodcastListResponse {
+        try await get("/api/playlists/\(playlistId)/podcasts")
+    }
+
+    func addPodcastsToPlaylist(playlistId: Int, podcastIds: [Int]) async throws -> MessageResponse {
+        let body = ["podcast_ids": podcastIds]
+        return try await post("/api/playlists/\(playlistId)/podcasts", body: body)
+    }
+
+    func removePodcastFromPlaylist(playlistId: Int, podcastId: Int) async throws -> MessageResponse {
+        try await delete("/api/playlists/\(playlistId)/podcasts/\(podcastId)")
+    }
+
     // MARK: - HTTP Methods
 
     private func get<T: Decodable>(_ path: String) async throws -> T {
@@ -60,6 +83,25 @@ actor APIClient {
 
     private func post<T: Decodable>(_ path: String) async throws -> T {
         let request = try makeRequest(path: path, method: "POST")
+        return try await execute(request)
+    }
+
+    private func post<T: Decodable, B: Encodable>(_ path: String, body: B) async throws -> T {
+        var request = try makeRequest(path: path, method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(body)
+        return try await execute(request)
+    }
+
+    private func patch<T: Decodable>(_ path: String, body: [String: Any]) async throws -> T {
+        var request = try makeRequest(path: path, method: "PATCH")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return try await execute(request)
+    }
+
+    private func delete<T: Decodable>(_ path: String) async throws -> T {
+        let request = try makeRequest(path: path, method: "DELETE")
         return try await execute(request)
     }
 

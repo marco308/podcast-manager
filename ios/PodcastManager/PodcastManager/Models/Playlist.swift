@@ -24,6 +24,10 @@ struct PlaylistRunResponse: Codable {
     let episodeCount: Int
 }
 
+struct MessageResponse: Codable {
+    let message: String
+}
+
 struct PlaylistRunAllResponse: Codable {
     let message: String
     let results: [PlaylistRunResult]

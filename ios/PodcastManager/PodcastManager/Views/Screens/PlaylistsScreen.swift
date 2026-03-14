@@ -64,11 +64,16 @@ struct PlaylistsScreen: View {
 
     private var playlistList: some View {
         List(playlists) { playlist in
-            PlaylistRow(playlist: playlist) {
-                await runPlaylist(playlist)
+            NavigationLink(value: playlist) {
+                PlaylistRow(playlist: playlist) {
+                    await runPlaylist(playlist)
+                }
             }
         }
         .listStyle(.plain)
+        .navigationDestination(for: Playlist.self) { playlist in
+            PlaylistDetailScreen(playlist: playlist)
+        }
     }
 
     private var emptyView: some View {
@@ -105,9 +110,15 @@ struct PlaylistsScreen: View {
     private func runPlaylist(_ playlist: Playlist) async {
         do {
             let response = try await APIClient.shared.runPlaylist(id: playlist.id)
+            let message = "Playlist '\(playlist.name)': \(response.episodeCount) episodes updated"
             withAnimation {
                 statusMessage = "\(playlist.name): \(response.episodeCount) episodes"
             }
+            NotificationService.shared.sendIfBackgrounded(
+                title: "Playlist Updated",
+                body: message,
+                identifier: "playlist-run-\(playlist.id)"
+            )
         } catch {
             withAnimation {
                 statusMessage = "Failed: \(error.localizedDescription)"
@@ -119,9 +130,15 @@ struct PlaylistsScreen: View {
         isRunningAll = true
         do {
             let response = try await APIClient.shared.runAllPlaylists()
+            let successCount = response.results.filter(\.success).count
             withAnimation {
                 statusMessage = response.message
             }
+            NotificationService.shared.sendIfBackgrounded(
+                title: "All Playlists Updated",
+                body: "Updated \(successCount) playlists",
+                identifier: "playlist-run-all"
+            )
         } catch {
             withAnimation {
                 statusMessage = "Failed: \(error.localizedDescription)"

@@ -10,6 +10,9 @@ struct PodcastManagerApp: App {
             ContentView()
                 .environment(appState)
                 .environment(authService)
+                .task {
+                    await NotificationService.shared.requestAuthorization()
+                }
         }
     }
 }

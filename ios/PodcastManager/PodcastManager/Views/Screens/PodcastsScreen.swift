@@ -64,9 +64,14 @@ struct PodcastsScreen: View {
 
     private var podcastList: some View {
         List(podcasts) { podcast in
-            PodcastRow(podcast: podcast)
+            NavigationLink(value: podcast) {
+                PodcastRow(podcast: podcast)
+            }
         }
         .listStyle(.plain)
+        .navigationDestination(for: Podcast.self) { podcast in
+            PodcastDetailScreen(podcast: podcast)
+        }
     }
 
     private var emptyView: some View {
@@ -104,9 +109,15 @@ struct PodcastsScreen: View {
         isSyncing = true
         do {
             let response = try await APIClient.shared.syncPodcasts()
+            let message = "Synced \(response.synced) podcasts (\(response.new) new)"
             withAnimation {
-                syncResult = "Synced \(response.synced) podcasts (\(response.new) new)"
+                syncResult = message
             }
+            NotificationService.shared.sendIfBackgrounded(
+                title: "Podcast Sync Complete",
+                body: message,
+                identifier: "podcast-sync"
+            )
             await loadPodcasts()
         } catch {
             withAnimation {
