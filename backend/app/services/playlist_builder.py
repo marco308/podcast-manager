@@ -75,7 +75,8 @@ class PlaylistBuilder:
         access_token = self._encryption.decrypt(self._user.access_token)
 
         # Check if token is expired and refresh if needed
-        if datetime.now(UTC) >= self._user.token_expires_at:
+        token_expires = self._user.token_expires_at.replace(tzinfo=UTC) if self._user.token_expires_at.tzinfo is None else self._user.token_expires_at
+        if datetime.now(UTC) >= token_expires:
             refresh_token = self._encryption.decrypt(self._user.refresh_token)
             spotify = SpotifyService()
             token_data = await spotify.refresh_access_token(refresh_token)

@@ -39,7 +39,8 @@ async def refresh_all_tokens() -> None:
             for user in users:
                 try:
                     # Check if token will expire in the next 15 minutes
-                    if (user.token_expires_at.timestamp() - datetime.now(UTC).timestamp()) < 900:
+                    token_exp = user.token_expires_at.replace(tzinfo=UTC) if user.token_expires_at.tzinfo is None else user.token_expires_at
+                    if (token_exp.timestamp() - datetime.now(UTC).timestamp()) < 900:
                         refresh_token = encryption.decrypt(user.refresh_token)
                         spotify = SpotifyService()
                         token_data = await spotify.refresh_access_token(refresh_token)
@@ -310,7 +311,8 @@ async def remove_played_episodes_from_playlists() -> None:
                         try:
                             # Get Spotify client with valid token
                             access_token = encryption.decrypt(user.access_token)
-                            if datetime.now(UTC) >= user.token_expires_at:
+                            token_exp = user.token_expires_at.replace(tzinfo=UTC) if user.token_expires_at.tzinfo is None else user.token_expires_at
+                            if datetime.now(UTC) >= token_exp:
                                 refresh_token = encryption.decrypt(user.refresh_token)
                                 spotify = SpotifyService()
                                 token_data = await spotify.refresh_access_token(refresh_token)
