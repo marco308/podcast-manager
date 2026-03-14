@@ -1,3 +1,6 @@
 .env
 *.db
 data/
+
+# iOS build artifacts
+ios/PodcastManager/build/
