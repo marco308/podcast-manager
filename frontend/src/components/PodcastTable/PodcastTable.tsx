@@ -1,7 +1,31 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Table, Avatar, Switch, message, Typography, Space, Tag, Grid, Drawer, Form, Divider, Card, Segmented, Empty, Input, Button, Popconfirm } from 'antd';
+import {
+  Table,
+  Avatar,
+  Switch,
+  message,
+  Typography,
+  Space,
+  Tag,
+  Grid,
+  Drawer,
+  Form,
+  Divider,
+  Card,
+  Segmented,
+  Empty,
+  Input,
+  Button,
+  Popconfirm,
+} from 'antd';
 import type { TableProps } from 'antd';
-import { RightOutlined, AppstoreOutlined, UnorderedListOutlined, SearchOutlined, UserDeleteOutlined } from '@ant-design/icons';
+import {
+  RightOutlined,
+  AppstoreOutlined,
+  UnorderedListOutlined,
+  SearchOutlined,
+  UserDeleteOutlined,
+} from '@ant-design/icons';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import type { Podcast, PodcastCategory } from '../../types';
@@ -126,7 +150,16 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
             {record.name[0]}
           </Avatar>
           <div style={{ minWidth: 0, flex: 1 }}>
-            <Text className="podcast-name" strong style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            <Text
+              className="podcast-name"
+              strong
+              style={{
+                display: 'block',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
               {record.name}
             </Text>
             <Text type="secondary" style={{ fontSize: 12 }}>
@@ -216,9 +249,7 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
       width: 120,
       render: (_, record) => (
         <Text type="secondary" style={{ fontSize: 12 }}>
-          {record.last_synced_at
-            ? dayjs(record.last_synced_at).fromNow()
-            : 'Never'}
+          {record.last_synced_at ? dayjs(record.last_synced_at).fromNow() : 'Never'}
         </Text>
       ),
       sorter: (a, b) => {
@@ -255,7 +286,9 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
   // Card view for mobile
   const renderCardView = () => {
     if (filteredPodcasts.length === 0) {
-      return <Empty description={searchQuery ? "No podcasts match your search" : "No podcasts found"} />;
+      return (
+        <Empty description={searchQuery ? 'No podcasts match your search' : 'No podcasts found'} />
+      );
     }
 
     return (
@@ -279,23 +312,27 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
                 {podcast.name[0]}
               </Avatar>
               <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
-                <div style={{
-                  fontWeight: 600,
-                  marginBottom: 2,
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                }}>
+                <div
+                  style={{
+                    fontWeight: 600,
+                    marginBottom: 2,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                >
                   {podcast.name}
                 </div>
-                <div style={{
-                  fontSize: 12,
-                  color: 'rgba(0, 0, 0, 0.45)',
-                  marginBottom: 4,
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                }}>
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: 'rgba(0, 0, 0, 0.45)',
+                    marginBottom: 4,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                >
                   {podcast.publisher}
                 </div>
                 <Space size={4} wrap>
@@ -304,10 +341,15 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
                       <Tag
                         key={cat}
                         color={
-                          cat === 'primary' ? 'blue' :
-                          cat === 'news' ? 'green' :
-                          cat === 'background' ? 'purple' :
-                          cat === 'weekend' ? 'orange' : 'default'
+                          cat === 'primary'
+                            ? 'blue'
+                            : cat === 'news'
+                              ? 'green'
+                              : cat === 'background'
+                                ? 'purple'
+                                : cat === 'weekend'
+                                  ? 'orange'
+                                  : 'default'
                         }
                         style={{ margin: 0 }}
                       >
@@ -315,12 +357,26 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
                       </Tag>
                     ))
                   ) : (
-                    <Tag color="default" style={{ margin: 0 }}>uncategorized</Tag>
+                    <Tag color="default" style={{ margin: 0 }}>
+                      uncategorized
+                    </Tag>
                   )}
-                  <Tag color="default" style={{ margin: 0 }}>{podcast.total_episodes} eps</Tag>
-                  <Tag color="blue" style={{ margin: 0 }}>{podcast.unplayed_episodes} unplayed</Tag>
-                  {podcast.is_sequential && <Tag color="orange" style={{ margin: 0 }}>Seq</Tag>}
-                  {podcast.is_weekend_only && <Tag color="purple" style={{ margin: 0 }}>Wknd</Tag>}
+                  <Tag color="default" style={{ margin: 0 }}>
+                    {podcast.total_episodes} eps
+                  </Tag>
+                  <Tag color="blue" style={{ margin: 0 }}>
+                    {podcast.unplayed_episodes} unplayed
+                  </Tag>
+                  {podcast.is_sequential && (
+                    <Tag color="orange" style={{ margin: 0 }}>
+                      Seq
+                    </Tag>
+                  )}
+                  {podcast.is_weekend_only && (
+                    <Tag color="purple" style={{ margin: 0 }}>
+                      Wknd
+                    </Tag>
+                  )}
                 </Space>
               </div>
               <RightOutlined style={{ color: '#999', fontSize: 12, flexShrink: 0 }} />
@@ -334,14 +390,16 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
   return (
     <>
       {/* Search and View Toggle */}
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 16,
-        gap: 12,
-        flexWrap: 'wrap'
-      }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 16,
+          gap: 12,
+          flexWrap: 'wrap',
+        }}
+      >
         <Input
           placeholder="Search podcasts by name or publisher..."
           prefix={<SearchOutlined />}
@@ -469,7 +527,8 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
                   {selectedPodcast.total_episodes} episodes
                 </Text>
                 <Text type="secondary" style={{ fontSize: 12 }}>
-                  Last synced: {selectedPodcast.last_synced_at
+                  Last synced:{' '}
+                  {selectedPodcast.last_synced_at
                     ? dayjs(selectedPodcast.last_synced_at).fromNow()
                     : 'Never'}
                 </Text>

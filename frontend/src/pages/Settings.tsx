@@ -1,4 +1,14 @@
-import { Typography, Card, Descriptions, Button, Space, Divider, message, Tag, Segmented } from 'antd';
+import {
+  Typography,
+  Card,
+  Descriptions,
+  Button,
+  Space,
+  Divider,
+  message,
+  Tag,
+  Segmented,
+} from 'antd';
 import { LogoutOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { useAuth, useTheme } from '../hooks';
@@ -27,15 +37,9 @@ export function Settings() {
 
       <Card title="Account" style={{ marginBottom: 24 }}>
         <Descriptions column={1}>
-          <Descriptions.Item label="Spotify Username">
-            {user?.spotify_id || '—'}
-          </Descriptions.Item>
-          <Descriptions.Item label="Display Name">
-            {user?.display_name || '—'}
-          </Descriptions.Item>
-          <Descriptions.Item label="Email">
-            {user?.email || '—'}
-          </Descriptions.Item>
+          <Descriptions.Item label="Spotify Username">{user?.spotify_id || '—'}</Descriptions.Item>
+          <Descriptions.Item label="Display Name">{user?.display_name || '—'}</Descriptions.Item>
+          <Descriptions.Item label="Email">{user?.email || '—'}</Descriptions.Item>
           <Descriptions.Item label="Account Created">
             {user?.created_at ? dayjs(user.created_at).format('MMMM D, YYYY') : '—'}
           </Descriptions.Item>
@@ -66,7 +70,8 @@ export function Settings() {
               <Text type="secondary" style={{ fontSize: 12 }}>
                 <Text strong>System</Text> — Follows your device's appearance setting
                 <br />
-                <Text strong>Auto</Text> — Uses system preference, or switches to dark mode between 7 PM and 7 AM
+                <Text strong>Auto</Text> — Uses system preference, or switches to dark mode between
+                7 PM and 7 AM
               </Text>
             </Paragraph>
           </div>
@@ -76,12 +81,16 @@ export function Settings() {
       <Card title="About">
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
           <div>
-            <Text strong style={{ fontSize: 16 }}>Podcast Manager</Text>
-            <Tag color="green" style={{ marginLeft: 8 }}>v{APP_VERSION}</Tag>
+            <Text strong style={{ fontSize: 16 }}>
+              Podcast Manager
+            </Text>
+            <Tag color="green" style={{ marginLeft: 8 }}>
+              v{APP_VERSION}
+            </Tag>
           </div>
           <Paragraph style={{ marginBottom: 0 }}>
-            A powerful Spotify podcast organizer that automatically creates and maintains smart playlists
-            based on your listening preferences and custom rules.
+            A powerful Spotify podcast organizer that automatically creates and maintains smart
+            playlists based on your listening preferences and custom rules.
           </Paragraph>
 
           <Divider style={{ margin: '12px 0' }}>
@@ -89,7 +98,9 @@ export function Settings() {
           </Divider>
 
           <div>
-            <Text strong style={{ fontSize: 14 }}>🎯 Smart Categorization</Text>
+            <Text strong style={{ fontSize: 14 }}>
+              🎯 Smart Categorization
+            </Text>
             <Paragraph style={{ marginTop: 8, marginBottom: 0 }}>
               <Text type="secondary">
                 <Text strong>Primary</Text> — Your main podcasts, all unplayed episodes
@@ -104,37 +115,48 @@ export function Settings() {
           </div>
 
           <div>
-            <Text strong style={{ fontSize: 14 }}>⚙️ Podcast Attributes</Text>
+            <Text strong style={{ fontSize: 14 }}>
+              ⚙️ Podcast Attributes
+            </Text>
             <Paragraph style={{ marginTop: 8, marginBottom: 0 }}>
               <Text type="secondary">
-                <Text strong>Sequential</Text> — Story-based podcasts always play oldest-to-newest to maintain narrative continuity
+                <Text strong>Sequential</Text> — Story-based podcasts always play oldest-to-newest
+                to maintain narrative continuity
                 <br />
-                <Text strong>Weekend Only</Text> — Podcasts that only appear on Fri/Sat/Sun and UK public holidays
+                <Text strong>Weekend Only</Text> — Podcasts that only appear on Fri/Sat/Sun and UK
+                public holidays
               </Text>
             </Paragraph>
           </div>
 
           <div>
-            <Text strong style={{ fontSize: 14 }}>📋 Flexible Playlist Ordering</Text>
+            <Text strong style={{ fontSize: 14 }}>
+              📋 Flexible Playlist Ordering
+            </Text>
             <Paragraph style={{ marginTop: 8, marginBottom: 0 }}>
               <Text type="secondary">
                 <Text strong>Default</Text> — Category-based automatic ordering
                 <br />
-                <Text strong>Custom Order</Text> — Drag-and-drop podcast ordering (respects sequential constraint)
+                <Text strong>Custom Order</Text> — Drag-and-drop podcast ordering (respects
+                sequential constraint)
                 <br />
                 <Text strong>Chronological</Text> — Sort by release date (oldest or newest first)
                 <br />
-                <em>Note: Sequential podcasts always maintain oldest-first ordering regardless of mode</em>
+                <em>
+                  Note: Sequential podcasts always maintain oldest-first ordering regardless of mode
+                </em>
               </Text>
             </Paragraph>
           </div>
 
           <div>
-            <Text strong style={{ fontSize: 14 }}>🔄 Automation</Text>
+            <Text strong style={{ fontSize: 14 }}>
+              🔄 Automation
+            </Text>
             <Paragraph style={{ marginTop: 8, marginBottom: 0 }}>
               <Text type="secondary">
-                Automatic daily syncs keep your Spotify library and playlists up to date.
-                Manually trigger updates anytime for instant refresh.
+                Automatic daily syncs keep your Spotify library and playlists up to date. Manually
+                trigger updates anytime for instant refresh.
               </Text>
             </Paragraph>
           </div>

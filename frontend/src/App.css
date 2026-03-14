@@ -54,7 +54,9 @@ body {
 .ant-layout-content,
 .ant-menu,
 .ant-card {
-  transition: background-color 0.3s ease, border-color 0.3s ease;
+  transition:
+    background-color 0.3s ease,
+    border-color 0.3s ease;
 }
 
 /* Card hover effects */

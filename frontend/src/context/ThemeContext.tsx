@@ -13,7 +13,7 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 const STORAGE_KEY = 'theme-preference';
 const DARK_START_HOUR = 19; // 7 PM
-const DARK_END_HOUR = 7;   // 7 AM
+const DARK_END_HOUR = 7; // 7 AM
 
 function getSystemPrefersDark(): boolean {
   return window.matchMedia('(prefers-color-scheme: dark)').matches;

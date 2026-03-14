@@ -16,9 +16,7 @@ export const authApi = {
   // Check authentication status
   async checkStatus(): Promise<boolean> {
     try {
-      const response = await apiClient.get<{ authenticated: boolean }>(
-        '/auth/status'
-      );
+      const response = await apiClient.get<{ authenticated: boolean }>('/auth/status');
       return response.data.authenticated;
     } catch {
       return false;

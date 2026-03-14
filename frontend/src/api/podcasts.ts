@@ -1,5 +1,11 @@
 import apiClient from './client';
-import type { Podcast, PodcastUpdate, PodcastCategory, SyncResult, PodcastListResponse } from '../types';
+import type {
+  Podcast,
+  PodcastUpdate,
+  PodcastCategory,
+  SyncResult,
+  PodcastListResponse,
+} from '../types';
 
 export const podcastsApi = {
   // List all podcasts with optional category filter

@@ -1,6 +1,7 @@
 /* Base styles */
 :root {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
 
@@ -61,7 +62,7 @@ body {
   }
 
   /* Reduce content padding on small screens */
-  .ant-layout>.ant-layout {
+  .ant-layout > .ant-layout {
     padding: 12px !important;
   }
 
@@ -115,7 +116,7 @@ body {
     padding: 0 8px !important;
   }
 
-  .ant-layout>.ant-layout {
+  .ant-layout > .ant-layout {
     padding: 8px !important;
   }
 
@@ -124,8 +125,8 @@ body {
   }
 
   /* Table even more compact */
-  .ant-table-thead>tr>th,
-  .ant-table-tbody>tr>td {
+  .ant-table-thead > tr > th,
+  .ant-table-tbody > tr > td {
     padding: 8px !important;
   }
 
@@ -154,8 +155,8 @@ body {
   }
 
   /* Make table controls and cells more compact */
-  .ant-table-thead>tr>th,
-  .ant-table-tbody>tr>td {
+  .ant-table-thead > tr > th,
+  .ant-table-tbody > tr > td {
     padding: 8px 12px;
   }
 
