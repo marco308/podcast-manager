@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query, Response
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -199,7 +199,15 @@ async def callback(
             user.updated_at = datetime.now(UTC)
             logger.info(f"Updated existing user: {user.id}")
         else:
-            # Create new user
+            # Block new registrations if a user already exists (single-user app)
+            existing_user_count = await db.execute(select(func.count()).select_from(User))
+            if existing_user_count.scalar() > 0:
+                logger.warning(f"Rejected sign-up attempt from Spotify ID: {profile['id']}")
+                raise HTTPException(
+                    status_code=403,
+                    detail="Registration is closed. This is a single-user application.",
+                )
+
             user = User(
                 spotify_id=profile["id"],
                 display_name=profile.get("display_name"),
