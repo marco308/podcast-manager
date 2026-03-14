@@ -10,10 +10,14 @@ export {
 } from './usePodcasts';
 export {
   usePlaylists,
+  usePlaylistPodcasts,
   useCreatePlaylist,
   useUpdatePlaylist,
   useDeletePlaylist,
   useRunPlaylist,
   useRunAllPlaylists,
+  useAddPodcastsToPlaylist,
+  useRemovePodcastFromPlaylist,
+  useReorderPlaylistPodcasts,
   playlistKeys,
 } from './usePlaylists';

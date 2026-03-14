@@ -17,6 +17,7 @@ import {
   Input,
   Button,
   Popconfirm,
+  Select,
 } from 'antd';
 import type { TableProps } from 'antd';
 import {
@@ -28,9 +29,14 @@ import {
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
-import type { Podcast, PodcastCategory } from '../../types';
-import { CategorySelect } from './CategorySelect';
-import { useUpdatePodcast, useUnfollowPodcast } from '../../hooks';
+import type { Podcast } from '../../types';
+import {
+  useUpdatePodcast,
+  useUnfollowPodcast,
+  usePlaylists,
+  useAddPodcastsToPlaylist,
+  useRemovePodcastFromPlaylist,
+} from '../../hooks';
 
 dayjs.extend(relativeTime);
 
@@ -47,6 +53,9 @@ type ViewMode = 'cards' | 'table';
 export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
   const updatePodcast = useUpdatePodcast();
   const unfollowPodcast = useUnfollowPodcast();
+  const { data: playlists } = usePlaylists();
+  const addPodcastsToPlaylist = useAddPodcastsToPlaylist();
+  const removePodcastFromPlaylist = useRemovePodcastFromPlaylist();
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [selectedPodcast, setSelectedPodcast] = useState<Podcast | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -75,6 +84,19 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
     );
   }, [podcasts, searchQuery]);
 
+  const playlistOptions = useMemo(() => {
+    return (playlists || []).map((p) => ({
+      value: p.id,
+      label: p.name,
+    }));
+  }, [playlists]);
+
+  // Helper to get playlist name by id
+  const getPlaylistName = (playlistId: number): string => {
+    const playlist = playlists?.find((p) => p.id === playlistId);
+    return playlist?.name || `Playlist ${playlistId}`;
+  };
+
   const openPodcastDrawer = (podcast: Podcast) => {
     setSelectedPodcast(podcast);
     setDrawerOpen(true);
@@ -85,13 +107,38 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
     setSelectedPodcast(null);
   };
 
-  const handleCategoriesChange = async (spotifyId: string, categories: PodcastCategory[]) => {
-    setUpdatingId(spotifyId);
+  const handlePlaylistsChange = async (
+    podcast: Podcast,
+    newPlaylistIds: number[]
+  ) => {
+    setUpdatingId(podcast.spotify_id);
     try {
-      await updatePodcast.mutateAsync({ spotifyId, data: { categories } });
-      message.success('Categories updated');
+      const oldIds = new Set(podcast.playlist_ids);
+      const newIds = new Set(newPlaylistIds);
+
+      // Find IDs to add and remove
+      const toAdd = newPlaylistIds.filter((id) => !oldIds.has(id));
+      const toRemove = podcast.playlist_ids.filter((id) => !newIds.has(id));
+
+      // Process additions
+      for (const playlistId of toAdd) {
+        await addPodcastsToPlaylist.mutateAsync({
+          playlistId,
+          podcastIds: [podcast.id],
+        });
+      }
+
+      // Process removals
+      for (const playlistId of toRemove) {
+        await removePodcastFromPlaylist.mutateAsync({
+          playlistId,
+          podcastId: podcast.id,
+        });
+      }
+
+      message.success('Playlist assignments updated');
     } catch {
-      message.error('Failed to update categories');
+      message.error('Failed to update playlist assignments');
     } finally {
       setUpdatingId(null);
     }
@@ -102,18 +149,6 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
     try {
       await updatePodcast.mutateAsync({ spotifyId, data: { is_sequential: checked } });
       message.success(checked ? 'Marked as sequential' : 'Removed sequential flag');
-    } catch {
-      message.error('Failed to update');
-    } finally {
-      setUpdatingId(null);
-    }
-  };
-
-  const handleWeekendOnlyChange = async (spotifyId: string, checked: boolean) => {
-    setUpdatingId(spotifyId);
-    try {
-      await updatePodcast.mutateAsync({ spotifyId, data: { is_weekend_only: checked } });
-      message.success(checked ? 'Marked as weekend only' : 'Removed weekend flag');
     } catch {
       message.error('Failed to update');
     } finally {
@@ -183,26 +218,29 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
       sorter: (a, b) => a.unplayed_episodes - b.unplayed_episodes,
     },
     {
-      title: 'Categories',
-      key: 'categories',
-      width: 200,
+      title: 'Playlists',
+      key: 'playlists',
+      width: 220,
       render: (_, record) => (
-        <CategorySelect
-          value={record.categories}
-          onChange={(value) => handleCategoriesChange(record.spotify_id, value)}
+        <Select
+          mode="multiple"
+          value={record.playlist_ids}
+          onChange={(value) => handlePlaylistsChange(record, value)}
           loading={updatingId === record.spotify_id}
+          style={{ width: 200 }}
+          placeholder="Unassigned"
+          allowClear
+          maxTagCount="responsive"
+          options={playlistOptions}
         />
       ),
       filters: [
-        { text: 'Primary', value: 'primary' },
-        { text: 'News', value: 'news' },
-        { text: 'Background', value: 'background' },
-        { text: 'Weekend', value: 'weekend' },
-        { text: 'Uncategorized', value: '_uncategorized' },
+        ...(playlists || []).map((p) => ({ text: p.name, value: p.id })),
+        { text: 'Unassigned', value: -1 },
       ],
       onFilter: (value, record) => {
-        if (value === '_uncategorized') return record.categories.length === 0;
-        return record.categories.includes(value as PodcastCategory);
+        if (value === -1) return record.playlist_ids.length === 0;
+        return record.playlist_ids.includes(value as number);
       },
     },
     {
@@ -223,25 +261,6 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
         { text: 'No', value: false },
       ],
       onFilter: (value, record) => record.is_sequential === value,
-    },
-    {
-      title: 'Weekend Only',
-      key: 'is_weekend_only',
-      align: 'center',
-      width: 120,
-      render: (_, record) => (
-        <Switch
-          checked={record.is_weekend_only}
-          onChange={(checked) => handleWeekendOnlyChange(record.spotify_id, checked)}
-          loading={updatingId === record.spotify_id}
-          size="small"
-        />
-      ),
-      filters: [
-        { text: 'Yes', value: true },
-        { text: 'No', value: false },
-      ],
-      onFilter: (value, record) => record.is_weekend_only === value,
     },
     {
       title: 'Last Synced',
@@ -336,29 +355,15 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
                   {podcast.publisher}
                 </div>
                 <Space size={4} wrap>
-                  {podcast.categories.length > 0 ? (
-                    podcast.categories.map((cat) => (
-                      <Tag
-                        key={cat}
-                        color={
-                          cat === 'primary'
-                            ? 'blue'
-                            : cat === 'news'
-                              ? 'green'
-                              : cat === 'background'
-                                ? 'purple'
-                                : cat === 'weekend'
-                                  ? 'orange'
-                                  : 'default'
-                        }
-                        style={{ margin: 0 }}
-                      >
-                        {cat}
+                  {podcast.playlist_ids.length > 0 ? (
+                    podcast.playlist_ids.map((playlistId) => (
+                      <Tag key={playlistId} color="blue" style={{ margin: 0 }}>
+                        {getPlaylistName(playlistId)}
                       </Tag>
                     ))
                   ) : (
                     <Tag color="default" style={{ margin: 0 }}>
-                      uncategorized
+                      unassigned
                     </Tag>
                   )}
                   <Tag color="default" style={{ margin: 0 }}>
@@ -370,11 +375,6 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
                   {podcast.is_sequential && (
                     <Tag color="orange" style={{ margin: 0 }}>
                       Seq
-                    </Tag>
-                  )}
-                  {podcast.is_weekend_only && (
-                    <Tag color="purple" style={{ margin: 0 }}>
-                      Wknd
                     </Tag>
                   )}
                 </Space>
@@ -439,9 +439,6 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
               onShowSizeChange: (_, size) => setPageSize(size),
             }}
             size="middle"
-            rowClassName={(record) => {
-              return record.categories.length > 0 ? `category-${record.categories[0]}` : '';
-            }}
           />
         </div>
       )}
@@ -479,14 +476,19 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
             <Divider style={{ margin: '16px 0' }} />
 
             <Form layout="vertical">
-              <Form.Item label="Categories" style={{ marginBottom: 16 }}>
-                <CategorySelect
-                  value={selectedPodcast.categories}
+              <Form.Item label="Playlists" style={{ marginBottom: 16 }}>
+                <Select
+                  mode="multiple"
+                  value={selectedPodcast.playlist_ids}
                   onChange={(value) => {
-                    handleCategoriesChange(selectedPodcast.spotify_id, value);
-                    setSelectedPodcast({ ...selectedPodcast, categories: value });
+                    handlePlaylistsChange(selectedPodcast, value);
+                    setSelectedPodcast({ ...selectedPodcast, playlist_ids: value });
                   }}
                   loading={updatingId === selectedPodcast.spotify_id}
+                  style={{ width: '100%' }}
+                  placeholder="No playlists assigned"
+                  allowClear
+                  options={playlistOptions}
                 />
               </Form.Item>
 
@@ -500,21 +502,6 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
                   onChange={(checked) => {
                     handleSequentialChange(selectedPodcast.spotify_id, checked);
                     setSelectedPodcast({ ...selectedPodcast, is_sequential: checked });
-                  }}
-                  loading={updatingId === selectedPodcast.spotify_id}
-                />
-              </Form.Item>
-
-              <Form.Item
-                label="Weekend Only"
-                extra="Only add to playlists on weekends/holidays"
-                style={{ marginBottom: 16 }}
-              >
-                <Switch
-                  checked={selectedPodcast.is_weekend_only}
-                  onChange={(checked) => {
-                    handleWeekendOnlyChange(selectedPodcast.spotify_id, checked);
-                    setSelectedPodcast({ ...selectedPodcast, is_weekend_only: checked });
                   }}
                   loading={updatingId === selectedPodcast.spotify_id}
                 />

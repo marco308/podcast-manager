@@ -18,9 +18,6 @@
   --bg-layout: #f5f5f5;
   --bg-container: #ffffff;
   --border-color: #f0f0f0;
-  --category-primary-border: #1890ff;
-  --category-news-border: #52c41a;
-  --category-background-border: #722ed1;
   --card-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
   --scrollbar-track: #f1f1f1;
   --scrollbar-thumb: #c1c1c1;
@@ -36,9 +33,6 @@
   --bg-layout: #141414;
   --bg-container: #1f1f1f;
   --border-color: #303030;
-  --category-primary-border: #177ddc;
-  --category-news-border: #49aa19;
-  --category-background-border: #854eca;
   --card-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
   --scrollbar-track: #2a2a2a;
   --scrollbar-thumb: #4a4a4a;

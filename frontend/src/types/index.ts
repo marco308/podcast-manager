@@ -9,8 +9,6 @@ export interface User {
 }
 
 // Podcast types
-export type PodcastCategory = 'primary' | 'news' | 'background' | 'weekend';
-
 export interface Podcast {
   id: number;
   spotify_id: string;
@@ -20,26 +18,19 @@ export interface Podcast {
   publisher: string | null;
   total_episodes: number;
   unplayed_episodes: number;
-  categories: PodcastCategory[];
   is_sequential: boolean;
-  is_weekend_only: boolean;
-  morning_order: number | null; // DEPRECATED: use playlist_order
-  playlist_order: number | null;
+  playlist_ids: number[];
   last_synced_at: string | null;
   created_at: string;
   updated_at: string;
 }
 
 export interface PodcastUpdate {
-  categories?: PodcastCategory[];
   is_sequential?: boolean;
-  is_weekend_only?: boolean;
-  morning_order?: number | null; // DEPRECATED: use playlist_order
-  playlist_order?: number | null;
 }
 
 // Playlist types
-export type PlaylistRuleType = 'primary' | 'news' | 'morning' | 'background' | 'weekend';
+export type EpisodeMode = 'all_unplayed' | 'latest_only';
 export type PlaylistOrderingMode =
   | 'default'
   | 'podcast_order'
@@ -50,8 +41,10 @@ export interface Playlist {
   id: number;
   name: string;
   spotify_playlist_id: string | null;
-  rule_type: PlaylistRuleType;
+  episode_mode: EpisodeMode;
   is_enabled: boolean;
+  is_weekend_only: boolean;
+  podcast_count: number;
   ordering_mode: PlaylistOrderingMode;
   last_updated_at: string | null;
   created_at: string;
@@ -60,8 +53,9 @@ export interface Playlist {
 export interface PlaylistCreate {
   name: string;
   spotify_playlist_id?: string;
-  rule_type: PlaylistRuleType;
+  episode_mode: EpisodeMode;
   is_enabled?: boolean;
+  is_weekend_only?: boolean;
   ordering_mode?: PlaylistOrderingMode;
 }
 
@@ -69,7 +63,19 @@ export interface PlaylistUpdate {
   name?: string;
   spotify_playlist_id?: string;
   is_enabled?: boolean;
+  episode_mode?: EpisodeMode;
+  is_weekend_only?: boolean;
   ordering_mode?: PlaylistOrderingMode;
+}
+
+export interface PlaylistPodcast {
+  id: number;
+  spotify_id: string;
+  name: string;
+  image_url?: string;
+  publisher?: string;
+  is_sequential: boolean;
+  position: number | null;
 }
 
 // Sync types
@@ -88,6 +94,12 @@ export interface PodcastListResponse {
 // Playlist list response
 export interface PlaylistListResponse {
   items: Playlist[];
+  total: number;
+}
+
+// Playlist podcast list response
+export interface PlaylistPodcastListResponse {
+  items: PlaylistPodcast[];
   total: number;
 }
 

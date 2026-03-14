@@ -1,12 +1,14 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { playlistsApi } from '../api';
 import type { PlaylistCreate, PlaylistUpdate } from '../types';
+import { podcastKeys } from './usePodcasts';
 
 // Query key factory for playlists
 export const playlistKeys = {
   all: ['playlists'] as const,
   lists: () => [...playlistKeys.all, 'list'] as const,
   list: () => [...playlistKeys.lists()] as const,
+  podcasts: (playlistId: number) => [...playlistKeys.all, 'podcasts', playlistId] as const,
 };
 
 // Hook to list playlists
@@ -14,6 +16,15 @@ export function usePlaylists() {
   return useQuery({
     queryKey: playlistKeys.list(),
     queryFn: playlistsApi.list,
+  });
+}
+
+// Hook to get podcasts for a playlist
+export function usePlaylistPodcasts(playlistId: number) {
+  return useQuery({
+    queryKey: playlistKeys.podcasts(playlistId),
+    queryFn: () => playlistsApi.getPodcasts(playlistId),
+    enabled: !!playlistId,
   });
 }
 
@@ -50,6 +61,7 @@ export function useDeletePlaylist() {
     mutationFn: (id: number) => playlistsApi.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: playlistKeys.lists() });
+      queryClient.invalidateQueries({ queryKey: podcastKeys.all });
     },
   });
 }
@@ -74,6 +86,49 @@ export function useRunAllPlaylists() {
     mutationFn: playlistsApi.runAll,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: playlistKeys.lists() });
+    },
+  });
+}
+
+// Hook to add podcasts to a playlist
+export function useAddPodcastsToPlaylist() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ playlistId, podcastIds }: { playlistId: number; podcastIds: number[] }) =>
+      playlistsApi.addPodcasts(playlistId, podcastIds),
+    onSuccess: (_, { playlistId }) => {
+      queryClient.invalidateQueries({ queryKey: playlistKeys.podcasts(playlistId) });
+      queryClient.invalidateQueries({ queryKey: playlistKeys.lists() });
+      queryClient.invalidateQueries({ queryKey: podcastKeys.all });
+    },
+  });
+}
+
+// Hook to remove a podcast from a playlist
+export function useRemovePodcastFromPlaylist() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ playlistId, podcastId }: { playlistId: number; podcastId: number }) =>
+      playlistsApi.removePodcast(playlistId, podcastId),
+    onSuccess: (_, { playlistId }) => {
+      queryClient.invalidateQueries({ queryKey: playlistKeys.podcasts(playlistId) });
+      queryClient.invalidateQueries({ queryKey: playlistKeys.lists() });
+      queryClient.invalidateQueries({ queryKey: podcastKeys.all });
+    },
+  });
+}
+
+// Hook to reorder podcasts in a playlist
+export function useReorderPlaylistPodcasts() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ playlistId, podcastIds }: { playlistId: number; podcastIds: number[] }) =>
+      playlistsApi.reorderPodcasts(playlistId, podcastIds),
+    onSuccess: (_, { playlistId }) => {
+      queryClient.invalidateQueries({ queryKey: playlistKeys.podcasts(playlistId) });
     },
   });
 }

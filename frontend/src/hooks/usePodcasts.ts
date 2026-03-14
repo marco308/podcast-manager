@@ -1,21 +1,21 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { podcastsApi } from '../api';
-import type { PodcastCategory, PodcastUpdate } from '../types';
+import type { PodcastUpdate } from '../types';
 
 // Query key factory for podcasts
 export const podcastKeys = {
   all: ['podcasts'] as const,
   lists: () => [...podcastKeys.all, 'list'] as const,
-  list: (category?: PodcastCategory) => [...podcastKeys.lists(), { category }] as const,
+  list: () => [...podcastKeys.lists()] as const,
   details: () => [...podcastKeys.all, 'detail'] as const,
   detail: (spotifyId: string) => [...podcastKeys.details(), spotifyId] as const,
 };
 
 // Hook to list podcasts
-export function usePodcasts(category?: PodcastCategory) {
+export function usePodcasts() {
   return useQuery({
-    queryKey: podcastKeys.list(category),
-    queryFn: () => podcastsApi.list(category),
+    queryKey: podcastKeys.list(),
+    queryFn: () => podcastsApi.list(),
   });
 }
 

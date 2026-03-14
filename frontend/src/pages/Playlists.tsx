@@ -15,9 +15,9 @@ import {
   Alert,
   Card,
   List,
-  InputNumber,
   Grid,
   Tooltip,
+  Avatar,
 } from 'antd';
 import {
   PlusOutlined,
@@ -26,6 +26,7 @@ import {
   DeleteOutlined,
   EditOutlined,
   HolderOutlined,
+  CloseOutlined,
 } from '@ant-design/icons';
 import type { TableProps } from 'antd';
 import dayjs from 'dayjs';
@@ -50,22 +51,24 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import {
   usePlaylists,
+  usePlaylistPodcasts,
   useCreatePlaylist,
   useUpdatePlaylist,
   useDeletePlaylist,
   useRunPlaylist,
   useRunAllPlaylists,
   usePodcasts,
-  useUpdatePodcast,
+  useAddPodcastsToPlaylist,
+  useRemovePodcastFromPlaylist,
+  useReorderPlaylistPodcasts,
 } from '../hooks';
 import { LoadingSpinner } from '../components';
 import type {
   Playlist,
-  PlaylistRuleType,
   PlaylistCreate,
   PlaylistUpdate,
-  Podcast,
-  PodcastCategory,
+  PlaylistPodcast,
+  EpisodeMode,
 } from '../types';
 
 dayjs.extend(relativeTime);
@@ -73,23 +76,21 @@ dayjs.extend(relativeTime);
 const { Title, Text } = Typography;
 const { useBreakpoint } = Grid;
 
-const ruleTypeOptions: { value: PlaylistRuleType; label: string; color: string }[] = [
-  { value: 'primary', label: 'Primary', color: 'blue' },
-  { value: 'news', label: 'News', color: 'green' },
-  { value: 'morning', label: 'Morning', color: 'orange' },
-  { value: 'background', label: 'Background', color: 'purple' },
-  { value: 'weekend', label: 'Weekend', color: 'orange' },
+const episodeModeOptions: { value: EpisodeMode; label: string }[] = [
+  { value: 'all_unplayed', label: 'All Unplayed Episodes' },
+  { value: 'latest_only', label: 'Latest Episode Only' },
 ];
 
 interface SortableItemProps {
-  podcast: Podcast;
-  onOrderChange: (spotifyId: string, order: number | null) => void;
-  updatingId: string | null;
+  podcast: PlaylistPodcast;
+  playlistId: number;
+  onRemove: (podcastId: number) => void;
+  removing: boolean;
 }
 
-function SortableItem({ podcast, onOrderChange, updatingId }: SortableItemProps) {
+function SortableItem({ podcast, onRemove, removing }: SortableItemProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: podcast.spotify_id,
+    id: podcast.id,
   });
 
   const style = {
@@ -121,6 +122,13 @@ function SortableItem({ podcast, onOrderChange, updatingId }: SortableItemProps)
           <HolderOutlined style={{ fontSize: 20, color: '#999' }} />
         </div>
         <List.Item.Meta
+          avatar={
+            podcast.image_url ? (
+              <Avatar src={podcast.image_url} size={36} shape="square" style={{ borderRadius: 6 }}>
+                {podcast.name[0]}
+              </Avatar>
+            ) : undefined
+          }
           title={
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <Text ellipsis style={{ maxWidth: 150 }}>
@@ -141,16 +149,16 @@ function SortableItem({ podcast, onOrderChange, updatingId }: SortableItemProps)
             </Text>
           }
         />
-        <InputNumber
-          size="small"
-          min={1}
-          max={999}
-          value={podcast.playlist_order || podcast.morning_order}
-          onChange={(value) => onOrderChange(podcast.spotify_id, value)}
-          placeholder="#"
-          disabled={updatingId === podcast.spotify_id}
-          style={{ width: 70 }}
-        />
+        <Tooltip title="Remove from playlist">
+          <Button
+            size="small"
+            icon={<CloseOutlined />}
+            onClick={() => onRemove(podcast.id)}
+            loading={removing}
+            danger
+            type="text"
+          />
+        </Tooltip>
       </List.Item>
     </div>
   );
@@ -161,43 +169,32 @@ interface PlaylistOrderingSectionProps {
 }
 
 function PlaylistOrderingSection({ playlist }: PlaylistOrderingSectionProps) {
-  // Only show if playlist exists and has custom ordering mode
   if (!playlist || playlist.ordering_mode !== 'podcast_order') {
     return null;
   }
 
-  // Map rule_type to category for fetching podcasts
-  const categoryMap: Record<PlaylistRuleType, string> = {
-    primary: 'primary',
-    news: 'news',
-    morning: 'news', // Morning playlists use NEWS category podcasts
-    background: 'background',
-    weekend: 'weekend',
-  };
-
-  const category = categoryMap[playlist.rule_type] as PodcastCategory;
-
-  const { data: podcasts, isLoading } = usePodcasts(category);
-  const updatePodcast = useUpdatePodcast();
-  const [updatingId, setUpdatingId] = useState<string | null>(null);
-  const [localPodcasts, setLocalPodcasts] = useState<Podcast[]>([]);
+  const { data: playlistPodcasts, isLoading } = usePlaylistPodcasts(playlist.id);
+  const { data: allPodcasts } = usePodcasts();
+  const addPodcasts = useAddPodcastsToPlaylist();
+  const removePodcast = useRemovePodcastFromPlaylist();
+  const reorderPodcasts = useReorderPlaylistPodcasts();
+  const [removingId, setRemovingId] = useState<number | null>(null);
+  const [localPodcasts, setLocalPodcasts] = useState<PlaylistPodcast[]>([]);
 
   // Update local state when data changes
   useEffect(() => {
-    if (podcasts) {
-      const sorted = [...podcasts].sort((a, b) => {
-        const aOrder = a.playlist_order ?? a.morning_order;
-        const bOrder = b.playlist_order ?? b.morning_order;
-        if (aOrder === null && bOrder === null) {
+    if (playlistPodcasts) {
+      const sorted = [...playlistPodcasts].sort((a, b) => {
+        if (a.position === null && b.position === null) {
           return a.name.localeCompare(b.name);
         }
-        if (aOrder === null) return 1;
-        if (bOrder === null) return -1;
-        return aOrder - bOrder;
+        if (a.position === null) return 1;
+        if (b.position === null) return -1;
+        return a.position - b.position;
       });
       setLocalPodcasts(sorted);
     }
-  }, [podcasts]);
+  }, [playlistPodcasts]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -223,48 +220,47 @@ function PlaylistOrderingSection({ playlist }: PlaylistOrderingSectionProps) {
       return;
     }
 
-    const oldIndex = localPodcasts.findIndex((p) => p.spotify_id === active.id);
-    const newIndex = localPodcasts.findIndex((p) => p.spotify_id === over.id);
+    const oldIndex = localPodcasts.findIndex((p) => p.id === active.id);
+    const newIndex = localPodcasts.findIndex((p) => p.id === over.id);
 
     const newOrder = arrayMove(localPodcasts, oldIndex, newIndex);
     setLocalPodcasts(newOrder);
 
-    // Update playlist_order for all affected podcasts
     try {
-      const updates = newOrder.map((podcast, index) => ({
-        spotifyId: podcast.spotify_id,
-        order: index + 1,
-      }));
-
-      // Batch update all podcasts
-      await Promise.all(
-        updates.map((update) =>
-          updatePodcast.mutateAsync({
-            spotifyId: update.spotifyId,
-            data: { playlist_order: update.order },
-          })
-        )
-      );
-
+      await reorderPodcasts.mutateAsync({
+        playlistId: playlist.id,
+        podcastIds: newOrder.map((p) => p.id),
+      });
       message.success('Order updated');
     } catch {
       message.error('Failed to update order');
-      // Revert on error
-      if (podcasts) {
-        setLocalPodcasts(podcasts);
+      if (playlistPodcasts) {
+        setLocalPodcasts(playlistPodcasts);
       }
     }
   };
 
-  const handleOrderChange = async (spotifyId: string, order: number | null) => {
-    setUpdatingId(spotifyId);
+  const handleRemove = async (podcastId: number) => {
+    setRemovingId(podcastId);
     try {
-      await updatePodcast.mutateAsync({ spotifyId, data: { playlist_order: order } });
-      message.success('Playlist order updated');
+      await removePodcast.mutateAsync({ playlistId: playlist.id, podcastId });
+      message.success('Podcast removed from playlist');
     } catch {
-      message.error('Failed to update order');
+      message.error('Failed to remove podcast');
     } finally {
-      setUpdatingId(null);
+      setRemovingId(null);
+    }
+  };
+
+  const handleAddPodcast = async (podcastId: number) => {
+    try {
+      await addPodcasts.mutateAsync({
+        playlistId: playlist.id,
+        podcastIds: [podcastId],
+      });
+      message.success('Podcast added to playlist');
+    } catch {
+      message.error('Failed to add podcast');
     }
   };
 
@@ -272,19 +268,11 @@ function PlaylistOrderingSection({ playlist }: PlaylistOrderingSectionProps) {
     return <LoadingSpinner tip="Loading podcasts..." />;
   }
 
-  if (!podcasts || podcasts.length === 0) {
-    const categoryLabel = category.toUpperCase();
-    return (
-      <Card title={`${playlist.name} - Podcast Order`} style={{ marginBottom: 24 }}>
-        <Text type="secondary">
-          No {categoryLabel} category podcasts found. Categorize podcasts as {categoryLabel} to set
-          order.
-        </Text>
-      </Card>
-    );
-  }
+  // Get podcast IDs already in the playlist
+  const assignedIds = new Set(localPodcasts.map((p) => p.id));
+  const availablePodcasts = (allPodcasts || []).filter((p) => !assignedIds.has(p.id));
 
-  const hasSequentialPodcasts = podcasts.some((p) => p.is_sequential);
+  const hasSequentialPodcasts = localPodcasts.some((p) => p.is_sequential);
 
   return (
     <Card
@@ -292,10 +280,30 @@ function PlaylistOrderingSection({ playlist }: PlaylistOrderingSectionProps) {
       style={{ marginBottom: 24 }}
       extra={
         <Text type="secondary" style={{ fontSize: 12 }}>
-          Drag to reorder or enter numbers manually
+          Drag to reorder
         </Text>
       }
     >
+      {/* Add podcast selector */}
+      {availablePodcasts.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <Select<number>
+            showSearch
+            style={{ width: '100%', maxWidth: 400 }}
+            placeholder="Add a podcast to this playlist..."
+            filterOption={(input, option) =>
+              String(option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+            }
+            onSelect={(value: number) => handleAddPodcast(value)}
+            value={undefined}
+            options={availablePodcasts.map((p) => ({
+              value: p.id,
+              label: p.name,
+            }))}
+          />
+        </div>
+      )}
+
       {hasSequentialPodcasts && (
         <Alert
           type="info"
@@ -305,24 +313,32 @@ function PlaylistOrderingSection({ playlist }: PlaylistOrderingSectionProps) {
           style={{ marginBottom: 16 }}
         />
       )}
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-        <SortableContext
-          items={localPodcasts.map((p) => p.spotify_id)}
-          strategy={verticalListSortingStrategy}
-        >
-          <List
-            dataSource={localPodcasts}
-            renderItem={(podcast) => (
-              <SortableItem
-                key={podcast.spotify_id}
-                podcast={podcast}
-                onOrderChange={handleOrderChange}
-                updatingId={updatingId}
-              />
-            )}
-          />
-        </SortableContext>
-      </DndContext>
+
+      {localPodcasts.length === 0 ? (
+        <Text type="secondary">
+          No podcasts assigned to this playlist yet. Use the selector above to add podcasts.
+        </Text>
+      ) : (
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext
+            items={localPodcasts.map((p) => p.id)}
+            strategy={verticalListSortingStrategy}
+          >
+            <List
+              dataSource={localPodcasts}
+              renderItem={(podcast) => (
+                <SortableItem
+                  key={podcast.id}
+                  podcast={podcast}
+                  playlistId={playlist.id}
+                  onRemove={handleRemove}
+                  removing={removingId === podcast.id}
+                />
+              )}
+            />
+          </SortableContext>
+        </DndContext>
+      )}
     </Card>
   );
 }
@@ -356,7 +372,12 @@ export function Playlists() {
   const openCreateModal = () => {
     setEditingPlaylist(null);
     form.resetFields();
-    form.setFieldsValue({ is_enabled: true, ordering_mode: 'default' });
+    form.setFieldsValue({
+      is_enabled: true,
+      ordering_mode: 'default',
+      episode_mode: 'all_unplayed',
+      is_weekend_only: false,
+    });
     setIsModalOpen(true);
   };
 
@@ -365,8 +386,9 @@ export function Playlists() {
     form.setFieldsValue({
       name: playlist.name,
       spotify_playlist_id: playlist.spotify_playlist_id,
-      rule_type: playlist.rule_type,
+      episode_mode: playlist.episode_mode,
       is_enabled: playlist.is_enabled,
+      is_weekend_only: playlist.is_weekend_only,
       ordering_mode: playlist.ordering_mode || 'default',
     });
     setIsModalOpen(true);
@@ -380,6 +402,8 @@ export function Playlists() {
           name: values.name,
           spotify_playlist_id: values.spotify_playlist_id,
           is_enabled: values.is_enabled,
+          episode_mode: values.episode_mode,
+          is_weekend_only: values.is_weekend_only,
           ordering_mode: values.ordering_mode,
         };
         await updatePlaylist.mutateAsync({ id: editingPlaylist.id, data: updateData });
@@ -388,8 +412,9 @@ export function Playlists() {
         const createData: PlaylistCreate = {
           name: values.name,
           spotify_playlist_id: values.spotify_playlist_id,
-          rule_type: values.rule_type,
+          episode_mode: values.episode_mode,
           is_enabled: values.is_enabled,
+          is_weekend_only: values.is_weekend_only,
           ordering_mode: values.ordering_mode || 'default',
         };
         await createPlaylist.mutateAsync(createData);
@@ -443,24 +468,38 @@ export function Playlists() {
           <Text strong>{name}</Text>
           {isMobile && (
             <div style={{ marginTop: 4 }}>
-              <Tag color={ruleTypeOptions.find((o) => o.value === record.rule_type)?.color}>
-                {ruleTypeOptions.find((o) => o.value === record.rule_type)?.label}
+              <Tag color={record.episode_mode === 'all_unplayed' ? 'blue' : 'green'}>
+                {record.episode_mode === 'all_unplayed' ? 'All Unplayed' : 'Latest Only'}
               </Tag>
               {record.is_enabled ? <Tag color="success">On</Tag> : <Tag color="default">Off</Tag>}
+              {record.is_weekend_only && <Tag color="orange">Weekend</Tag>}
             </div>
           )}
         </div>
       ),
     },
     {
-      title: 'Rule Type',
-      dataIndex: 'rule_type',
-      key: 'rule_type',
+      title: 'Episode Mode',
+      dataIndex: 'episode_mode',
+      key: 'episode_mode',
       responsive: ['md'] as const,
-      render: (ruleType: PlaylistRuleType) => {
-        const option = ruleTypeOptions.find((o) => o.value === ruleType);
-        return <Tag color={option?.color}>{option?.label || ruleType}</Tag>;
+      render: (mode: EpisodeMode) => {
+        const option = episodeModeOptions.find((o) => o.value === mode);
+        return (
+          <Tag color={mode === 'all_unplayed' ? 'blue' : 'green'}>
+            {option?.label || mode}
+          </Tag>
+        );
       },
+    },
+    {
+      title: 'Podcasts',
+      dataIndex: 'podcast_count',
+      key: 'podcast_count',
+      responsive: ['md'] as const,
+      align: 'center',
+      width: 100,
+      render: (count: number) => <Text>{count}</Text>,
     },
     {
       title: 'Spotify Playlist',
@@ -485,8 +524,12 @@ export function Playlists() {
       dataIndex: 'is_enabled',
       key: 'is_enabled',
       responsive: ['md'] as const,
-      render: (enabled: boolean) =>
-        enabled ? <Tag color="success">Enabled</Tag> : <Tag color="default">Disabled</Tag>,
+      render: (enabled: boolean, record: Playlist) => (
+        <Space size={4}>
+          {enabled ? <Tag color="success">Enabled</Tag> : <Tag color="default">Disabled</Tag>}
+          {record.is_weekend_only && <Tag color="orange">Weekend</Tag>}
+        </Space>
+      ),
     },
     {
       title: 'Last Updated',
@@ -628,14 +671,13 @@ export function Playlists() {
             <Input placeholder="e.g., Morning Podcasts" />
           </Form.Item>
           <Form.Item
-            name="rule_type"
-            label="Rule Type"
-            rules={[{ required: !editingPlaylist, message: 'Please select a rule type' }]}
+            name="episode_mode"
+            label="Episode Mode"
+            rules={[{ required: true, message: 'Please select an episode mode' }]}
           >
             <Select
-              placeholder="Select rule type"
-              disabled={!!editingPlaylist}
-              options={ruleTypeOptions.map((opt) => ({
+              placeholder="Select episode mode"
+              options={episodeModeOptions.map((opt) => ({
                 value: opt.value,
                 label: opt.label,
               }))}
@@ -660,9 +702,9 @@ export function Playlists() {
                   value: 'default',
                   label: (
                     <div>
-                      <div>Default (by category)</div>
+                      <div>Default</div>
                       <Text type="secondary" style={{ fontSize: 11 }}>
-                        Use standard sorting for this category
+                        Use standard sorting
                       </Text>
                     </div>
                   ),
@@ -702,6 +744,14 @@ export function Playlists() {
                 },
               ]}
             />
+          </Form.Item>
+          <Form.Item
+            name="is_weekend_only"
+            label="Weekend Only"
+            valuePropName="checked"
+            extra="Only update this playlist on weekends and UK public holidays"
+          >
+            <Switch />
           </Form.Item>
           <Form.Item name="is_enabled" label="Enabled" valuePropName="checked">
             <Switch />

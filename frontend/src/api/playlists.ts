@@ -1,5 +1,12 @@
 import apiClient from './client';
-import type { Playlist, PlaylistCreate, PlaylistUpdate, PlaylistListResponse } from '../types';
+import type {
+  Playlist,
+  PlaylistCreate,
+  PlaylistUpdate,
+  PlaylistListResponse,
+  PlaylistPodcast,
+  PlaylistPodcastListResponse,
+} from '../types';
 
 export const playlistsApi = {
   // List all managed playlists
@@ -39,5 +46,28 @@ export const playlistsApi = {
       '/playlists/run-all'
     );
     return response.data;
+  },
+
+  // Get podcasts assigned to a playlist
+  async getPodcasts(playlistId: number): Promise<PlaylistPodcast[]> {
+    const response = await apiClient.get<PlaylistPodcastListResponse>(
+      `/playlists/${playlistId}/podcasts`
+    );
+    return response.data.items;
+  },
+
+  // Add podcasts to a playlist
+  async addPodcasts(playlistId: number, podcastIds: number[]): Promise<void> {
+    await apiClient.post(`/playlists/${playlistId}/podcasts`, { podcast_ids: podcastIds });
+  },
+
+  // Remove a podcast from a playlist
+  async removePodcast(playlistId: number, podcastId: number): Promise<void> {
+    await apiClient.delete(`/playlists/${playlistId}/podcasts/${podcastId}`);
+  },
+
+  // Reorder podcasts in a playlist
+  async reorderPodcasts(playlistId: number, podcastIds: number[]): Promise<void> {
+    await apiClient.put(`/playlists/${playlistId}/podcasts/reorder`, { podcast_ids: podcastIds });
   },
 };

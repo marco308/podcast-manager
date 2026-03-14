@@ -51,7 +51,7 @@ export function Podcasts() {
           <Title level={4} style={{ marginBottom: 4 }}>
             Podcasts
           </Title>
-          <Text type="secondary">Manage your podcast subscriptions and assign categories</Text>
+          <Text type="secondary">Manage your podcast subscriptions and playlist assignments</Text>
         </div>
         <div>
           <Button

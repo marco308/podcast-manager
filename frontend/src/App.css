@@ -27,19 +27,6 @@ body {
   background: var(--bg-layout);
 }
 
-/* Table category row highlights */
-.ant-table-row.category-primary td:first-child {
-  border-left: 3px solid var(--category-primary-border);
-}
-
-.ant-table-row.category-news td:first-child {
-  border-left: 3px solid var(--category-news-border);
-}
-
-.ant-table-row.category-background td:first-child {
-  border-left: 3px solid var(--category-background-border);
-}
-
 /* Smooth transitions */
 .ant-switch,
 .ant-select,

@@ -1,17 +1,22 @@
 import apiClient from './client';
-import type {
-  Podcast,
-  PodcastUpdate,
-  PodcastCategory,
-  SyncResult,
-  PodcastListResponse,
-} from '../types';
+import type { Podcast, PodcastUpdate, SyncResult, PodcastListResponse } from '../types';
 
 export const podcastsApi = {
-  // List all podcasts with optional category filter
-  async list(category?: PodcastCategory): Promise<Podcast[]> {
-    const params = category ? { category } : {};
-    const response = await apiClient.get<PodcastListResponse>('/podcasts', { params });
+  // List all podcasts with optional filters
+  async list(params?: {
+    playlistId?: number;
+    unassigned?: boolean;
+  }): Promise<Podcast[]> {
+    const queryParams: Record<string, string | number | boolean> = {};
+    if (params?.playlistId !== undefined) {
+      queryParams.playlist_id = params.playlistId;
+    }
+    if (params?.unassigned !== undefined) {
+      queryParams.unassigned = params.unassigned;
+    }
+    const response = await apiClient.get<PodcastListResponse>('/podcasts', {
+      params: queryParams,
+    });
     return response.data.items;
   },
 
@@ -21,7 +26,7 @@ export const podcastsApi = {
     return response.data;
   },
 
-  // Update podcast metadata (category, is_sequential, is_weekend_only)
+  // Update podcast metadata (is_sequential)
   async update(spotifyId: string, data: PodcastUpdate): Promise<Podcast> {
     const response = await apiClient.patch<Podcast>(`/podcasts/${spotifyId}`, data);
     return response.data;

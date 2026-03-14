@@ -48,11 +48,8 @@ export function Dashboard() {
 
   // Calculate stats
   const totalPodcasts = podcasts?.length || 0;
-  const categorizedPodcasts = podcasts?.filter((p) => p.categories.length > 0).length || 0;
-  const primaryCount = podcasts?.filter((p) => p.categories.includes('primary')).length || 0;
-  const newsCount = podcasts?.filter((p) => p.categories.includes('news')).length || 0;
-  const backgroundCount = podcasts?.filter((p) => p.categories.includes('background')).length || 0;
-  const weekendCount = podcasts?.filter((p) => p.categories.includes('weekend')).length || 0;
+  const assignedPodcasts = podcasts?.filter((p) => p.playlist_ids.length > 0).length || 0;
+  const unassignedPodcasts = totalPodcasts - assignedPodcasts;
 
   // Find last sync time
   const lastSyncedPodcast = podcasts
@@ -119,17 +116,17 @@ export function Dashboard() {
         <Col xs={24} sm={12} lg={6}>
           <Card styles={{ body: { padding: isMobile ? 16 : 24 } }}>
             <Statistic
-              title="Categorized"
-              value={categorizedPodcasts}
+              title="Assigned to Playlists"
+              value={assignedPodcasts}
               suffix={`/ ${totalPodcasts}`}
               valueStyle={{
-                color: categorizedPodcasts === totalPodcasts ? '#52c41a' : '#1890ff',
+                color: assignedPodcasts === totalPodcasts ? '#52c41a' : '#1890ff',
                 fontSize: isMobile ? 28 : 24,
               }}
             />
-            {categorizedPodcasts === totalPodcasts && (
+            {assignedPodcasts === totalPodcasts && totalPodcasts > 0 && (
               <Tag icon={<CheckCircleOutlined />} color="success" style={{ marginTop: 8 }}>
-                All categorized!
+                All assigned!
               </Tag>
             )}
           </Card>
@@ -146,33 +143,20 @@ export function Dashboard() {
         </Col>
         <Col xs={24} sm={12} lg={6}>
           <Card styles={{ body: { padding: isMobile ? 16 : 24 } }}>
-            <Space direction="vertical" size={0} style={{ width: '100%' }}>
-              <Text type="secondary" style={{ fontSize: isMobile ? 14 : 12 }}>
-                Categories
+            <Statistic
+              title="Unassigned"
+              value={unassignedPodcasts}
+              valueStyle={{
+                color: unassignedPodcasts === 0 ? '#52c41a' : '#faad14',
+                fontSize: isMobile ? 28 : 24,
+              }}
+            />
+            {unassignedPodcasts > 0 && (
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>
+                {unassignedPodcasts} podcast{unassignedPodcasts !== 1 ? 's' : ''} not in any
+                playlist
               </Text>
-              <div
-                style={{
-                  marginTop: 8,
-                  display: 'flex',
-                  flexDirection: isMobile ? 'column' : 'row',
-                  gap: 4,
-                  flexWrap: 'wrap',
-                }}
-              >
-                <Tag color="blue" style={{ margin: 0 }}>
-                  Primary: {primaryCount}
-                </Tag>
-                <Tag color="green" style={{ margin: 0 }}>
-                  News: {newsCount}
-                </Tag>
-                <Tag color="purple" style={{ margin: 0 }}>
-                  Background: {backgroundCount}
-                </Tag>
-                <Tag color="orange" style={{ margin: 0 }}>
-                  Weekend: {weekendCount}
-                </Tag>
-              </div>
-            </Space>
+            )}
           </Card>
         </Col>
       </Row>
@@ -192,22 +176,22 @@ export function Dashboard() {
                     <Text strong style={{ fontSize: isMobile ? 15 : 14 }}>
                       {playlist.name}
                     </Text>
-                    <Tag
-                      color={
-                        playlist.rule_type === 'primary'
-                          ? 'blue'
-                          : playlist.rule_type === 'news'
-                            ? 'green'
-                            : playlist.rule_type === 'morning'
-                              ? 'orange'
-                              : playlist.rule_type === 'background'
-                                ? 'purple'
-                                : 'default'
-                      }
-                      style={{ width: 'fit-content' }}
-                    >
-                      {playlist.rule_type}
-                    </Tag>
+                    <Space size={4} wrap>
+                      <Tag
+                        color={playlist.episode_mode === 'all_unplayed' ? 'blue' : 'green'}
+                        style={{ width: 'fit-content' }}
+                      >
+                        {playlist.episode_mode === 'all_unplayed' ? 'All Unplayed' : 'Latest Only'}
+                      </Tag>
+                      {playlist.is_weekend_only && (
+                        <Tag color="orange" style={{ width: 'fit-content' }}>
+                          Weekend
+                        </Tag>
+                      )}
+                    </Space>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      {playlist.podcast_count} podcast{playlist.podcast_count !== 1 ? 's' : ''}
+                    </Text>
                     <Text type="secondary" style={{ fontSize: 12 }}>
                       {playlist.last_updated_at
                         ? `Updated ${dayjs(playlist.last_updated_at).fromNow()}`
