@@ -185,8 +185,11 @@ body {
   }
 }
 
-/* Remove default focus outlines, Ant Design handles this */
-*:focus {
+/* Let Ant Design components use their own focus styles */
+.ant-btn:focus-visible,
+.ant-input:focus-visible,
+.ant-select:focus-visible,
+.ant-switch:focus-visible {
   outline: none;
 }
 

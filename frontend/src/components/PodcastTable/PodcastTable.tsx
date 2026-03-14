@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Table,
   Avatar,
@@ -28,7 +28,6 @@ import {
   UserDeleteOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
-import relativeTime from 'dayjs/plugin/relativeTime';
 import type { Podcast } from '../../types';
 import {
   useUpdatePodcast,
@@ -37,8 +36,6 @@ import {
   useAddPodcastsToPlaylist,
   useRemovePodcastFromPlaylist,
 } from '../../hooks';
-
-dayjs.extend(relativeTime);
 
 const { useBreakpoint } = Grid;
 const { Text } = Typography;
@@ -64,10 +61,13 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
   const screens = useBreakpoint();
   const isMobile = !screens.md;
   const [viewMode, setViewMode] = useState<ViewMode>('cards');
+  const hasUserSelected = useRef(false);
 
-  // Default to cards on mobile, table on desktop
+  // Default to cards on mobile, table on desktop (only if user hasn't manually chosen)
   useEffect(() => {
-    setViewMode(isMobile ? 'cards' : 'table');
+    if (!hasUserSelected.current) {
+      setViewMode(isMobile ? 'cards' : 'table');
+    }
   }, [isMobile]);
 
   // Filter podcasts by search query
@@ -120,21 +120,21 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
       const toAdd = newPlaylistIds.filter((id) => !oldIds.has(id));
       const toRemove = podcast.playlist_ids.filter((id) => !newIds.has(id));
 
-      // Process additions
-      for (const playlistId of toAdd) {
-        await addPodcastsToPlaylist.mutateAsync({
-          playlistId,
-          podcastIds: [podcast.id],
-        });
-      }
-
-      // Process removals
-      for (const playlistId of toRemove) {
-        await removePodcastFromPlaylist.mutateAsync({
-          playlistId,
-          podcastId: podcast.id,
-        });
-      }
+      // Process additions and removals in parallel
+      await Promise.all([
+        ...toAdd.map((playlistId) =>
+          addPodcastsToPlaylist.mutateAsync({
+            playlistId,
+            podcastIds: [podcast.id],
+          })
+        ),
+        ...toRemove.map((playlistId) =>
+          removePodcastFromPlaylist.mutateAsync({
+            playlistId,
+            podcastId: podcast.id,
+          })
+        ),
+      ]);
 
       message.success('Playlist assignments updated');
     } catch {
@@ -296,6 +296,7 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
             icon={<UserDeleteOutlined />}
             loading={updatingId === record.spotify_id}
             size="small"
+            aria-label="Unfollow podcast"
           />
         </Popconfirm>
       ),
@@ -342,18 +343,19 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
                 >
                   {podcast.name}
                 </div>
-                <div
+                <Text
+                  type="secondary"
                   style={{
                     fontSize: 12,
-                    color: 'rgba(0, 0, 0, 0.45)',
                     marginBottom: 4,
+                    display: 'block',
                     whiteSpace: 'nowrap',
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                   }}
                 >
                   {podcast.publisher}
-                </div>
+                </Text>
                 <Space size={4} wrap>
                   {podcast.playlist_ids.length > 0 ? (
                     podcast.playlist_ids.map((playlistId) => (
@@ -411,7 +413,10 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
         />
         <Segmented
           value={viewMode}
-          onChange={(value) => setViewMode(value as ViewMode)}
+          onChange={(value) => {
+            hasUserSelected.current = true;
+            setViewMode(value as ViewMode);
+          }}
           options={[
             { value: 'cards', icon: <AppstoreOutlined /> },
             { value: 'table', icon: <UnorderedListOutlined /> },
@@ -482,7 +487,7 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
                   value={selectedPodcast.playlist_ids}
                   onChange={(value) => {
                     handlePlaylistsChange(selectedPodcast, value);
-                    setSelectedPodcast({ ...selectedPodcast, playlist_ids: value });
+                    setSelectedPodcast(prev => prev ? { ...prev, playlist_ids: value } : prev);
                   }}
                   loading={updatingId === selectedPodcast.spotify_id}
                   style={{ width: '100%' }}
@@ -501,7 +506,7 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
                   checked={selectedPodcast.is_sequential}
                   onChange={(checked) => {
                     handleSequentialChange(selectedPodcast.spotify_id, checked);
-                    setSelectedPodcast({ ...selectedPodcast, is_sequential: checked });
+                    setSelectedPodcast(prev => prev ? { ...prev, is_sequential: checked } : prev);
                   }}
                   loading={updatingId === selectedPodcast.spotify_id}
                 />

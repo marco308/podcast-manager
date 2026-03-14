@@ -24,7 +24,7 @@ export function LoadingSpinner({ size = 'large', tip, fullScreen = false }: Load
           justifyContent: 'center',
           alignItems: 'center',
           minHeight: '100vh',
-          background: '#f5f5f5',
+          background: 'transparent',
         }}
       >
         {spinnerContent}
