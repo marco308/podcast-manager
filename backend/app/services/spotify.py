@@ -2,7 +2,8 @@
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
+from types import TracebackType
 from typing import Any
 
 import httpx
@@ -18,16 +19,53 @@ MAX_RETRIES = 3
 
 
 class SpotifyService:
-    """Async client for Spotify Web API."""
+    """Async client for Spotify Web API.
 
-    def __init__(self, access_token: str | None = None) -> None:
+    Can be used as an async context manager to reuse a single httpx.AsyncClient
+    across multiple calls, reducing connection overhead::
+
+        async with SpotifyService(access_token=token) as spotify:
+            shows = await spotify.get_user_shows()
+            episodes = await spotify.get_show_episodes(show_id)
+
+    When used without the context manager, each method creates (and closes) its
+    own client for backward compatibility.
+    """
+
+    def __init__(self, access_token: str | None = None, client: httpx.AsyncClient | None = None) -> None:
         """Initialize Spotify service.
 
         Args:
             access_token: Optional access token for authenticated requests.
+            client: Optional shared httpx.AsyncClient to reuse across calls.
         """
         self._access_token = access_token
         self._settings = get_settings()
+        self._client = client
+        self._owns_client = False
+
+    async def __aenter__(self) -> "SpotifyService":
+        """Enter async context manager, creating a shared client if needed."""
+        if self._client is None:
+            self._client = httpx.AsyncClient()
+            self._owns_client = True
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        """Exit async context manager, closing the client if we own it."""
+        if self._owns_client and self._client is not None:
+            await self._client.aclose()
+            self._client = None
+            self._owns_client = False
+
+    def _get_client_contextmanager(self) -> "_ClientContextManager":
+        """Return a context manager that yields the shared client or a new one."""
+        return _ClientContextManager(self._client)
 
     @property
     def _headers(self) -> dict[str, str]:
@@ -71,7 +109,7 @@ class SpotifyService:
         Returns:
             Dictionary containing access_token, refresh_token, expires_in.
         """
-        async with httpx.AsyncClient() as client:
+        async with self._get_client_contextmanager() as client:
             response = await client.post(
                 SPOTIFY_TOKEN_URL,
                 data={
@@ -88,7 +126,7 @@ class SpotifyService:
             data = response.json()
 
             # Calculate absolute expiration time
-            expires_at = datetime.utcnow() + timedelta(seconds=data["expires_in"])
+            expires_at = datetime.now(UTC) + timedelta(seconds=data["expires_in"])
 
             return {
                 "access_token": data["access_token"],
@@ -105,7 +143,7 @@ class SpotifyService:
         Returns:
             Dictionary containing new access_token and expires_at.
         """
-        async with httpx.AsyncClient() as client:
+        async with self._get_client_contextmanager() as client:
             response = await client.post(
                 SPOTIFY_TOKEN_URL,
                 data={
@@ -120,7 +158,7 @@ class SpotifyService:
             response.raise_for_status()
             data = response.json()
 
-            expires_at = datetime.utcnow() + timedelta(seconds=data["expires_in"])
+            expires_at = datetime.now(UTC) + timedelta(seconds=data["expires_in"])
 
             return {
                 "access_token": data["access_token"],
@@ -134,7 +172,7 @@ class SpotifyService:
         Returns:
             User profile data from Spotify.
         """
-        async with httpx.AsyncClient() as client:
+        async with self._get_client_contextmanager() as client:
             response = await client.get(
                 f"{SPOTIFY_API_BASE}/me",
                 headers=self._headers,
@@ -152,7 +190,7 @@ class SpotifyService:
         Returns:
             Paginated list of saved shows.
         """
-        async with httpx.AsyncClient() as client:
+        async with self._get_client_contextmanager() as client:
             resp = await self._request_with_retry(
                 client,
                 "GET",
@@ -173,7 +211,7 @@ class SpotifyService:
         Returns:
             Paginated list of episodes.
         """
-        async with httpx.AsyncClient() as client:
+        async with self._get_client_contextmanager() as client:
             resp = await self._request_with_retry(
                 client,
                 "GET",
@@ -196,7 +234,7 @@ class SpotifyService:
         Returns:
             Playlist data.
         """
-        async with httpx.AsyncClient() as client:
+        async with self._get_client_contextmanager() as client:
             response = await client.get(
                 f"{SPOTIFY_API_BASE}/playlists/{playlist_id}",
                 headers=self._headers,
@@ -215,7 +253,7 @@ class SpotifyService:
         Returns:
             Created playlist data.
         """
-        async with httpx.AsyncClient() as client:
+        async with self._get_client_contextmanager() as client:
             response = await client.post(
                 f"{SPOTIFY_API_BASE}/me/playlists",
                 headers=self._headers,
@@ -235,7 +273,7 @@ class SpotifyService:
             playlist_id: Spotify playlist ID.
             uris: List of Spotify URIs (e.g., spotify:episode:xxx).
         """
-        async with httpx.AsyncClient() as client:
+        async with self._get_client_contextmanager() as client:
             # Spotify limits to 100 items per request
             if len(uris) <= 100:
                 await self._request_with_retry(
@@ -275,7 +313,7 @@ class SpotifyService:
         """
         import json as _json
 
-        async with httpx.AsyncClient() as client:
+        async with self._get_client_contextmanager() as client:
             body = _json.dumps({"items": [{"uri": uri} for uri in uris]})
             await self._request_with_retry(
                 client,
@@ -295,8 +333,12 @@ class SpotifyService:
 
         Returns:
             Paginated list of tracks in the playlist.
+
+        Note:
+            Spotify playlist items wrap episodes in a ``track`` key (not ``item``).
+            The ``fields`` parameter requests ``track(uri,...)`` accordingly.
         """
-        async with httpx.AsyncClient() as client:
+        async with self._get_client_contextmanager() as client:
             resp = await self._request_with_retry(
                 client,
                 "GET",
@@ -305,7 +347,7 @@ class SpotifyService:
                 params={
                     "limit": limit,
                     "offset": offset,
-                    "fields": "items(item(uri,resume_point(fully_played))),next,total",
+                    "fields": "items(track(uri,resume_point(fully_played))),next,total",
                 },
             )
             return resp.json()
@@ -328,7 +370,7 @@ class SpotifyService:
         # Fetch sequentially to avoid Spotify 429 rate limits
         results: list[dict[str, Any] | None] = []
 
-        async with httpx.AsyncClient() as client:
+        async with self._get_client_contextmanager() as client:
             for episode_id in episode_ids:
                 try:
                     resp = await self._request_with_retry(
@@ -408,7 +450,7 @@ class SpotifyService:
         Raises:
             httpx.HTTPStatusError: If the request fails.
         """
-        async with httpx.AsyncClient() as client:
+        async with self._get_client_contextmanager() as client:
             await self._request_with_retry(
                 client,
                 "DELETE",
@@ -416,3 +458,27 @@ class SpotifyService:
                 headers=self._headers,
                 params={"ids": show_id},
             )
+
+
+class _ClientContextManager:
+    """Helper that yields an existing client or creates a temporary one."""
+
+    def __init__(self, shared_client: httpx.AsyncClient | None) -> None:
+        self._shared = shared_client
+        self._temp: httpx.AsyncClient | None = None
+
+    async def __aenter__(self) -> httpx.AsyncClient:
+        if self._shared is not None:
+            return self._shared
+        self._temp = httpx.AsyncClient()
+        return self._temp
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        if self._temp is not None:
+            await self._temp.aclose()
+            self._temp = None

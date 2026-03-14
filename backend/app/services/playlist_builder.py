@@ -2,7 +2,7 @@
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,6 +43,14 @@ class PlaylistUpdateResult:
     error: str | None = None
 
 
+@dataclass
+class PodcastWithPosition:
+    """A podcast together with its position in a playlist."""
+
+    podcast: Podcast
+    position: int | None
+
+
 class PlaylistBuilder:
     """Service for building and updating playlists based on direct assignments."""
 
@@ -67,7 +75,7 @@ class PlaylistBuilder:
         access_token = self._encryption.decrypt(self._user.access_token)
 
         # Check if token is expired and refresh if needed
-        if datetime.utcnow() >= self._user.token_expires_at:
+        if datetime.now(UTC) >= self._user.token_expires_at:
             refresh_token = self._encryption.decrypt(self._user.refresh_token)
             spotify = SpotifyService()
             token_data = await spotify.refresh_access_token(refresh_token)
@@ -83,14 +91,14 @@ class PlaylistBuilder:
         self._spotify = SpotifyService(access_token=access_token)
         return self._spotify
 
-    async def _get_playlist_podcasts(self, playlist_id: int) -> list[Podcast]:
+    async def _get_playlist_podcasts(self, playlist_id: int) -> list[PodcastWithPosition]:
         """Get podcasts assigned to a playlist, ordered by position.
 
         Args:
             playlist_id: The playlist ID to get podcasts for.
 
         Returns:
-            List of podcasts ordered by position (nulls last).
+            List of PodcastWithPosition ordered by position (nulls last).
         """
         result = await self._db.execute(
             select(Podcast, PlaylistPodcast.position)
@@ -104,13 +112,7 @@ class PlaylistBuilder:
         )
         rows = result.all()
 
-        # Attach position to podcast objects for ordering
-        podcasts = []
-        for podcast, position in rows:
-            podcast._position = position  # temporary attribute for ordering
-            podcasts.append(podcast)
-
-        return podcasts
+        return [PodcastWithPosition(podcast=podcast, position=position) for podcast, position in rows]
 
     async def _get_unplayed_episodes(self, podcast: Podcast, max_episodes: int = 500) -> list[Episode]:
         """Get unplayed episodes for a podcast.
@@ -186,7 +188,7 @@ class PlaylistBuilder:
         )
 
     def _apply_ordering(
-        self, episodes: list[Episode], ordering_mode: str, podcasts: list[Podcast] | None = None
+        self, episodes: list[Episode], ordering_mode: str, podcast_entries: list[PodcastWithPosition] | None = None
     ) -> list[Episode]:
         """Apply ordering based on playlist configuration.
 
@@ -198,19 +200,27 @@ class PlaylistBuilder:
         Args:
             episodes: Episodes to order
             ordering_mode: Ordering strategy to use
-            podcasts: Optional podcast list for PODCAST_ORDER mode
+            podcast_entries: Optional PodcastWithPosition list for PODCAST_ORDER mode
 
         Returns:
             Ordered list of episodes
         """
         from itertools import groupby
 
+        podcasts = [entry.podcast for entry in podcast_entries] if podcast_entries else []
+
         if ordering_mode == PlaylistOrderingMode.CHRONOLOGICAL_ASC.value:
-            # Sort by release date ascending
+            # Sort by release date ascending, but respect is_sequential
             sorted_eps = sorted(episodes, key=lambda e: (e.release_date, e.show_id))
             result = []
-            for _show_id, group in groupby(sorted_eps, key=lambda e: e.show_id):
-                result.extend(list(group))
+            for show_id, group in groupby(sorted_eps, key=lambda e: e.show_id):
+                podcast = next((p for p in podcasts if p.spotify_id == show_id), None)
+                group_list = list(group)
+                if podcast and podcast.is_sequential:
+                    # Sequential podcasts: always oldest first (already sorted ASC)
+                    pass
+                # Non-sequential: keep the ASC order as-is
+                result.extend(group_list)
             return result
 
         elif ordering_mode == PlaylistOrderingMode.CHRONOLOGICAL_DESC.value:
@@ -218,21 +228,21 @@ class PlaylistBuilder:
             sorted_eps = sorted(episodes, key=lambda e: (e.release_date, e.show_id), reverse=True)
             result = []
             for show_id, group in groupby(sorted_eps, key=lambda e: e.show_id):
-                podcast = next((p for p in (podcasts or []) if p.spotify_id == show_id), None)
+                podcast = next((p for p in podcasts if p.spotify_id == show_id), None)
                 group_list = list(group)
                 if podcast and podcast.is_sequential:
                     group_list.sort(key=lambda e: e.release_date)
                 result.extend(group_list)
             return result
 
-        elif ordering_mode == PlaylistOrderingMode.PODCAST_ORDER.value and podcasts:
-            # Order by position from join table (stored as _position on podcast)
+        elif ordering_mode == PlaylistOrderingMode.PODCAST_ORDER.value and podcast_entries:
+            # Order by position from PodcastWithPosition entries
             podcast_order_map = {
-                p.spotify_id: (
-                    getattr(p, '_position', None) if getattr(p, '_position', None) is not None else float("inf"),
-                    p.is_sequential,
+                entry.podcast.spotify_id: (
+                    entry.position if entry.position is not None else float("inf"),
+                    entry.podcast.is_sequential,
                 )
-                for p in podcasts
+                for entry in podcast_entries
             }
 
             sorted_eps = sorted(
@@ -275,14 +285,15 @@ class PlaylistBuilder:
         if playlist.is_weekend_only and not is_weekend_or_holiday():
             return []
 
-        podcasts = await self._get_playlist_podcasts(playlist.id)
+        podcast_entries = await self._get_playlist_podcasts(playlist.id)
 
-        if not podcasts:
+        if not podcast_entries:
             return []
 
         all_episodes: list[Episode] = []
 
-        for podcast in podcasts:
+        for entry in podcast_entries:
+            podcast = entry.podcast
             if playlist.episode_mode == "all_unplayed":
                 # Get all unplayed episodes
                 episodes = await self._get_unplayed_episodes(podcast)
@@ -310,7 +321,7 @@ class PlaylistBuilder:
                 # Default for all_unplayed: oldest first
                 all_episodes.sort(key=lambda e: e.release_date)
         else:
-            all_episodes = self._apply_ordering(all_episodes, ordering, podcasts)
+            all_episodes = self._apply_ordering(all_episodes, ordering, podcast_entries)
 
         return [ep.uri for ep in all_episodes]
 
@@ -368,7 +379,7 @@ class PlaylistBuilder:
             await spotify.replace_playlist_items(spotify_playlist_id, episode_uris)
 
             # Update last_updated_at
-            playlist.last_updated_at = datetime.utcnow()
+            playlist.last_updated_at = datetime.now(UTC)
             await self._db.flush()
 
             logger.info(f"Updated playlist '{playlist.name}' with {len(episode_uris)} episodes")

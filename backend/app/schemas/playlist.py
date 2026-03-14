@@ -1,25 +1,10 @@
 """Playlist Pydantic schemas."""
 
 from datetime import datetime
-from enum import Enum
 
 from pydantic import BaseModel, ConfigDict
 
-
-class EpisodeMode(str, Enum):
-    """Episode selection mode."""
-
-    ALL_UNPLAYED = "all_unplayed"
-    LATEST_ONLY = "latest_only"
-
-
-class PlaylistOrderingMode(str, Enum):
-    """Playlist ordering modes."""
-
-    DEFAULT = "default"
-    PODCAST_ORDER = "podcast_order"
-    CHRONOLOGICAL_ASC = "chronological_asc"
-    CHRONOLOGICAL_DESC = "chronological_desc"
+from app.models.playlist import EpisodeMode, PlaylistOrderingMode
 
 
 class PlaylistBase(BaseModel):
@@ -89,6 +74,13 @@ class PlaylistPodcastResponse(BaseModel):
     unplayed_episodes: int = 0
     is_sequential: bool
     position: int | None = None
+
+
+class PlaylistPodcastListResponse(BaseModel):
+    """Schema for list of podcasts within a playlist."""
+
+    items: list[PlaylistPodcastResponse]
+    total: int
 
 
 class PlaylistPodcastReorder(BaseModel):

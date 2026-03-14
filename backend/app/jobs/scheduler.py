@@ -147,6 +147,8 @@ def init_scheduler() -> None:
     )
 
     # Remove played episodes every 5 minutes
+    # NOTE: 5-minute interval is aggressive given per-episode API fetches.
+    # Consider increasing to 15-30 minutes if rate-limiting becomes an issue.
     scheduler.add_job(
         remove_played_episodes_from_playlists,
         IntervalTrigger(minutes=5),
@@ -300,6 +302,11 @@ async def remove_played_episodes_from_playlists() -> None:
                     playlists = playlists_result.scalars().all()
 
                     for playlist in playlists:
+                        # Skip playlists that don't have a Spotify playlist yet
+                        if not playlist.spotify_playlist_id:
+                            logger.debug(f"Skipping playlist '{playlist.name}' — no spotify_playlist_id")
+                            continue
+
                         try:
                             # Get Spotify client with valid token
                             access_token = encryption.decrypt(user.access_token)
@@ -334,8 +341,9 @@ async def remove_played_episodes_from_playlists() -> None:
                                     break
 
                                 for track in tracks:
-                                    if track and "item" in track:
-                                        episode = track["item"]
+                                    # Spotify playlist items wrap episodes in a "track" key
+                                    if track and "track" in track:
+                                        episode = track["track"]
                                         uri = episode.get("uri")
                                         if uri and uri.startswith("spotify:episode:"):
                                             ep_id = uri.split(":")[-1]
