@@ -2,8 +2,8 @@
 
 import logging
 import sys
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,8 +11,8 @@ from fastapi.responses import JSONResponse
 
 from app.config import get_settings
 from app.database import init_db
-from app.jobs.scheduler import init_scheduler, shutdown_scheduler, get_job_status
-from app.routers import auth_router, podcasts_router, playlists_router
+from app.jobs.scheduler import get_job_status, init_scheduler, shutdown_scheduler
+from app.routers import auth_router, playlists_router, podcasts_router
 
 settings = get_settings()
 

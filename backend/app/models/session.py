@@ -15,9 +15,7 @@ class Session(Base):
     __tablename__ = "sessions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    session_id: Mapped[str] = mapped_column(
-        String(64), unique=True, nullable=False, index=True
-    )
+    session_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     user_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("users.id", ondelete="CASCADE"),
@@ -27,13 +25,9 @@ class Session(Base):
     csrf_token: Mapped[str] = mapped_column(String(64), nullable=False)
 
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
-    last_accessed_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), nullable=False
-    )
+    last_accessed_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
     def __repr__(self) -> str:
         return f"<Session(id={self.id}, user_id={self.user_id}, expires_at={self.expires_at})>"

@@ -7,8 +7,8 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.podcast import Podcast, PodcastCategory
 from app.models.playlist import Playlist, PlaylistRuleType
+from app.models.podcast import Podcast, PodcastCategory
 from app.models.user import User
 from app.services.encryption import get_encryption_service
 from app.services.spotify import SpotifyService
@@ -82,9 +82,7 @@ class PlaylistBuilder:
         self._spotify = SpotifyService(access_token=access_token)
         return self._spotify
 
-    async def _get_podcasts_by_category(
-        self, category: PodcastCategory
-    ) -> list[Podcast]:
+    async def _get_podcasts_by_category(self, category: PodcastCategory) -> list[Podcast]:
         """Get all podcasts that include the given category.
 
         Args:
@@ -93,16 +91,10 @@ class PlaylistBuilder:
         Returns:
             List of podcasts that have this category.
         """
-        result = await self._db.execute(
-            select(Podcast).where(
-                Podcast.categories.op("LIKE")(f'%"{category.value}"%')
-            )
-        )
+        result = await self._db.execute(select(Podcast).where(Podcast.categories.op("LIKE")(f'%"{category.value}"%')))
         return list(result.scalars().all())
 
-    async def _get_unplayed_episodes(
-        self, podcast: Podcast, max_episodes: int = 500
-    ) -> list[Episode]:
+    async def _get_unplayed_episodes(self, podcast: Podcast, max_episodes: int = 500) -> list[Episode]:
         """Get unplayed episodes for a podcast.
 
         Uses the show episodes endpoint directly which includes resume_point
@@ -118,9 +110,7 @@ class PlaylistBuilder:
         spotify = await self._get_spotify_client()
 
         try:
-            episodes_data = await spotify.get_show_episodes_all(
-                podcast.spotify_id, max_episodes=max_episodes
-            )
+            episodes_data = await spotify.get_show_episodes_all(podcast.spotify_id, max_episodes=max_episodes)
         except Exception as e:
             logger.error(f"Failed to fetch episodes for {podcast.name}: {e}")
             return []
@@ -161,9 +151,7 @@ class PlaylistBuilder:
 
         return unplayed
 
-    def _sort_episodes(
-        self, episodes: list[Episode], sequential: bool
-    ) -> list[Episode]:
+    def _sort_episodes(self, episodes: list[Episode], sequential: bool) -> list[Episode]:
         """Sort episodes based on podcast settings.
 
         Args:
@@ -180,10 +168,7 @@ class PlaylistBuilder:
         )
 
     def _apply_ordering(
-        self,
-        episodes: list[Episode],
-        ordering_mode: str,
-        podcasts: list[Podcast] | None = None
+        self, episodes: list[Episode], ordering_mode: str, podcasts: list[Podcast] | None = None
     ) -> list[Episode]:
         """Apply ordering based on playlist configuration.
 
@@ -211,7 +196,7 @@ class PlaylistBuilder:
 
             # Sort by release date, then group by podcast
             sorted_eps = sorted(episodes, key=lambda e: (e.release_date, e.show_id))
-            for show_id, group in groupby(sorted_eps, key=lambda e: e.show_id):
+            for _show_id, group in groupby(sorted_eps, key=lambda e: e.show_id):
                 group_list = list(group)
                 # Sequential podcasts: oldest first (already sorted correctly)
                 # Non-sequential podcasts: oldest first (already sorted correctly)
@@ -241,7 +226,7 @@ class PlaylistBuilder:
         elif ordering_mode == PlaylistOrderingMode.PODCAST_ORDER.value and podcasts:
             # Create podcast_id -> (order, is_sequential) mapping
             podcast_order_map = {
-                p.spotify_id: (p.playlist_order if p.playlist_order is not None else float('inf'), p.is_sequential)
+                p.spotify_id: (p.playlist_order if p.playlist_order is not None else float("inf"), p.is_sequential)
                 for p in podcasts
             }
 
@@ -252,15 +237,15 @@ class PlaylistBuilder:
             sorted_eps = sorted(
                 episodes,
                 key=lambda e: (
-                    podcast_order_map.get(e.show_id, (float('inf'), False))[0],  # playlist_order
-                    e.show_id  # group by podcast
-                )
+                    podcast_order_map.get(e.show_id, (float("inf"), False))[0],  # playlist_order
+                    e.show_id,  # group by podcast
+                ),
             )
 
             # Within each podcast group, respect is_sequential
             for show_id, group in groupby(sorted_eps, key=lambda e: e.show_id):
                 group_list = list(group)
-                podcast_info = podcast_order_map.get(show_id, (float('inf'), False))
+                podcast_info = podcast_order_map.get(show_id, (float("inf"), False))
                 is_sequential = podcast_info[1]
 
                 if is_sequential:
@@ -303,11 +288,21 @@ class PlaylistBuilder:
 
         # Apply playlist ordering
         from app.models.playlist import PlaylistOrderingMode
-        if playlist.ordering_mode == PlaylistOrderingMode.DEFAULT.value or playlist.ordering_mode == PlaylistOrderingMode.DEFAULT:
+
+        if (
+            playlist.ordering_mode == PlaylistOrderingMode.DEFAULT.value
+            or playlist.ordering_mode == PlaylistOrderingMode.DEFAULT
+        ):
             # Default: oldest first for primary
             all_episodes.sort(key=lambda e: e.release_date)
         else:
-            all_episodes = self._apply_ordering(all_episodes, str(playlist.ordering_mode.value) if hasattr(playlist.ordering_mode, 'value') else str(playlist.ordering_mode), podcasts)
+            all_episodes = self._apply_ordering(
+                all_episodes,
+                str(playlist.ordering_mode.value)
+                if hasattr(playlist.ordering_mode, "value")
+                else str(playlist.ordering_mode),
+                podcasts,
+            )
 
         return [ep.uri for ep in all_episodes]
 
@@ -339,11 +334,21 @@ class PlaylistBuilder:
 
         # Apply playlist ordering
         from app.models.playlist import PlaylistOrderingMode
-        if playlist.ordering_mode == PlaylistOrderingMode.DEFAULT.value or playlist.ordering_mode == PlaylistOrderingMode.DEFAULT:
+
+        if (
+            playlist.ordering_mode == PlaylistOrderingMode.DEFAULT.value
+            or playlist.ordering_mode == PlaylistOrderingMode.DEFAULT
+        ):
             # Default: newest first for news
             latest_episodes.sort(key=lambda e: e.release_date, reverse=True)
         else:
-            latest_episodes = self._apply_ordering(latest_episodes, str(playlist.ordering_mode.value) if hasattr(playlist.ordering_mode, 'value') else str(playlist.ordering_mode), podcasts)
+            latest_episodes = self._apply_ordering(
+                latest_episodes,
+                str(playlist.ordering_mode.value)
+                if hasattr(playlist.ordering_mode, "value")
+                else str(playlist.ordering_mode),
+                podcasts,
+            )
 
         return [ep.uri for ep in latest_episodes]
 
@@ -375,11 +380,21 @@ class PlaylistBuilder:
 
         # Apply playlist ordering
         from app.models.playlist import PlaylistOrderingMode
-        if playlist.ordering_mode == PlaylistOrderingMode.DEFAULT.value or playlist.ordering_mode == PlaylistOrderingMode.DEFAULT:
+
+        if (
+            playlist.ordering_mode == PlaylistOrderingMode.DEFAULT.value
+            or playlist.ordering_mode == PlaylistOrderingMode.DEFAULT
+        ):
             # Backward compatible: use playlist_order (migrated from morning_order)
             latest_episodes = self._apply_ordering(latest_episodes, PlaylistOrderingMode.PODCAST_ORDER.value, podcasts)
         else:
-            latest_episodes = self._apply_ordering(latest_episodes, str(playlist.ordering_mode.value) if hasattr(playlist.ordering_mode, 'value') else str(playlist.ordering_mode), podcasts)
+            latest_episodes = self._apply_ordering(
+                latest_episodes,
+                str(playlist.ordering_mode.value)
+                if hasattr(playlist.ordering_mode, "value")
+                else str(playlist.ordering_mode),
+                podcasts,
+            )
 
         return [ep.uri for ep in latest_episodes]
 
@@ -408,11 +423,21 @@ class PlaylistBuilder:
 
         # Apply playlist ordering
         from app.models.playlist import PlaylistOrderingMode
-        if playlist.ordering_mode == PlaylistOrderingMode.DEFAULT.value or playlist.ordering_mode == PlaylistOrderingMode.DEFAULT:
+
+        if (
+            playlist.ordering_mode == PlaylistOrderingMode.DEFAULT.value
+            or playlist.ordering_mode == PlaylistOrderingMode.DEFAULT
+        ):
             # Default: oldest first
             all_episodes.sort(key=lambda e: e.release_date)
         else:
-            all_episodes = self._apply_ordering(all_episodes, str(playlist.ordering_mode.value) if hasattr(playlist.ordering_mode, 'value') else str(playlist.ordering_mode), podcasts)
+            all_episodes = self._apply_ordering(
+                all_episodes,
+                str(playlist.ordering_mode.value)
+                if hasattr(playlist.ordering_mode, "value")
+                else str(playlist.ordering_mode),
+                podcasts,
+            )
 
         return [ep.uri for ep in all_episodes]
 
@@ -436,11 +461,21 @@ class PlaylistBuilder:
 
         # Apply playlist ordering
         from app.models.playlist import PlaylistOrderingMode
-        if playlist.ordering_mode == PlaylistOrderingMode.DEFAULT.value or playlist.ordering_mode == PlaylistOrderingMode.DEFAULT:
+
+        if (
+            playlist.ordering_mode == PlaylistOrderingMode.DEFAULT.value
+            or playlist.ordering_mode == PlaylistOrderingMode.DEFAULT
+        ):
             # Default: oldest first
             all_episodes.sort(key=lambda e: e.release_date)
         else:
-            all_episodes = self._apply_ordering(all_episodes, str(playlist.ordering_mode.value) if hasattr(playlist.ordering_mode, 'value') else str(playlist.ordering_mode), podcasts)
+            all_episodes = self._apply_ordering(
+                all_episodes,
+                str(playlist.ordering_mode.value)
+                if hasattr(playlist.ordering_mode, "value")
+                else str(playlist.ordering_mode),
+                podcasts,
+            )
 
         return [ep.uri for ep in all_episodes]
 
@@ -467,9 +502,7 @@ class PlaylistBuilder:
             PlaylistRuleType.BACKGROUND: "Background podcasts - auto-managed by Podcast Manager",
             PlaylistRuleType.WEEKEND: "Weekend podcasts - auto-managed by Podcast Manager",
         }
-        description = descriptions.get(
-            playlist.rule_type, "Auto-managed by Podcast Manager"
-        )
+        description = descriptions.get(playlist.rule_type, "Auto-managed by Podcast Manager")
 
         spotify_playlist = await spotify.create_playlist(
             name=playlist.name,
@@ -481,9 +514,7 @@ class PlaylistBuilder:
         playlist.spotify_playlist_id = spotify_playlist["id"]
         await self._db.flush()
 
-        logger.info(
-            f"Created Spotify playlist '{playlist.name}' with ID {playlist.spotify_playlist_id}"
-        )
+        logger.info(f"Created Spotify playlist '{playlist.name}' with ID {playlist.spotify_playlist_id}")
 
         return playlist.spotify_playlist_id
 
@@ -530,9 +561,7 @@ class PlaylistBuilder:
             playlist.last_updated_at = datetime.utcnow()
             await self._db.flush()
 
-            logger.info(
-                f"Updated playlist '{playlist.name}' with {len(episode_uris)} episodes"
-            )
+            logger.info(f"Updated playlist '{playlist.name}' with {len(episode_uris)} episodes")
 
             return PlaylistUpdateResult(
                 playlist_id=playlist.id,
@@ -558,9 +587,7 @@ class PlaylistBuilder:
             List of results for each playlist update.
         """
         result = await self._db.execute(
-            select(Playlist).where(
-                (Playlist.user_id == self._user.id) & (Playlist.is_enabled == True)
-            )
+            select(Playlist).where((Playlist.user_id == self._user.id) & (Playlist.is_enabled == True))
         )
         playlists = result.scalars().all()
 

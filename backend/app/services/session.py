@@ -1,7 +1,7 @@
 """Session management service for database-backed sessions."""
 
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,7 +34,7 @@ class SessionService:
         Returns:
             The created Session object.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         session = Session(
             session_id=self.generate_session_id(),
             user_id=user_id,
@@ -56,7 +56,7 @@ class SessionService:
         Returns:
             The Session object if found and not expired, None otherwise.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         result = await db.execute(
             select(Session).where(
                 Session.session_id == session_id,
@@ -72,7 +72,7 @@ class SessionService:
             db: Database session.
             session: The session to update.
         """
-        session.last_accessed_at = datetime.now(timezone.utc)
+        session.last_accessed_at = datetime.now(UTC)
         await db.flush()
 
     async def delete_session(self, db: AsyncSession, session_id: str) -> None:
@@ -104,7 +104,7 @@ class SessionService:
         Returns:
             Count of deleted sessions.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         result = await db.execute(delete(Session).where(Session.expires_at < now))
         await db.flush()
         return result.rowcount or 0

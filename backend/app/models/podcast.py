@@ -3,7 +3,7 @@
 from datetime import datetime
 from enum import Enum as PyEnum
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, JSON
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -42,16 +42,16 @@ class Podcast(Base):
     )
     is_sequential: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_weekend_only: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    morning_order: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # DEPRECATED: use playlist_order
+    morning_order: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, index=True
+    )  # DEPRECATED: use playlist_order
     playlist_order: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
 
     # Sync tracking
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
     )

@@ -2,7 +2,7 @@
 
 import logging
 import secrets
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query, Response
 from fastapi.responses import RedirectResponse
@@ -133,9 +133,7 @@ async def callback(
     Exchanges the authorization code for tokens, creates/updates user,
     creates a database session, sets cookies, then redirects to frontend.
     """
-    logger.info(
-        f"Callback received: code={'present' if code else 'missing'}, error={error}"
-    )
+    logger.info(f"Callback received: code={'present' if code else 'missing'}, error={error}")
 
     if error:
         logger.error(f"OAuth error: {error}")
@@ -159,9 +157,7 @@ async def callback(
         logger.info(f"Got Spotify profile: {profile.get('id')}")
 
         # Check if user exists
-        result = await db.execute(
-            select(User).where(User.spotify_id == profile["id"])
-        )
+        result = await db.execute(select(User).where(User.spotify_id == profile["id"]))
         user = result.scalar_one_or_none()
 
         # Encrypt tokens
@@ -175,7 +171,7 @@ async def callback(
             user.access_token = encrypted_access
             user.refresh_token = encrypted_refresh
             user.token_expires_at = token_data["expires_at"]
-            user.updated_at = datetime.now(timezone.utc)
+            user.updated_at = datetime.now(UTC)
             logger.info(f"Updated existing user: {user.id}")
         else:
             # Create new user
@@ -209,7 +205,7 @@ async def callback(
 
     except Exception as e:
         logger.exception(f"OAuth callback failed: {str(e)}")
-        raise HTTPException(status_code=400, detail="Authentication failed")
+        raise HTTPException(status_code=400, detail="Authentication failed") from None
 
 
 @router.get("/me", response_model=UserResponse)

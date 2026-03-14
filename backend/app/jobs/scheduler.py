@@ -1,7 +1,7 @@
 """APScheduler setup and job management."""
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -10,10 +10,10 @@ from sqlalchemy import select
 
 from app.config import get_settings
 from app.database import async_session_maker
+from app.jobs.session_cleanup import cleanup_expired_sessions
 from app.models.playlist import Playlist
 from app.models.sync_log import SyncLog, SyncStatus
 from app.models.user import User
-from app.jobs.session_cleanup import cleanup_expired_sessions
 from app.services.encryption import get_encryption_service
 from app.services.playlist_builder import PlaylistBuilder
 from app.services.spotify import SpotifyService
@@ -39,7 +39,7 @@ async def refresh_all_tokens() -> None:
             for user in users:
                 try:
                     # Check if token will expire in the next 15 minutes
-                    if (user.token_expires_at.timestamp() - datetime.now(timezone.utc).timestamp()) < 900:
+                    if (user.token_expires_at.timestamp() - datetime.now(UTC).timestamp()) < 900:
                         refresh_token = encryption.decrypt(user.refresh_token)
                         spotify = SpotifyService()
                         token_data = await spotify.refresh_access_token(refresh_token)
@@ -71,7 +71,7 @@ async def update_all_playlists() -> None:
             sync_log = SyncLog(
                 job_type="playlist_update",
                 status=SyncStatus.RUNNING,
-                started_at=datetime.now(timezone.utc),
+                started_at=datetime.now(UTC),
             )
             db.add(sync_log)
             await db.flush()
@@ -102,10 +102,9 @@ async def update_all_playlists() -> None:
 
             # Update sync log
             sync_log.status = SyncStatus.SUCCESS if not errors else SyncStatus.FAILED
-            sync_log.completed_at = datetime.now(timezone.utc)
+            sync_log.completed_at = datetime.now(UTC)
             sync_log.details = (
-                f"Updated {total_playlists} playlists with {total_episodes} episodes. "
-                f"Errors: {len(errors)}"
+                f"Updated {total_playlists} playlists with {total_episodes} episodes. Errors: {len(errors)}"
             )
             if errors:
                 sync_log.details += f"\n{chr(10).join(errors[:10])}"  # First 10 errors
@@ -252,9 +251,7 @@ async def trigger_single_playlist_update(user_id: int, playlist_id: int) -> dict
             if not user:
                 return {"success": False, "error": "User not found"}
 
-            playlist_result = await db.execute(
-                select(Playlist).where(Playlist.id == playlist_id)
-            )
+            playlist_result = await db.execute(select(Playlist).where(Playlist.id == playlist_id))
             playlist = playlist_result.scalar_one_or_none()
 
             if not playlist:
@@ -298,9 +295,7 @@ async def remove_played_episodes_from_playlists() -> None:
                 try:
                     # Get all enabled playlists for user
                     playlists_result = await db.execute(
-                        select(Playlist).where(
-                            (Playlist.user_id == user.id) & (Playlist.is_enabled == True)
-                        )
+                        select(Playlist).where((Playlist.user_id == user.id) & (Playlist.is_enabled == True))
                     )
                     playlists = playlists_result.scalars().all()
 
@@ -308,18 +303,12 @@ async def remove_played_episodes_from_playlists() -> None:
                         try:
                             # Get Spotify client with valid token
                             access_token = encryption.decrypt(user.access_token)
-                            if datetime.now(timezone.utc) >= user.token_expires_at:
+                            if datetime.now(UTC) >= user.token_expires_at:
                                 refresh_token = encryption.decrypt(user.refresh_token)
                                 spotify = SpotifyService()
-                                token_data = await spotify.refresh_access_token(
-                                    refresh_token
-                                )
-                                user.access_token = encryption.encrypt(
-                                    token_data["access_token"]
-                                )
-                                user.refresh_token = encryption.encrypt(
-                                    token_data["refresh_token"]
-                                )
+                                token_data = await spotify.refresh_access_token(refresh_token)
+                                user.access_token = encryption.encrypt(token_data["access_token"])
+                                user.refresh_token = encryption.encrypt(token_data["refresh_token"])
                                 user.token_expires_at = token_data["expires_at"]
                                 await db.flush()
                                 access_token = token_data["access_token"]
@@ -397,13 +386,8 @@ async def remove_played_episodes_from_playlists() -> None:
                                         )
 
                         except Exception as e:
-                            logger.error(
-                                f"Failed to clean playlist {playlist.name} "
-                                f"(user {user.id}): {e}"
-                            )
-                            errors.append(
-                                f"Playlist {playlist.name}: {str(e)}"
-                            )
+                            logger.error(f"Failed to clean playlist {playlist.name} (user {user.id}): {e}")
+                            errors.append(f"Playlist {playlist.name}: {str(e)}")
 
                     await db.commit()
 
@@ -412,10 +396,7 @@ async def remove_played_episodes_from_playlists() -> None:
                     errors.append(f"User {user.id}: {str(e)}")
                     await db.rollback()
 
-            logger.info(
-                f"Remove played episodes job completed: "
-                f"removed {total_removed} episodes, {len(errors)} errors"
-            )
+            logger.info(f"Remove played episodes job completed: removed {total_removed} episodes, {len(errors)} errors")
 
         except Exception as e:
             logger.error(f"Remove played episodes job failed: {e}")

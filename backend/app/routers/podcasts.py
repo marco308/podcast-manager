@@ -1,13 +1,10 @@
 """Podcasts router for managing podcast metadata."""
 
 import logging
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-
-logger = logging.getLogger(__name__)
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -16,13 +13,17 @@ from app.models.session import Session
 from app.models.user import User
 from app.routers.auth import get_current_user_id, validate_csrf_token
 from app.schemas.podcast import (
+    PodcastCategory as PodcastCategorySchema,
+)
+from app.schemas.podcast import (
+    PodcastListResponse,
     PodcastResponse,
     PodcastUpdate,
-    PodcastListResponse,
-    PodcastCategory as PodcastCategorySchema,
 )
 from app.services.encryption import get_encryption_service
 from app.services.spotify import SpotifyService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/podcasts", tags=["Podcasts"])
 
@@ -46,7 +47,7 @@ async def get_user_with_token(
 
 @router.get("", response_model=PodcastListResponse)
 async def list_podcasts(
-    category: Optional[PodcastCategorySchema] = Query(None),
+    category: PodcastCategorySchema | None = Query(None),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
     user_id: int = Depends(get_current_user_id),
@@ -62,9 +63,7 @@ async def list_podcasts(
     # Get total count
     count_query = select(func.count()).select_from(Podcast)
     if category:
-        count_query = count_query.where(
-            Podcast.categories.op("LIKE")(f'%"{category.value}"%')
-        )
+        count_query = count_query.where(Podcast.categories.op("LIKE")(f'%"{category.value}"%'))
 
     total_result = await db.execute(count_query)
     total = total_result.scalar() or 0
@@ -84,9 +83,7 @@ async def get_podcast(
     db: AsyncSession = Depends(get_db),
 ) -> Podcast:
     """Get a single podcast by Spotify ID."""
-    result = await db.execute(
-        select(Podcast).where(Podcast.spotify_id == spotify_id)
-    )
+    result = await db.execute(select(Podcast).where(Podcast.spotify_id == spotify_id))
     podcast = result.scalar_one_or_none()
 
     if not podcast:
@@ -103,9 +100,7 @@ async def update_podcast(
     db: AsyncSession = Depends(get_db),
 ) -> Podcast:
     """Update podcast metadata (category, attributes)."""
-    result = await db.execute(
-        select(Podcast).where(Podcast.spotify_id == spotify_id)
-    )
+    result = await db.execute(select(Podcast).where(Podcast.spotify_id == spotify_id))
     podcast = result.scalar_one_or_none()
 
     if not podcast:
@@ -123,7 +118,7 @@ async def update_podcast(
     if update_data.playlist_order is not None:
         podcast.playlist_order = update_data.playlist_order
 
-    podcast.updated_at = datetime.now(timezone.utc)
+    podcast.updated_at = datetime.now(UTC)
 
     await db.flush()
     return podcast
@@ -139,9 +134,7 @@ async def unfollow_podcast(
     user, access_token = await get_user_with_token(session.user_id, db)
 
     # Check if podcast exists in our database
-    result = await db.execute(
-        select(Podcast).where(Podcast.spotify_id == spotify_id)
-    )
+    result = await db.execute(select(Podcast).where(Podcast.spotify_id == spotify_id))
     podcast = result.scalar_one_or_none()
 
     if not podcast:
@@ -153,10 +146,7 @@ async def unfollow_podcast(
         await spotify.unfollow_show(spotify_id)
     except Exception as e:
         logger.exception(f"Failed to unfollow podcast {spotify_id} on Spotify: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to unfollow podcast on Spotify"
-        )
+        raise HTTPException(status_code=500, detail="Failed to unfollow podcast on Spotify") from None
 
     # Remove from local database
     await db.delete(podcast)
@@ -196,9 +186,7 @@ async def sync_podcasts(
                 continue
 
             # Check if podcast exists
-            result = await db.execute(
-                select(Podcast).where(Podcast.spotify_id == spotify_id)
-            )
+            result = await db.execute(select(Podcast).where(Podcast.spotify_id == spotify_id))
             podcast = result.scalar_one_or_none()
 
             # Get image URL (prefer medium size)
@@ -235,7 +223,7 @@ async def sync_podcasts(
                 podcast.publisher = show.get("publisher")
                 podcast.total_episodes = show.get("total_episodes", 0)
                 podcast.unplayed_episodes = unplayed_count
-                podcast.last_synced_at = datetime.now(timezone.utc)
+                podcast.last_synced_at = datetime.now(UTC)
             else:
                 # Create new podcast
                 podcast = Podcast(
@@ -246,7 +234,7 @@ async def sync_podcasts(
                     publisher=show.get("publisher"),
                     total_episodes=show.get("total_episodes", 0),
                     unplayed_episodes=unplayed_count,
-                    last_synced_at=datetime.now(timezone.utc),
+                    last_synced_at=datetime.now(UTC),
                 )
                 db.add(podcast)
                 new_count += 1
