@@ -189,15 +189,17 @@ def downgrade() -> None:
     # 4. Migrate podcast categories back from join table
     # For each podcast, collect categories from the playlists it's assigned to
     # We use rule_type which we just restored
+    # GROUP_CONCAT produces 'primary,news' — we need '["primary","news"]',
+    # so use REPLACE to convert ',' to '","' and wrap with '["..."]'.
     op.execute("""
         UPDATE podcasts
         SET categories = COALESCE(
-            (SELECT '["' || GROUP_CONCAT(DISTINCT
+            (SELECT '["' || REPLACE(GROUP_CONCAT(DISTINCT
                 CASE LOWER(p.rule_type)
                     WHEN 'morning' THEN 'news'
                     ELSE LOWER(p.rule_type)
                 END
-            ) || '"]'
+            ), ',', '","') || '"]'
             FROM playlist_podcasts pp
             JOIN playlists p ON p.id = pp.playlist_id
             WHERE pp.podcast_id = podcasts.id),

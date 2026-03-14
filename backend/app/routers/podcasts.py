@@ -103,10 +103,21 @@ async def list_podcasts(
     result = await db.execute(query)
     podcasts = result.scalars().all()
 
+    # Load all playlist IDs for these podcasts in a single query
+    podcast_ids = [p.id for p in podcasts]
+    playlist_ids_map: dict[int, list[int]] = {pid: [] for pid in podcast_ids}
+    if podcast_ids:
+        pp_result = await db.execute(
+            select(PlaylistPodcast.podcast_id, PlaylistPodcast.playlist_id)
+            .where(PlaylistPodcast.podcast_id.in_(podcast_ids))
+        )
+        for podcast_id, playlist_id in pp_result.all():
+            playlist_ids_map[podcast_id].append(playlist_id)
+
     # Build responses with playlist_ids
     items = []
     for podcast in podcasts:
-        pids = await _get_playlist_ids_for_podcast(db, podcast.id)
+        pids = playlist_ids_map.get(podcast.id, [])
         items.append(_build_podcast_response(podcast, pids))
 
     return PodcastListResponse(items=items, total=total)

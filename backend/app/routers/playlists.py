@@ -17,6 +17,7 @@ from app.schemas.playlist import (
     PlaylistCreate,
     PlaylistListResponse,
     PlaylistPodcastAdd,
+    PlaylistPodcastListResponse,
     PlaylistPodcastReorder,
     PlaylistPodcastResponse,
     PlaylistResponse,
@@ -62,15 +63,27 @@ async def list_playlists(
     result = await db.execute(select(Playlist).where(Playlist.user_id == user_id).order_by(Playlist.name))
     playlists = result.scalars().all()
 
+    # Load all podcast counts in a single query instead of N+1
+    playlist_ids = [p.id for p in playlists]
+    counts_map: dict[int, int] = {pid: 0 for pid in playlist_ids}
+    if playlist_ids:
+        counts_result = await db.execute(
+            select(PlaylistPodcast.playlist_id, func.count())
+            .where(PlaylistPodcast.playlist_id.in_(playlist_ids))
+            .group_by(PlaylistPodcast.playlist_id)
+        )
+        for playlist_id, count in counts_result.all():
+            counts_map[playlist_id] = count
+
     items = []
     for playlist in playlists:
-        count = await _get_podcast_count(db, playlist.id)
+        count = counts_map.get(playlist.id, 0)
         items.append(_build_playlist_response(playlist, count))
 
     return PlaylistListResponse(items=items, total=len(items))
 
 
-@router.post("", response_model=PlaylistResponse)
+@router.post("", response_model=PlaylistResponse, status_code=201)
 async def create_playlist(
     playlist_data: PlaylistCreate,
     session: Session = Depends(validate_csrf_token),
@@ -172,7 +185,7 @@ async def delete_playlist(
 # --- Playlist-Podcast assignment endpoints ---
 
 
-@router.get("/{playlist_id}/podcasts")
+@router.get("/{playlist_id}/podcasts", response_model=PlaylistPodcastListResponse)
 async def list_playlist_podcasts(
     playlist_id: int,
     user_id: int = Depends(get_current_user_id),

@@ -22,7 +22,7 @@ class PlaylistPodcast(Base):
         Integer, ForeignKey("playlists.id", ondelete="CASCADE"), nullable=False
     )
     podcast_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("podcasts.id", ondelete="CASCADE"), nullable=False
+        Integer, ForeignKey("podcasts.id", ondelete="CASCADE"), nullable=False, index=True
     )
     position: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
