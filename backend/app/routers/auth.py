@@ -114,9 +114,19 @@ def validate_csrf_token(
     return session
 
 
+MOBILE_REDIRECT_COOKIE = "mobile_redirect_scheme"
+
+
 @router.get("/login")
-async def login() -> RedirectResponse:
-    """Redirect to Spotify authorization page with CSRF state parameter."""
+async def login(redirect_scheme: str | None = Query(None)) -> RedirectResponse:
+    """Redirect to Spotify authorization page with CSRF state parameter.
+
+    Args:
+        redirect_scheme: Optional custom URL scheme for mobile apps (e.g. "podcastmanager").
+            When provided, the OAuth callback will redirect to
+            ``{redirect_scheme}://auth/callback?session_id=...&csrf_token=...``
+            instead of the frontend URL.
+    """
     state = secrets.token_urlsafe(32)
     auth_url = settings.spotify_auth_url(state)
     logger.info("Redirecting to Spotify auth URL with state parameter")
@@ -132,6 +142,13 @@ async def login() -> RedirectResponse:
     if settings.COOKIE_DOMAIN:
         state_cookie_settings["domain"] = settings.COOKIE_DOMAIN
     response.set_cookie(key=OAUTH_STATE_COOKIE_NAME, value=state, **state_cookie_settings)
+
+    # Store mobile redirect scheme if provided (for iOS/Android OAuth flow)
+    if redirect_scheme:
+        response.set_cookie(
+            key=MOBILE_REDIRECT_COOKIE, value=redirect_scheme, **state_cookie_settings
+        )
+
     return response
 
 
@@ -141,6 +158,7 @@ async def callback(
     state: str | None = Query(None),
     error: str | None = Query(None),
     oauth_state: str | None = Cookie(None, alias=OAUTH_STATE_COOKIE_NAME),
+    mobile_redirect_scheme: str | None = Cookie(None, alias=MOBILE_REDIRECT_COOKIE),
     db: AsyncSession = Depends(get_db),
     session_service: SessionService = Depends(get_session_service),
 ) -> RedirectResponse:
@@ -228,15 +246,28 @@ async def callback(
         await db.commit()
         logger.info(f"Created session for user {user.id}")
 
-        # Create redirect response with cookies
-        frontend_base = settings.FRONTEND_URL.rstrip("/")
-        response = RedirectResponse(url=frontend_base, status_code=302)
-        set_session_cookies(response, session)
-
-        # Clear the OAuth state cookie
+        # Clear OAuth cookies
         delete_kwargs: dict = {"path": "/"}
         if settings.COOKIE_DOMAIN:
             delete_kwargs["domain"] = settings.COOKIE_DOMAIN
+
+        # Mobile flow: redirect to custom URL scheme with session info
+        if mobile_redirect_scheme:
+            redirect_url = (
+                f"{mobile_redirect_scheme}://auth/callback"
+                f"?session_id={session.session_id}"
+                f"&csrf_token={session.csrf_token}"
+            )
+            response = RedirectResponse(url=redirect_url, status_code=302)
+            response.delete_cookie(key=OAUTH_STATE_COOKIE_NAME, **delete_kwargs)
+            response.delete_cookie(key=MOBILE_REDIRECT_COOKIE, **delete_kwargs)
+            logger.info("Redirecting to mobile app with session info")
+            return response
+
+        # Web flow: redirect to frontend with cookies
+        frontend_base = settings.FRONTEND_URL.rstrip("/")
+        response = RedirectResponse(url=frontend_base, status_code=302)
+        set_session_cookies(response, session)
         response.delete_cookie(key=OAUTH_STATE_COOKIE_NAME, **delete_kwargs)
 
         logger.info("Redirecting to frontend with session cookie")
