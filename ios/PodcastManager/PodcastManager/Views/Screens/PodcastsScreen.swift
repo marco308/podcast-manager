@@ -6,6 +6,15 @@ struct PodcastsScreen: View {
     @State private var isSyncing = false
     @State private var error: String?
     @State private var syncResult: String?
+    @State private var searchText = ""
+
+    private var filteredPodcasts: [Podcast] {
+        if searchText.isEmpty { return podcasts }
+        return podcasts.filter {
+            $0.name.localizedCaseInsensitiveContains(searchText) ||
+            ($0.publisher?.localizedCaseInsensitiveContains(searchText) ?? false)
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -63,12 +72,13 @@ struct PodcastsScreen: View {
     }
 
     private var podcastList: some View {
-        List(podcasts) { podcast in
+        List(filteredPodcasts) { podcast in
             NavigationLink(value: podcast) {
                 PodcastRow(podcast: podcast)
             }
         }
         .listStyle(.plain)
+        .searchable(text: $searchText, prompt: "Search podcasts")
         .navigationDestination(for: Podcast.self) { podcast in
             PodcastDetailScreen(podcast: podcast)
         }
