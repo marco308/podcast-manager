@@ -116,6 +116,10 @@ def validate_csrf_token(
 
 MOBILE_REDIRECT_COOKIE = "mobile_redirect_scheme"
 
+# Allowed custom URL schemes for mobile OAuth redirects.
+# Only schemes listed here can be used as redirect targets after OAuth callback.
+ALLOWED_REDIRECT_SCHEMES: set[str] = {"podcastmanager"}
+
 
 @router.get("/login")
 async def login(redirect_scheme: str | None = Query(None)) -> RedirectResponse:
@@ -126,7 +130,15 @@ async def login(redirect_scheme: str | None = Query(None)) -> RedirectResponse:
             When provided, the OAuth callback will redirect to
             ``{redirect_scheme}://auth/callback?session_id=...&csrf_token=...``
             instead of the frontend URL.
+            Must be one of the allowed schemes.
     """
+    # Validate redirect_scheme against allowlist to prevent credential leakage
+    if redirect_scheme is not None and redirect_scheme not in ALLOWED_REDIRECT_SCHEMES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid redirect_scheme. Allowed schemes: {', '.join(sorted(ALLOWED_REDIRECT_SCHEMES))}",
+        )
+
     state = secrets.token_urlsafe(32)
     auth_url = settings.spotify_auth_url(state)
     logger.info("Redirecting to Spotify auth URL with state parameter")
