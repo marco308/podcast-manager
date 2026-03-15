@@ -29,6 +29,7 @@
 		E0B700680D93FF1ABF30AC2C /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A4809A460DA5DDBCF84BFA /* NotificationService.swift */; };
 		E626D3A68EE478FB51263926 /* AddPodcastsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEE5ED8186A054478C005AD7 /* AddPodcastsSheet.swift */; };
 		F5E2642A2F5DAC9EBEC06E33 /* PodcastsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38603334AF15E2EF11F2B3E5 /* PodcastsScreen.swift */; };
+		FB8E955C0F31D45997671C06 /* Job.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B991F5B9F166AB6C8CF0899 /* Job.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -59,6 +60,7 @@
 		678E7A18BF645F2DF177DDA3 /* LoginScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginScreen.swift; sourceTree = "<group>"; };
 		84F5D3AAA166625952DD91DF /* PlaylistRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaylistRow.swift; sourceTree = "<group>"; };
 		8FF513AC0D801E11B5716122 /* PodcastManagerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PodcastManagerApp.swift; sourceTree = "<group>"; };
+		9B991F5B9F166AB6C8CF0899 /* Job.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Job.swift; sourceTree = "<group>"; };
 		9D2491897FDA8D78A11DB135 /* SettingsScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsScreen.swift; sourceTree = "<group>"; };
 		ABB6AFFB0510B08549A0FF3F /* Podcast.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Podcast.swift; sourceTree = "<group>"; };
 		B5376A8AA549C3A3B1179A5B /* PodcastRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PodcastRow.swift; sourceTree = "<group>"; };
@@ -145,6 +147,7 @@
 		AA45C2DA57B8CE4977944945 /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				9B991F5B9F166AB6C8CF0899 /* Job.swift */,
 				267B4D5B536C8D224B6E7D4C /* Playlist.swift */,
 				ABB6AFFB0510B08549A0FF3F /* Podcast.swift */,
 				03C69EF747E2473F54B50458 /* User.swift */,
@@ -279,6 +282,7 @@
 				5036B4BAAC9C55C25B0A9E20 /* AppState.swift in Sources */,
 				A93B76400E559CBD4E1E2D9B /* AuthService.swift in Sources */,
 				8E1445A6AAC4762BEEC04AE6 /* ContentView.swift in Sources */,
+				FB8E955C0F31D45997671C06 /* Job.swift in Sources */,
 				0EC4C14788FC6EA01DF22BAA /* KeychainService.swift in Sources */,
 				D3976B9B02358351E11684D4 /* LoginScreen.swift in Sources */,
 				E0B700680D93FF1ABF30AC2C /* NotificationService.swift in Sources */,

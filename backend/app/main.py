@@ -5,15 +5,14 @@ import sys
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import get_settings
 from app.database import init_db
-from app.jobs.scheduler import get_job_status, init_scheduler, shutdown_scheduler
-from app.routers import auth_router, playlists_router, podcasts_router
-from app.routers.auth import get_current_user_id
+from app.jobs.scheduler import init_scheduler, shutdown_scheduler
+from app.routers import auth_router, jobs_router, playlists_router, podcasts_router
 
 settings = get_settings()
 
@@ -40,7 +39,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     logger.info("Starting Podcast Manager API...")
     # Startup
     await init_db()
-    init_scheduler()
+    await init_scheduler()
     logger.info("Application started successfully")
     yield
     # Shutdown
@@ -96,6 +95,7 @@ app.add_middleware(
 app.include_router(auth_router, prefix="/api")
 app.include_router(podcasts_router, prefix="/api")
 app.include_router(playlists_router, prefix="/api")
+app.include_router(jobs_router, prefix="/api")
 
 
 @app.get("/api/health")
@@ -108,9 +108,3 @@ async def health_check() -> dict:
     }
 
 
-@app.get("/api/jobs/status")
-async def jobs_status(user_id: int = Depends(get_current_user_id)) -> dict:
-    """Get scheduler job statuses. Requires authentication."""
-    return {
-        "jobs": get_job_status(),
-    }

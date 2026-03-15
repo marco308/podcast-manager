@@ -75,6 +75,16 @@ actor APIClient {
         try await delete("/api/playlists/\(playlistId)/podcasts/\(podcastId)")
     }
 
+    // MARK: - Jobs
+
+    func fetchJobsStatus() async throws -> JobsStatusResponse {
+        try await get("/api/jobs/status")
+    }
+
+    func updateJobSchedule(hour: Int, minute: Int) async throws -> UpdateScheduleResponse {
+        try await put("/api/jobs/schedule", body: UpdateScheduleRequest(hour: hour, minute: minute))
+    }
+
     // MARK: - HTTP Methods
 
     private func get<T: Decodable>(_ path: String) async throws -> T {
@@ -89,6 +99,13 @@ actor APIClient {
 
     private func post<T: Decodable, B: Encodable>(_ path: String, body: B) async throws -> T {
         var request = try makeRequest(path: path, method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(body)
+        return try await execute(request)
+    }
+
+    private func put<T: Decodable, B: Encodable>(_ path: String, body: B) async throws -> T {
+        var request = try makeRequest(path: path, method: "PUT")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
         return try await execute(request)

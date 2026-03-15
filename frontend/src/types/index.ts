@@ -107,3 +107,29 @@ export interface PlaylistPodcastListResponse {
 export interface ApiError {
   detail: string;
 }
+
+// Job types
+export interface JobSchedule {
+  hour: number;
+  minute: number;
+}
+
+export interface Job {
+  id: string;
+  name: string;
+  next_run: string | null;
+  last_run: string | null;
+  type: 'cron' | 'interval';
+  is_configurable: boolean;
+  schedule?: JobSchedule;
+  interval_minutes?: number;
+}
+
+export interface JobsStatusResponse {
+  jobs: Job[];
+}
+
+export interface UpdateScheduleResponse {
+  message: string;
+  next_run: string;
+}

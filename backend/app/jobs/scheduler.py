@@ -10,8 +10,9 @@ from sqlalchemy import select
 
 from app.config import get_settings
 from app.database import async_session_maker
-from app.jobs.session_cleanup import cleanup_expired_sessions
+from app.jobs.session_cleanup import cleanup_expired_sessions as _cleanup_expired_sessions
 from app.models.playlist import Playlist
+from app.models.settings import AppSetting
 from app.models.sync_log import SyncLog, SyncStatus
 from app.models.user import User
 from app.services.encryption import get_encryption_service
@@ -24,9 +25,24 @@ settings = get_settings()
 # Global scheduler instance
 scheduler = AsyncIOScheduler()
 
+# Track last run times in-memory for interval jobs
+_last_run_times: dict[str, datetime] = {}
+
+
+def _record_run(job_id: str) -> None:
+    """Record the current time as the last run for a job."""
+    _last_run_times[job_id] = datetime.now(UTC)
+
+
+async def cleanup_expired_sessions() -> None:
+    """Wrapper around session cleanup that records run time."""
+    _record_run("session_cleanup")
+    await _cleanup_expired_sessions()
+
 
 async def refresh_all_tokens() -> None:
     """Refresh Spotify tokens for all users before they expire."""
+    _record_run("token_refresh")
     logger.info("Starting token refresh job")
 
     async with async_session_maker() as db:
@@ -64,6 +80,7 @@ async def refresh_all_tokens() -> None:
 
 async def update_all_playlists() -> None:
     """Update all enabled playlists for all users."""
+    _record_run("daily_playlist_update")
     logger.info("Starting daily playlist update job")
 
     async with async_session_maker() as db:
@@ -121,18 +138,36 @@ async def update_all_playlists() -> None:
             await db.rollback()
 
 
-def init_scheduler() -> None:
+async def init_scheduler() -> None:
     """Initialize and start the scheduler with configured jobs."""
     if scheduler.running:
         return
 
+    # Read persisted schedule from DB
+    update_hour = settings.PLAYLIST_UPDATE_HOUR
+    update_minute = settings.PLAYLIST_UPDATE_MINUTE
+    try:
+        async with async_session_maker() as db:
+            result = await db.execute(
+                select(AppSetting).where(AppSetting.key == "playlist_update_hour")
+            )
+            hour_setting = result.scalar_one_or_none()
+            if hour_setting:
+                update_hour = int(hour_setting.value)
+
+            result = await db.execute(
+                select(AppSetting).where(AppSetting.key == "playlist_update_minute")
+            )
+            minute_setting = result.scalar_one_or_none()
+            if minute_setting:
+                update_minute = int(minute_setting.value)
+    except Exception as e:
+        logger.warning(f"Failed to read persisted schedule, using defaults: {e}")
+
     # Daily playlist update job
     scheduler.add_job(
         update_all_playlists,
-        CronTrigger(
-            hour=settings.PLAYLIST_UPDATE_HOUR,
-            minute=settings.PLAYLIST_UPDATE_MINUTE,
-        ),
+        CronTrigger(hour=update_hour, minute=update_minute),
         id="daily_playlist_update",
         name="Daily Playlist Update",
         replace_existing=True,
@@ -170,7 +205,7 @@ def init_scheduler() -> None:
     scheduler.start()
     logger.info(
         f"Scheduler started with daily update at "
-        f"{settings.PLAYLIST_UPDATE_HOUR:02d}:{settings.PLAYLIST_UPDATE_MINUTE:02d}"
+        f"{update_hour:02d}:{update_minute:02d}"
     )
 
 
@@ -181,18 +216,110 @@ def shutdown_scheduler() -> None:
         logger.info("Scheduler shutdown complete")
 
 
-def get_job_status() -> list[dict]:
-    """Get status of all scheduled jobs."""
+async def get_job_status() -> list[dict]:
+    """Get status of all scheduled jobs with enhanced info."""
     jobs = scheduler.get_jobs()
-    return [
-        {
+
+    # Get last playlist_update run from SyncLog
+    playlist_last_run = None
+    try:
+        async with async_session_maker() as db:
+            result = await db.execute(
+                select(SyncLog)
+                .where(SyncLog.job_type == "playlist_update")
+                .order_by(SyncLog.started_at.desc())
+                .limit(1)
+            )
+            last_sync = result.scalar_one_or_none()
+            if last_sync and last_sync.started_at:
+                if last_sync.started_at.tzinfo is None:
+                    playlist_last_run = last_sync.started_at.isoformat() + "Z"
+                else:
+                    playlist_last_run = last_sync.started_at.isoformat()
+    except Exception:
+        pass
+
+    result = []
+    for job in jobs:
+        info: dict = {
             "id": job.id,
             "name": job.name,
             "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
-            "trigger": str(job.trigger),
+            "last_run": None,
+            "type": "unknown",
+            "is_configurable": False,
         }
-        for job in jobs
-    ]
+
+        # Determine job type and add specific fields
+        if isinstance(job.trigger, CronTrigger):
+            info["type"] = "cron"
+            # Extract hour/minute from cron trigger fields
+            hour = settings.PLAYLIST_UPDATE_HOUR
+            minute = settings.PLAYLIST_UPDATE_MINUTE
+            # Try to get from the actual trigger
+            for field in job.trigger.fields:
+                if field.name == "hour":
+                    try:
+                        hour = int(str(field))
+                    except (ValueError, TypeError):
+                        pass
+                elif field.name == "minute":
+                    try:
+                        minute = int(str(field))
+                    except (ValueError, TypeError):
+                        pass
+            info["schedule"] = {"hour": hour, "minute": minute}
+            info["is_configurable"] = job.id == "daily_playlist_update"
+            if job.id == "daily_playlist_update":
+                info["last_run"] = playlist_last_run
+        elif isinstance(job.trigger, IntervalTrigger):
+            info["type"] = "interval"
+            # Get interval in minutes
+            interval_seconds = job.trigger.interval.total_seconds()
+            info["interval_minutes"] = int(interval_seconds / 60)
+            info["last_run"] = _last_run_times.get(job.id, None)
+            if info["last_run"] and isinstance(info["last_run"], datetime):
+                if info["last_run"].tzinfo is None:
+                    info["last_run"] = info["last_run"].isoformat() + "Z"
+                else:
+                    info["last_run"] = info["last_run"].isoformat()
+
+        result.append(info)
+
+    return result
+
+
+async def reschedule_playlist_update(hour: int, minute: int) -> str | None:
+    """Reschedule the daily playlist update and persist the new time.
+
+    Returns the next run time ISO string, or None on failure.
+    """
+    try:
+        scheduler.reschedule_job(
+            "daily_playlist_update",
+            trigger=CronTrigger(hour=hour, minute=minute),
+        )
+
+        # Persist to database
+        async with async_session_maker() as db:
+            for key, value in [("playlist_update_hour", str(hour)), ("playlist_update_minute", str(minute))]:
+                result = await db.execute(select(AppSetting).where(AppSetting.key == key))
+                setting = result.scalar_one_or_none()
+                if setting:
+                    setting.value = value
+                else:
+                    db.add(AppSetting(key=key, value=value))
+            await db.commit()
+
+        # Get updated next run time
+        job = scheduler.get_job("daily_playlist_update")
+        next_run = job.next_run_time.isoformat() if job and job.next_run_time else None
+
+        logger.info(f"Rescheduled daily playlist update to {hour:02d}:{minute:02d}, next run: {next_run}")
+        return next_run
+    except Exception as e:
+        logger.error(f"Failed to reschedule daily playlist update: {e}")
+        raise
 
 
 async def trigger_playlist_update_for_user(user_id: int) -> dict:
@@ -283,6 +410,7 @@ async def remove_played_episodes_from_playlists() -> None:
 
     This job runs every 5 minutes to clean up played content.
     """
+    _record_run("remove_played_episodes")
     logger.info("Starting remove played episodes job")
 
     async with async_session_maker() as db:
