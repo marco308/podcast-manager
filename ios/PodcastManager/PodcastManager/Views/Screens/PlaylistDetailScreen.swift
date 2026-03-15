@@ -151,21 +151,27 @@ struct PlaylistDetailScreen: View {
     }
 
     private func removePodcasts(at offsets: IndexSet) async {
-        for index in offsets {
-            let podcast = podcasts[index]
+        let podcastsToRemove = offsets.map { podcasts[$0] }
+        var removedIds: Set<String> = []
+        for podcast in podcastsToRemove {
             do {
                 let response = try await APIClient.shared.removePodcastFromPlaylist(
                     playlistId: playlist.id,
                     podcastId: podcast.id
                 )
+                removedIds.insert(podcast.id)
                 withAnimation {
-                    podcasts.remove(at: index)
                     statusMessage = response.message
                 }
             } catch {
                 withAnimation {
                     statusMessage = "Failed to remove: \(error.localizedDescription)"
                 }
+            }
+        }
+        if !removedIds.isEmpty {
+            withAnimation {
+                podcasts.removeAll { removedIds.contains($0.id) }
             }
         }
     }
