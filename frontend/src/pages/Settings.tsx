@@ -44,7 +44,7 @@ export function Settings() {
     }
   };
 
-  const handleScheduleSave = (job: Job) => {
+  const handleScheduleSave = (_job: Job) => {
     const time = editingTime;
     if (!time) return;
     updateSchedule.mutate(
