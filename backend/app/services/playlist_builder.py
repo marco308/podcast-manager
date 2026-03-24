@@ -13,7 +13,6 @@ from app.models.podcast import Podcast
 from app.models.user import User
 from app.services.encryption import get_encryption_service
 from app.services.spotify import SpotifyService
-from app.utils.holidays import is_weekend_or_holiday
 
 logger = logging.getLogger(__name__)
 
@@ -365,16 +364,6 @@ class PlaylistBuilder:
             Result of the update operation.
         """
         try:
-            # Weekend-only playlists: skip update on weekdays to preserve existing content
-            if playlist.is_weekend_only and not is_weekend_or_holiday():
-                logger.info(f"Skipping weekend-only playlist '{playlist.name}' on weekday")
-                return PlaylistUpdateResult(
-                    playlist_id=playlist.id,
-                    playlist_name=playlist.name,
-                    success=True,
-                    episode_count=-1,
-                )
-
             # Ensure Spotify playlist exists (create if needed)
             spotify_playlist_id = await self._ensure_spotify_playlist(playlist)
 
