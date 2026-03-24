@@ -282,10 +282,6 @@ class PlaylistBuilder:
         Returns:
             List of episode URIs for the playlist.
         """
-        # Check weekend restriction
-        if playlist.is_weekend_only and not is_weekend_or_holiday():
-            return []
-
         podcast_entries = await self._get_playlist_podcasts(playlist.id)
 
         if not podcast_entries:
@@ -369,6 +365,16 @@ class PlaylistBuilder:
             Result of the update operation.
         """
         try:
+            # Weekend-only playlists: skip update on weekdays to preserve existing content
+            if playlist.is_weekend_only and not is_weekend_or_holiday():
+                logger.info(f"Skipping weekend-only playlist '{playlist.name}' on weekday")
+                return PlaylistUpdateResult(
+                    playlist_id=playlist.id,
+                    playlist_name=playlist.name,
+                    success=True,
+                    episode_count=-1,
+                )
+
             # Ensure Spotify playlist exists (create if needed)
             spotify_playlist_id = await self._ensure_spotify_playlist(playlist)
 
