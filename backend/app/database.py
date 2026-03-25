@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 # Create async engine
+# Note: connect_args timeout (seconds) sets sqlite3.connect(timeout=) which is the
+# busy timeout for aiosqlite. The PRAGMA below also sets it (in ms) for consistency.
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.DEBUG,
