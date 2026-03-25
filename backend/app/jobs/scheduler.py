@@ -41,101 +41,142 @@ async def cleanup_expired_sessions() -> None:
 
 
 async def refresh_all_tokens() -> None:
-    """Refresh Spotify tokens for all users before they expire."""
+    """Refresh Spotify tokens for all users before they expire.
+
+    Uses short-lived DB sessions — one per user — to avoid holding write locks
+    during Spotify API calls.
+    """
     _record_run("token_refresh")
     logger.info("Starting token refresh job")
 
+    encryption = get_encryption_service()
+
+    # Phase 1: Read users needing refresh with a short-lived session
+    users_to_refresh: list[tuple[int, str, str]] = []  # [(user_id, display_name, encrypted_refresh_token)]
     async with async_session_maker() as db:
         try:
             result = await db.execute(select(User))
             users = result.scalars().all()
 
-            encryption = get_encryption_service()
-
             for user in users:
-                try:
-                    # Check if token will expire in the next 15 minutes
-                    token_exp = user.token_expires_at.replace(tzinfo=UTC) if user.token_expires_at.tzinfo is None else user.token_expires_at
-                    if (token_exp.timestamp() - datetime.now(UTC).timestamp()) < 900:
-                        refresh_token = encryption.decrypt(user.refresh_token)
-                        spotify = SpotifyService()
-                        token_data = await spotify.refresh_access_token(refresh_token)
+                token_exp = user.token_expires_at.replace(tzinfo=UTC) if user.token_expires_at.tzinfo is None else user.token_expires_at
+                if (token_exp.timestamp() - datetime.now(UTC).timestamp()) < 900:
+                    users_to_refresh.append((user.id, user.display_name, user.refresh_token))
+        except Exception as e:
+            logger.error(f"Token refresh job failed reading DB: {e}")
+            return
 
-                        user.access_token = encryption.encrypt(token_data["access_token"])
-                        user.refresh_token = encryption.encrypt(token_data["refresh_token"])
-                        user.token_expires_at = token_data["expires_at"]
+    # Phase 2: Refresh each user's token with Spotify API, then write back
+    for user_id, display_name, encrypted_refresh_token in users_to_refresh:
+        try:
+            refresh_token = encryption.decrypt(encrypted_refresh_token)
+            spotify = SpotifyService()
+            token_data = await spotify.refresh_access_token(refresh_token)
 
-                        logger.info(f"Refreshed token for user {user.display_name}")
-
-                except Exception as e:
-                    logger.error(f"Failed to refresh token for user {user.id}: {e}")
-
-            await db.commit()
-            logger.info("Token refresh job completed")
+            # Short-lived session to write updated tokens
+            async with async_session_maker() as db:
+                result = await db.execute(select(User).where(User.id == user_id))
+                user = result.scalar_one_or_none()
+                if user:
+                    user.access_token = encryption.encrypt(token_data["access_token"])
+                    user.refresh_token = encryption.encrypt(token_data["refresh_token"])
+                    user.token_expires_at = token_data["expires_at"]
+                    await db.commit()
+                    logger.info(f"Refreshed token for user {display_name}")
 
         except Exception as e:
-            logger.error(f"Token refresh job failed: {e}")
-            await db.rollback()
+            logger.error(f"Failed to refresh token for user {user_id}: {e}")
+
+    logger.info("Token refresh job completed")
 
 
 async def update_all_playlists() -> None:
-    """Update all enabled playlists for all users."""
+    """Update all enabled playlists for all users.
+
+    Uses a separate DB session per user so that Spotify API calls for one user
+    don't hold a write lock that blocks the rest of the application.
+    """
     _record_run("daily_playlist_update")
     logger.info("Starting daily playlist update job")
 
+    # Create sync log with a short-lived session
+    sync_log_id: int | None = None
     async with async_session_maker() as db:
         try:
-            # Create sync log entry
             sync_log = SyncLog(
                 job_type="playlist_update",
                 status=SyncStatus.RUNNING,
                 started_at=datetime.now(UTC),
             )
             db.add(sync_log)
-            await db.flush()
-
-            # Get all users
-            result = await db.execute(select(User))
-            users = result.scalars().all()
-
-            total_playlists = 0
-            total_episodes = 0
-            errors = []
-
-            for user in users:
-                try:
-                    builder = PlaylistBuilder(db, user)
-                    results = await builder.update_all_playlists()
-
-                    for res in results:
-                        total_playlists += 1
-                        if res.success:
-                            total_episodes += res.episode_count
-                        else:
-                            errors.append(f"{res.playlist_name}: {res.error}")
-
-                except Exception as e:
-                    logger.error(f"Failed to update playlists for user {user.id}: {e}")
-                    errors.append(f"User {user.id}: {str(e)}")
-
-            # Update sync log
-            sync_log.status = SyncStatus.SUCCESS if not errors else SyncStatus.FAILED
-            sync_log.completed_at = datetime.now(UTC)
-            sync_log.details = (
-                f"Updated {total_playlists} playlists with {total_episodes} episodes. Errors: {len(errors)}"
-            )
-            if errors:
-                sync_log.details += f"\n{chr(10).join(errors[:10])}"  # First 10 errors
-
             await db.commit()
-            logger.info(
-                f"Playlist update job completed: {total_playlists} playlists, "
-                f"{total_episodes} episodes, {len(errors)} errors"
-            )
-
+            sync_log_id = sync_log.id
         except Exception as e:
-            logger.error(f"Playlist update job failed: {e}")
-            await db.rollback()
+            logger.error(f"Playlist update job failed creating sync log: {e}")
+
+    # Read user IDs with a short-lived session
+    user_ids: list[int] = []
+    async with async_session_maker() as db:
+        try:
+            result = await db.execute(select(User.id))
+            user_ids = [row[0] for row in result.all()]
+        except Exception as e:
+            logger.error(f"Playlist update job failed reading users: {e}")
+            return
+
+    total_playlists = 0
+    total_episodes = 0
+    errors = []
+
+    # Process each user with its own session
+    for user_id in user_ids:
+        async with async_session_maker() as db:
+            try:
+                result = await db.execute(select(User).where(User.id == user_id))
+                user = result.scalar_one_or_none()
+
+                if not user:
+                    continue
+
+                builder = PlaylistBuilder(db, user)
+                results = await builder.update_all_playlists()
+
+                for res in results:
+                    total_playlists += 1
+                    if res.success:
+                        total_episodes += res.episode_count
+                    else:
+                        errors.append(f"{res.playlist_name}: {res.error}")
+
+                await db.commit()
+
+            except Exception as e:
+                logger.error(f"Failed to update playlists for user {user_id}: {e}")
+                errors.append(f"User {user_id}: {str(e)}")
+                await db.rollback()
+
+    # Update sync log with a short-lived session
+    if sync_log_id:
+        async with async_session_maker() as db:
+            try:
+                result = await db.execute(select(SyncLog).where(SyncLog.id == sync_log_id))
+                sync_log = result.scalar_one_or_none()
+                if sync_log:
+                    sync_log.status = SyncStatus.SUCCESS if not errors else SyncStatus.FAILED
+                    sync_log.completed_at = datetime.now(UTC)
+                    sync_log.details = (
+                        f"Updated {total_playlists} playlists with {total_episodes} episodes. Errors: {len(errors)}"
+                    )
+                    if errors:
+                        sync_log.details += f"\n{chr(10).join(errors[:10])}"
+                    await db.commit()
+            except Exception as e:
+                logger.error(f"Failed to update sync log: {e}")
+
+    logger.info(
+        f"Playlist update job completed: {total_playlists} playlists, "
+        f"{total_episodes} episodes, {len(errors)} errors"
+    )
 
 
 async def init_scheduler() -> None:
@@ -405,137 +446,159 @@ async def trigger_single_playlist_update(user_id: int, playlist_id: int) -> dict
             return {"success": False, "error": str(e)}
 
 
+async def _get_valid_access_token(user_id: int) -> str | None:
+    """Get a valid Spotify access token for a user, refreshing if expired.
+
+    Uses a short-lived DB session to read/update tokens.
+
+    Args:
+        user_id: The user ID.
+
+    Returns:
+        A valid access token string, or None if the user was not found.
+    """
+    encryption = get_encryption_service()
+
+    async with async_session_maker() as db:
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if not user:
+            return None
+
+        access_token = encryption.decrypt(user.access_token)
+        token_exp = user.token_expires_at.replace(tzinfo=UTC) if user.token_expires_at.tzinfo is None else user.token_expires_at
+
+        if datetime.now(UTC) >= token_exp:
+            refresh_token = encryption.decrypt(user.refresh_token)
+            spotify = SpotifyService()
+            token_data = await spotify.refresh_access_token(refresh_token)
+            user.access_token = encryption.encrypt(token_data["access_token"])
+            user.refresh_token = encryption.encrypt(token_data["refresh_token"])
+            user.token_expires_at = token_data["expires_at"]
+            await db.commit()
+            access_token = token_data["access_token"]
+
+        return access_token
+
+
 async def remove_played_episodes_from_playlists() -> None:
     """Remove fully-played episodes from all playlists for all users.
 
     This job runs every 5 minutes to clean up played content.
+    Uses short-lived DB sessions to avoid holding write locks during Spotify API calls.
     """
     _record_run("remove_played_episodes")
     logger.info("Starting remove played episodes job")
 
+    # Phase 1: Read users and playlists with a short-lived session
+    user_playlists: list[tuple[int, list[tuple[int, str, str]]]] = []  # [(user_id, [(playlist_id, name, spotify_id)])]
     async with async_session_maker() as db:
         try:
             result = await db.execute(select(User))
             users = result.scalars().all()
 
-            encryption = get_encryption_service()
-            total_removed = 0
-            errors = []
-
             for user in users:
+                playlists_result = await db.execute(
+                    select(Playlist).where((Playlist.user_id == user.id) & (Playlist.is_enabled == True))
+                )
+                playlists = playlists_result.scalars().all()
+
+                playlist_info = [
+                    (p.id, p.name, p.spotify_playlist_id)
+                    for p in playlists
+                    if p.spotify_playlist_id
+                ]
+                if playlist_info:
+                    user_playlists.append((user.id, playlist_info))
+        except Exception as e:
+            logger.error(f"Remove played episodes job failed reading DB: {e}")
+            return
+
+    # Phase 2: Process each playlist with Spotify API calls (no DB session held)
+    total_removed = 0
+    errors = []
+
+    for user_id, playlists in user_playlists:
+        try:
+            access_token = await _get_valid_access_token(user_id)
+            if not access_token:
+                logger.warning(f"User {user_id} not found, skipping")
+                continue
+
+            spotify_client = SpotifyService(access_token=access_token)
+
+            for playlist_id, playlist_name, spotify_playlist_id in playlists:
                 try:
-                    # Get all enabled playlists for user
-                    playlists_result = await db.execute(
-                        select(Playlist).where((Playlist.user_id == user.id) & (Playlist.is_enabled == True))
-                    )
-                    playlists = playlists_result.scalars().all()
+                    # Get all tracks in playlist (Spotify API only, no DB)
+                    offset = 0
+                    limit = 50
+                    playlist_episode_ids: list[str] = []
 
-                    for playlist in playlists:
-                        # Skip playlists that don't have a Spotify playlist yet
-                        if not playlist.spotify_playlist_id:
-                            logger.debug(f"Skipping playlist '{playlist.name}' — no spotify_playlist_id")
-                            continue
+                    while True:
+                        tracks_data = await spotify_client.get_playlist_tracks(
+                            spotify_playlist_id, limit=limit, offset=offset
+                        )
+                        tracks = tracks_data.get("items", [])
 
-                        try:
-                            # Get Spotify client with valid token
-                            access_token = encryption.decrypt(user.access_token)
-                            token_exp = user.token_expires_at.replace(tzinfo=UTC) if user.token_expires_at.tzinfo is None else user.token_expires_at
-                            if datetime.now(UTC) >= token_exp:
-                                refresh_token = encryption.decrypt(user.refresh_token)
-                                spotify = SpotifyService()
-                                token_data = await spotify.refresh_access_token(refresh_token)
-                                user.access_token = encryption.encrypt(token_data["access_token"])
-                                user.refresh_token = encryption.encrypt(token_data["refresh_token"])
-                                user.token_expires_at = token_data["expires_at"]
-                                await db.flush()
-                                access_token = token_data["access_token"]
+                        if not tracks:
+                            break
 
-                            spotify_client = SpotifyService(access_token=access_token)
+                        for track in tracks:
+                            if track and "track" in track:
+                                episode = track["track"]
+                                uri = episode.get("uri")
+                                if uri and uri.startswith("spotify:episode:"):
+                                    ep_id = uri.split(":")[-1]
+                                    playlist_episode_ids.append(ep_id)
 
-                            # Get all tracks in playlist
-                            offset = 0
-                            limit = 50
+                        offset += limit
+                        if not tracks_data.get("next"):
+                            break
 
-                            # Collect episode ids found in the playlist so we can
-                            # fetch detailed episode objects (which include
-                            # `resume_point`) since playlist track objects may not.
-                            playlist_episode_ids: list[str] = []
+                    # Fetch detailed episode objects to check play status
+                    played_uris: list[str] = []
+                    try:
+                        for i in range(0, len(playlist_episode_ids), 50):
+                            batch_ids = playlist_episode_ids[i : i + 50]
+                            details = await spotify_client.get_episodes(batch_ids)
+                            for ep in details:
+                                if not ep:
+                                    continue
+                                resume_point = ep.get("resume_point") or {}
+                                if resume_point.get("fully_played", False):
+                                    played_uris.append(ep.get("uri") or f"spotify:episode:{ep['id']}")
+                    except Exception as e:
+                        logger.error(f"Failed to fetch episode details for playlist cleanup: {e}")
 
-                            while True:
-                                tracks_data = await spotify_client.get_playlist_tracks(
-                                    playlist.spotify_playlist_id, limit=limit, offset=offset
-                                )
-                                tracks = tracks_data.get("items", [])
-
-                                if not tracks:
-                                    break
-
-                                for track in tracks:
-                                    # Spotify playlist items wrap episodes in a "track" key
-                                    if track and "track" in track:
-                                        episode = track["track"]
-                                        uri = episode.get("uri")
-                                        if uri and uri.startswith("spotify:episode:"):
-                                            ep_id = uri.split(":")[-1]
-                                            playlist_episode_ids.append(ep_id)
-
-                                offset += limit
-                                if not tracks_data.get("next"):
-                                    break
-
-                            # Fetch detailed episode objects in batches and
-                            # determine which are fully played for this user.
-                            played_uris: list[str] = []
+                    # Remove played episodes if any found
+                    if played_uris:
+                        logger.info(
+                            f"Playlist {playlist_name} ({spotify_playlist_id}) - found {len(played_uris)} fully-played episodes: {played_uris}"
+                        )
+                        for i in range(0, len(played_uris), 50):
+                            batch = played_uris[i : i + 50]
                             try:
-                                for i in range(0, len(playlist_episode_ids), 50):
-                                    batch_ids = playlist_episode_ids[i : i + 50]
-                                    details = await spotify_client.get_episodes(batch_ids)
-                                    for ep in details:
-                                        if not ep:
-                                            continue
-                                        resume_point = ep.get("resume_point") or {}
-                                        if resume_point.get("fully_played", False):
-                                            played_uris.append(ep.get("uri") or f"spotify:episode:{ep['id']}")
-                            except Exception as e:
-                                logger.error(f"Failed to fetch episode details for playlist cleanup: {e}")
-
-                            # Remove played episodes if any found
-                            if played_uris:
                                 logger.info(
-                                    f"Playlist {playlist.name} ({playlist.spotify_playlist_id}) - found {len(played_uris)} fully-played episodes: {played_uris}"
+                                    f"Attempting to remove batch of {len(batch)} from playlist {playlist_name} (user {user_id}): {batch}"
                                 )
-                                # Remove in batches to avoid timeouts
-                                for i in range(0, len(played_uris), 50):
-                                    batch = played_uris[i : i + 50]
-                                    try:
-                                        logger.info(
-                                            f"Attempting to remove batch of {len(batch)} from playlist {playlist.name} (user {user.id}): {batch}"
-                                        )
-                                        await spotify_client.remove_tracks_from_playlist(
-                                            playlist.spotify_playlist_id, batch
-                                        )
-                                        total_removed += len(batch)
-                                        logger.info(
-                                            f"Removed {len(batch)} played episodes from playlist {playlist.name} (user {user.id})"
-                                        )
-                                    except Exception as e:
-                                        logger.error(
-                                            f"Failed to remove batch from playlist {playlist.name} (user {user.id}): {e} - batch: {batch}"
-                                        )
-
-                        except Exception as e:
-                            logger.error(f"Failed to clean playlist {playlist.name} (user {user.id}): {e}")
-                            errors.append(f"Playlist {playlist.name}: {str(e)}")
-
-                    await db.commit()
+                                await spotify_client.remove_tracks_from_playlist(
+                                    spotify_playlist_id, batch
+                                )
+                                total_removed += len(batch)
+                                logger.info(
+                                    f"Removed {len(batch)} played episodes from playlist {playlist_name} (user {user_id})"
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"Failed to remove batch from playlist {playlist_name} (user {user_id}): {e} - batch: {batch}"
+                                )
 
                 except Exception as e:
-                    logger.error(f"Failed to clean playlists for user {user.id}: {e}")
-                    errors.append(f"User {user.id}: {str(e)}")
-                    await db.rollback()
-
-            logger.info(f"Remove played episodes job completed: removed {total_removed} episodes, {len(errors)} errors")
+                    logger.error(f"Failed to clean playlist {playlist_name} (user {user_id}): {e}")
+                    errors.append(f"Playlist {playlist_name}: {str(e)}")
 
         except Exception as e:
-            logger.error(f"Remove played episodes job failed: {e}")
-            await db.rollback()
+            logger.error(f"Failed to clean playlists for user {user_id}: {e}")
+            errors.append(f"User {user_id}: {str(e)}")
+
+    logger.info(f"Remove played episodes job completed: removed {total_removed} episodes, {len(errors)} errors")
