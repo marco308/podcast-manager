@@ -93,7 +93,10 @@ class SpotifyService:
         for attempt in range(MAX_RETRIES - 1):
             if response.status_code != 429:
                 break
-            retry_after = int(response.headers.get("Retry-After", "5"))
+            raw_retry_after = int(response.headers.get("Retry-After", "5"))
+            retry_after = min(raw_retry_after, 300)  # Cap at 5 minutes
+            if raw_retry_after > 300:
+                logger.warning(f"Spotify requested {raw_retry_after}s wait — capping to {retry_after}s")
             logger.warning(f"Rate limited by Spotify (attempt {attempt + 2}/{MAX_RETRIES}), waiting {retry_after}s")
             await asyncio.sleep(retry_after)
             response = await client.request(method, url, **kwargs)
