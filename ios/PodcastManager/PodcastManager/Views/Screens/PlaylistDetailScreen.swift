@@ -152,7 +152,7 @@ struct PlaylistDetailScreen: View {
 
     private func removePodcasts(at offsets: IndexSet) async {
         let podcastsToRemove = offsets.map { podcasts[$0] }
-        var removedIds: Set<String> = []
+        var removedIds: Set<Int> = []
         for podcast in podcastsToRemove {
             do {
                 let response = try await APIClient.shared.removePodcastFromPlaylist(
