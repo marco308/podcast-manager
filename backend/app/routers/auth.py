@@ -253,6 +253,11 @@ async def callback(
         await db.commit()
         logger.info(f"Committed user to database: {user.id}")
 
+        # Rotate sessions on login: invalidate any prior sessions for this user so a
+        # compromised session cannot survive re-authentication. This also doubles as
+        # "sign out everywhere" for the user when they re-complete OAuth.
+        await session_service.delete_user_sessions(db, user.id)
+
         # Create database-backed session
         session = await session_service.create_session(db, user.id)
         await db.commit()
