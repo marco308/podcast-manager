@@ -4,8 +4,9 @@ import logging
 import secrets
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query, Response
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,8 +14,10 @@ from app.config import get_settings
 from app.database import get_db
 from app.models.session import Session
 from app.models.user import User
+from app.rate_limit import limiter
 from app.schemas.user import UserResponse
 from app.services.encryption import get_encryption_service
+from app.services.mobile_auth import issue_exchange_code, redeem_exchange_code
 from app.services.session import SessionService, get_session_service
 from app.services.spotify import SpotifyService
 
@@ -268,17 +271,20 @@ async def callback(
         if settings.COOKIE_DOMAIN:
             delete_kwargs["domain"] = settings.COOKIE_DOMAIN
 
-        # Mobile flow: redirect to custom URL scheme with session info
+        # Mobile flow: never ship the session_id/csrf_token through the URL.
+        # Instead mint a single-use 2-minute exchange code; the app redeems it
+        # at POST /api/auth/mobile-exchange to get the real credentials in a
+        # JSON response body. Mitigates URL-scheme hijacking and log exposure.
         if mobile_redirect_scheme:
-            redirect_url = (
-                f"{mobile_redirect_scheme}://auth/callback"
-                f"?session_id={session.session_id}"
-                f"&csrf_token={session.csrf_token}"
+            exchange_code = await issue_exchange_code(
+                session_id=session.session_id,
+                csrf_token=session.csrf_token,
             )
+            redirect_url = f"{mobile_redirect_scheme}://auth/callback?code={exchange_code}"
             response = RedirectResponse(url=redirect_url, status_code=302)
             response.delete_cookie(key=OAUTH_STATE_COOKIE_NAME, **delete_kwargs)
             response.delete_cookie(key=MOBILE_REDIRECT_COOKIE, **delete_kwargs)
-            logger.info("Redirecting to mobile app with session info")
+            logger.info("Redirecting to mobile app with exchange code")
             return response
 
         # Web flow: redirect to frontend with cookies
@@ -293,6 +299,42 @@ async def callback(
     except Exception as e:
         logger.exception(f"OAuth callback failed: {str(e)}")
         raise HTTPException(status_code=400, detail="Authentication failed") from None
+
+
+class MobileExchangeRequest(BaseModel):
+    code: str = Field(min_length=16, max_length=128)
+
+
+class MobileExchangeResponse(BaseModel):
+    session_id: str
+    csrf_token: str
+
+
+@router.post("/mobile-exchange", response_model=MobileExchangeResponse)
+@limiter.limit("10/minute")
+async def mobile_exchange(
+    request: Request,
+    body: MobileExchangeRequest,
+) -> MobileExchangeResponse:
+    """Trade a single-use mobile exchange code for session credentials.
+
+    The mobile OAuth callback returns `podcastmanager://auth/callback?code=…`.
+    The app POSTs that `code` here; we pop it out of the pending-exchange
+    map and return the real `session_id` and `csrf_token` in the JSON
+    response body. Credentials never appear in any URL.
+
+    Rate-limited because the code is 32 bytes of entropy — brute force is
+    effectively impossible — but 10/min keeps a leaked-log scenario from
+    being weaponised.
+    """
+    pending = await redeem_exchange_code(body.code)
+    if pending is None:
+        logger.warning("Mobile exchange attempted with invalid or expired code")
+        raise HTTPException(status_code=401, detail="Invalid or expired exchange code")
+    return MobileExchangeResponse(
+        session_id=pending.session_id,
+        csrf_token=pending.csrf_token,
+    )
 
 
 @router.get("/me", response_model=UserResponse)

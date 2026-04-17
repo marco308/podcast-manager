@@ -27,6 +27,16 @@ actor APIClient {
         try await get("/api/auth/me")
     }
 
+    /// Trade a one-time mobile-flow `code` for real session credentials.
+    ///
+    /// The OAuth callback no longer returns `session_id`/`csrf_token` in the
+    /// URL — it returns an opaque `code` that we POST here. The backend
+    /// responds with the real credentials in the JSON body, which never
+    /// travel through any URL or device log.
+    func exchangeMobileAuthCode(_ code: String) async throws -> MobileExchangeResponse {
+        try await post("/api/auth/mobile-exchange", body: ["code": code])
+    }
+
     // MARK: - Podcasts
 
     func fetchPodcasts(limit: Int = 50, offset: Int = 0, unassigned: Bool = false) async throws -> PodcastListResponse {

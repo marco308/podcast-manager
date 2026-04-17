@@ -39,20 +39,28 @@ class AuthService {
                     return
                 }
 
+                // Mobile OAuth now returns a single-use exchange code in the
+                // callback URL instead of the raw session credentials. Pull
+                // the code out of the URL and trade it for real credentials
+                // via POST /api/auth/mobile-exchange — credentials then arrive
+                // in the JSON body, never in a URL or device log.
                 guard let callbackURL,
                       let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
-                      let sessionId = components.queryItems?.first(where: { $0.name == "session_id" })?.value,
-                      let csrfToken = components.queryItems?.first(where: { $0.name == "csrf_token" })?.value
+                      let code = components.queryItems?.first(where: { $0.name == "code" })?.value
                 else {
-                    self.error = "Failed to get session from login"
+                    self.error = "Failed to get exchange code from login"
                     return
                 }
 
-                KeychainService.save(sessionId, for: .sessionId)
-                KeychainService.save(csrfToken, for: .csrfToken)
-                self.isAuthenticated = true
-
-                await self.fetchUser()
+                do {
+                    let creds = try await APIClient.shared.exchangeMobileAuthCode(code)
+                    KeychainService.save(creds.sessionId, for: .sessionId)
+                    KeychainService.save(creds.csrfToken, for: .csrfToken)
+                    self.isAuthenticated = true
+                    await self.fetchUser()
+                } catch {
+                    self.error = "Failed to complete login: \(error.localizedDescription)"
+                }
             }
         }
 
