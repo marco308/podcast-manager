@@ -48,8 +48,13 @@ class Settings(BaseSettings):
     PLAYLIST_UPDATE_HOUR: int = 4
     PLAYLIST_UPDATE_MINUTE: int = 0
 
-    def spotify_auth_url(self, state: str) -> str:
-        """Build Spotify authorization URL with OAuth state parameter."""
+    def spotify_auth_url(self, state: str, code_challenge: str) -> str:
+        """Build Spotify authorization URL with OAuth state + PKCE challenge.
+
+        PKCE (RFC 7636) binds this authorization request to the upcoming
+        token exchange: whoever intercepts the authorization code still
+        needs the `code_verifier` we hold server-side to redeem it.
+        """
         import urllib.parse
 
         params = {
@@ -59,6 +64,8 @@ class Settings(BaseSettings):
             "scope": self.SPOTIFY_SCOPES,
             "show_dialog": "true",
             "state": state,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
         }
         return f"https://accounts.spotify.com/authorize?{urllib.parse.urlencode(params)}"
 

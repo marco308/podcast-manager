@@ -1,5 +1,7 @@
 """Authentication router for Spotify OAuth2 flow with secure cookie-based sessions."""
 
+import base64
+import hashlib
 import logging
 import secrets
 from datetime import UTC, datetime
@@ -31,8 +33,21 @@ settings = get_settings()
 COOKIE_NAME = "session_id"
 CSRF_COOKIE_NAME = "csrf_token"
 OAUTH_STATE_COOKIE_NAME = "oauth_state"
+OAUTH_VERIFIER_COOKIE_NAME = "oauth_verifier"
 COOKIE_MAX_AGE = 24 * 60 * 60  # 24 hours in seconds
 OAUTH_STATE_MAX_AGE = 600  # 10 minutes for OAuth flow
+
+
+def _pkce_pair() -> tuple[str, str]:
+    """Return a (code_verifier, code_challenge) pair for PKCE (RFC 7636).
+
+    Verifier is 64 bytes of URL-safe entropy. Challenge is
+    BASE64URL(SHA256(verifier)) with '=' padding stripped, per the spec.
+    """
+    verifier = secrets.token_urlsafe(64)
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    return verifier, challenge
 
 
 def get_cookie_settings() -> dict:
@@ -143,10 +158,11 @@ async def login(redirect_scheme: str | None = Query(None)) -> RedirectResponse:
         )
 
     state = secrets.token_urlsafe(32)
-    auth_url = settings.spotify_auth_url(state)
-    logger.info("Redirecting to Spotify auth URL with state parameter")
+    code_verifier, code_challenge = _pkce_pair()
+    auth_url = settings.spotify_auth_url(state, code_challenge)
+    logger.info("Redirecting to Spotify auth URL with state + PKCE challenge")
     response = RedirectResponse(url=auth_url)
-    # Store state in a secure cookie for validation in the callback
+    # Store state + verifier in httpOnly cookies for validation in the callback
     state_cookie_settings = {
         "httponly": True,
         "secure": True,
@@ -157,6 +173,9 @@ async def login(redirect_scheme: str | None = Query(None)) -> RedirectResponse:
     if settings.COOKIE_DOMAIN:
         state_cookie_settings["domain"] = settings.COOKIE_DOMAIN
     response.set_cookie(key=OAUTH_STATE_COOKIE_NAME, value=state, **state_cookie_settings)
+    response.set_cookie(
+        key=OAUTH_VERIFIER_COOKIE_NAME, value=code_verifier, **state_cookie_settings
+    )
 
     # Store mobile redirect scheme if provided (for iOS/Android OAuth flow)
     if redirect_scheme:
@@ -173,6 +192,7 @@ async def callback(
     state: str | None = Query(None),
     error: str | None = Query(None),
     oauth_state: str | None = Cookie(None, alias=OAUTH_STATE_COOKIE_NAME),
+    oauth_verifier: str | None = Cookie(None, alias=OAUTH_VERIFIER_COOKIE_NAME),
     mobile_redirect_scheme: str | None = Cookie(None, alias=MOBILE_REDIRECT_COOKIE),
     db: AsyncSession = Depends(get_db),
     session_service: SessionService = Depends(get_session_service),
@@ -201,12 +221,19 @@ async def callback(
         logger.error("OAuth state mismatch - possible CSRF attack")
         raise HTTPException(status_code=400, detail="OAuth state mismatch")
 
+    # PKCE: the matching verifier was stashed in an httpOnly cookie at /login.
+    # If it's missing the flow was likely forged or the cookie was cleared
+    # mid-flow — either way, don't attempt the exchange.
+    if not oauth_verifier:
+        logger.error("Missing PKCE verifier cookie on callback")
+        raise HTTPException(status_code=400, detail="Missing PKCE verifier")
+
     encryption = get_encryption_service()
 
     try:
-        # Exchange code for tokens
+        # Exchange code for tokens (with PKCE verifier)
         spotify = SpotifyService()
-        token_data = await spotify.exchange_code_for_tokens(code)
+        token_data = await spotify.exchange_code_for_tokens(code, code_verifier=oauth_verifier)
         logger.info("Successfully exchanged code for tokens")
 
         # Get user profile
@@ -283,6 +310,7 @@ async def callback(
             redirect_url = f"{mobile_redirect_scheme}://auth/callback?code={exchange_code}"
             response = RedirectResponse(url=redirect_url, status_code=302)
             response.delete_cookie(key=OAUTH_STATE_COOKIE_NAME, **delete_kwargs)
+            response.delete_cookie(key=OAUTH_VERIFIER_COOKIE_NAME, **delete_kwargs)
             response.delete_cookie(key=MOBILE_REDIRECT_COOKIE, **delete_kwargs)
             logger.info("Redirecting to mobile app with exchange code")
             return response
@@ -292,6 +320,7 @@ async def callback(
         response = RedirectResponse(url=frontend_base, status_code=302)
         set_session_cookies(response, session)
         response.delete_cookie(key=OAUTH_STATE_COOKIE_NAME, **delete_kwargs)
+        response.delete_cookie(key=OAUTH_VERIFIER_COOKIE_NAME, **delete_kwargs)
 
         logger.info("Redirecting to frontend with session cookie")
         return response

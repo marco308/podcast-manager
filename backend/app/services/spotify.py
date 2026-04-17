@@ -103,23 +103,32 @@ class SpotifyService:
         response.raise_for_status()
         return response
 
-    async def exchange_code_for_tokens(self, code: str) -> dict[str, Any]:
+    async def exchange_code_for_tokens(
+        self, code: str, code_verifier: str | None = None
+    ) -> dict[str, Any]:
         """Exchange authorization code for access and refresh tokens.
 
         Args:
             code: The authorization code from Spotify OAuth callback.
+            code_verifier: PKCE code verifier that matches the `code_challenge`
+                sent on the authorize request. Required whenever the authorize
+                call included a challenge.
 
         Returns:
             Dictionary containing access_token, refresh_token, expires_in.
         """
+        data: dict[str, str] = {
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": self._settings.SPOTIFY_REDIRECT_URI,
+        }
+        if code_verifier is not None:
+            data["code_verifier"] = code_verifier
+
         async with self._get_client_contextmanager() as client:
             response = await client.post(
                 SPOTIFY_TOKEN_URL,
-                data={
-                    "grant_type": "authorization_code",
-                    "code": code,
-                    "redirect_uri": self._settings.SPOTIFY_REDIRECT_URI,
-                },
+                data=data,
                 auth=(
                     self._settings.SPOTIFY_CLIENT_ID,
                     self._settings.SPOTIFY_CLIENT_SECRET,
