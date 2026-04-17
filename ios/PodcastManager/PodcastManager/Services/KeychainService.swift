@@ -22,6 +22,9 @@ enum KeychainService {
 
         var addQuery = query
         addQuery[kSecValueData as String] = data
+        // Only accessible while the device is unlocked, and never sync to iCloud
+        // Keychain / follow a device restore. Tokens stay pinned to this install.
+        addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         SecItemAdd(addQuery as CFDictionary, nil)
     }
 
