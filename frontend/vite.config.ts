@@ -34,7 +34,8 @@ export default defineConfig(({ mode }) => {
     },
     build: {
       outDir: 'dist',
-      sourcemap: true,
+      // Source maps in dev only — they're a source-code disclosure risk in prod.
+      sourcemap: mode !== 'production',
     },
     resolve: {
       alias: {
