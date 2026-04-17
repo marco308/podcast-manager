@@ -19,7 +19,7 @@ from app.schemas.podcast import (
     PodcastResponse,
     PodcastUpdate,
 )
-from app.services.encryption import get_encryption_service
+from app.services.encryption import TokenDecryptionError, get_encryption_service
 from app.services.spotify import SpotifyService
 
 logger = logging.getLogger(__name__)
@@ -39,7 +39,16 @@ async def get_user_with_token(
         raise HTTPException(status_code=404, detail="User not found")
 
     encryption = get_encryption_service()
-    access_token = encryption.decrypt(user.access_token)
+    try:
+        access_token = encryption.decrypt(user.access_token)
+    except TokenDecryptionError:
+        # Stored ciphertext is unreadable (key rotation, corruption). Force reauth
+        # instead of surfacing a 500 from the global handler.
+        logger.warning(f"Access token for user {user.id} could not be decrypted; forcing reauth")
+        raise HTTPException(
+            status_code=401,
+            detail="Stored credentials could not be read. Please sign in again.",
+        ) from None
 
     return user, access_token
 

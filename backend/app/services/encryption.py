@@ -1,8 +1,21 @@
 """Token encryption service using Fernet symmetric encryption."""
 
-from cryptography.fernet import Fernet
+import logging
+
+from cryptography.fernet import Fernet, InvalidToken
 
 from app.config import get_settings
+
+logger = logging.getLogger(__name__)
+
+
+class TokenDecryptionError(Exception):
+    """Raised when an at-rest token cannot be decrypted.
+
+    Typically means the ENCRYPTION_KEY has been rotated or the stored
+    ciphertext is corrupted. Callers should treat this as "the user's
+    Spotify tokens are unrecoverable" and force reauthentication.
+    """
 
 
 class EncryptionService:
@@ -31,8 +44,18 @@ class EncryptionService:
 
         Returns:
             The decrypted plaintext string.
+
+        Raises:
+            TokenDecryptionError: if the ciphertext is invalid, corrupted, or
+                was encrypted under a different key. Never includes the
+                ciphertext or key material in the message.
         """
-        return self._cipher.decrypt(ciphertext.encode()).decode()
+        try:
+            return self._cipher.decrypt(ciphertext.encode()).decode()
+        except InvalidToken as exc:
+            # Do not log ciphertext — it's sensitive. Log only that decryption failed.
+            logger.error("Fernet decryption failed: token invalid or key mismatch")
+            raise TokenDecryptionError("Stored token could not be decrypted") from exc
 
 
 # Singleton instance
