@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.models.playlist import Playlist
 from app.models.playlist_podcast import PlaylistPodcast
 from app.models.podcast import Podcast
 from app.models.session import Session
@@ -84,6 +85,15 @@ async def list_podcasts(
     query = select(Podcast)
 
     if playlist_id is not None:
+        # Verify the playlist belongs to the caller before filtering through it.
+        # Today the single-user guard in auth.py makes this a no-op, but this
+        # closes a latent IDOR if multi-user is ever enabled.
+        owner_check = await db.execute(
+            select(Playlist.id).where((Playlist.id == playlist_id) & (Playlist.user_id == user_id))
+        )
+        if owner_check.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Playlist not found")
+
         # Filter to podcasts in this playlist
         query = query.join(PlaylistPodcast, PlaylistPodcast.podcast_id == Podcast.id).where(
             PlaylistPodcast.playlist_id == playlist_id
