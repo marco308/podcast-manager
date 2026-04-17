@@ -9,3 +9,22 @@ updates:
     directory: "/frontend"
     schedule:
       interval: "weekly"
+
+  # Track base image updates so OS/libc/openssl patches don't drift silently
+  # between deploys. Dependabot will open PRs bumping FROM lines in each
+  # Dockerfile; merging them triggers a rebuild via deploy.sh.
+  - package-ecosystem: "docker"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "docker"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+
+  # Keep GitHub Actions pinned to current major/minor too.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
