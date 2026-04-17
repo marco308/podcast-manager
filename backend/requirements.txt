@@ -17,6 +17,9 @@ apscheduler>=3.10.0,<4.0.0
 # Security and encryption
 cryptography>=46.0.5
 
+# Rate limiting (per-session budgets on expensive endpoints)
+slowapi>=0.1.9,<1.0.0
+
 # UK public holidays
 holidays>=0.40,<1.0.0
 

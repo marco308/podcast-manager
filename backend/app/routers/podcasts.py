@@ -3,11 +3,12 @@
 import logging
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.rate_limit import limiter
 from app.models.playlist import Playlist
 from app.models.playlist_podcast import PlaylistPodcast
 from app.models.podcast import Podcast
@@ -216,7 +217,9 @@ async def unfollow_podcast(
 
 
 @router.post("/sync")
+@limiter.limit("1/5minutes")
 async def sync_podcasts(
+    request: Request,
     session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
 ) -> dict:

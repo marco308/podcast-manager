@@ -2,10 +2,11 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.jobs.scheduler import get_job_status, reschedule_playlist_update
+from app.rate_limit import limiter
 from app.routers.auth import get_current_user_id
 
 logger = logging.getLogger(__name__)
@@ -25,12 +26,14 @@ class UpdateScheduleRequest(BaseModel):
 
 
 @router.put("/schedule")
+@limiter.limit("10/hour")
 async def update_schedule(
-    request: UpdateScheduleRequest,
+    request: Request,
+    schedule: UpdateScheduleRequest,
     user_id: int = Depends(get_current_user_id),
 ) -> dict:
     """Update the daily playlist update schedule."""
-    next_run = await reschedule_playlist_update(request.hour, request.minute)
+    next_run = await reschedule_playlist_update(schedule.hour, schedule.minute)
     if next_run is None:
         raise HTTPException(status_code=500, detail="Failed to update schedule")
     return {"message": "Schedule updated", "next_run": next_run}

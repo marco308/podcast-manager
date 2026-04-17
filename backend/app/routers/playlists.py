@@ -2,7 +2,7 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +12,7 @@ from app.models.playlist_podcast import PlaylistPodcast
 from app.models.podcast import Podcast
 from app.models.session import Session
 from app.models.user import User
+from app.rate_limit import limiter
 from app.routers.auth import get_current_user_id, validate_csrf_token
 from app.schemas.playlist import (
     PlaylistCreate,
@@ -355,7 +356,9 @@ async def reorder_playlist_podcasts(
 
 
 @router.post("/{playlist_id}/run")
+@limiter.limit("3/10minutes")
 async def run_playlist_update(
+    request: Request,
     playlist_id: int,
     session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
@@ -395,7 +398,9 @@ async def run_playlist_update(
 
 
 @router.post("/run-all")
+@limiter.limit("1/5minutes")
 async def run_all_playlist_updates(
+    request: Request,
     session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
 ) -> dict:

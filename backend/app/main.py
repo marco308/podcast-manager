@@ -8,10 +8,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.config import get_settings
 from app.database import init_db
 from app.jobs.scheduler import init_scheduler, shutdown_scheduler
+from app.rate_limit import limiter
 from app.routers import auth_router, jobs_router, playlists_router, podcasts_router
 
 settings = get_settings()
@@ -57,6 +60,11 @@ app = FastAPI(
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
 )
+
+# Rate-limit setup — the Limiter itself is applied via decorators on the
+# expensive endpoints. This wires up the 429 handler and middleware.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 # Global exception handler
