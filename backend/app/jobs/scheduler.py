@@ -18,6 +18,7 @@ from app.models.user import User
 from app.services.encryption import get_encryption_service
 from app.services.playlist_builder import PlaylistBuilder
 from app.services.spotify import SpotifyService
+from app.services.token_manager import TokenManager
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -126,7 +127,9 @@ async def update_all_playlists() -> None:
 
     total_playlists = 0
     total_episodes = 0
-    errors = []
+    playlists_failed = 0
+    errors: list[str] = []
+    error_objects: list[BaseException] = []
 
     # Process each user with its own session
     for user_id in user_ids:
@@ -138,7 +141,8 @@ async def update_all_playlists() -> None:
                 if not user:
                     continue
 
-                builder = PlaylistBuilder(db, user)
+                token_manager = TokenManager(user.id)
+                builder = PlaylistBuilder(db, user, token_manager=token_manager)
                 results = await builder.update_all_playlists()
 
                 for res in results:
@@ -146,6 +150,7 @@ async def update_all_playlists() -> None:
                     if res.success:
                         total_episodes += res.episode_count
                     else:
+                        playlists_failed += 1
                         errors.append(f"{res.playlist_name}: {res.error}")
 
                 await db.commit()
@@ -153,6 +158,7 @@ async def update_all_playlists() -> None:
             except Exception as e:
                 logger.error(f"Failed to update playlists for user {user_id}: {e}")
                 errors.append(f"User {user_id}: {str(e)}")
+                error_objects.append(e)
                 await db.rollback()
 
     # Update sync log with a short-lived session
@@ -169,6 +175,17 @@ async def update_all_playlists() -> None:
                     )
                     if errors:
                         sync_log.details += f"\n{chr(10).join(errors[:10])}"
+
+                    # Failure classification (issue #89, PR1).
+                    sync_log.playlists_attempted = total_playlists
+                    sync_log.playlists_failed = playlists_failed
+                    sync_log.failure_code = _classify_failure(
+                        playlists_attempted=total_playlists,
+                        playlists_failed=playlists_failed,
+                        error_messages=errors,
+                        exceptions=error_objects,
+                    )
+                    # api_calls_used left None — budget tracking lands in PR2.
                     await db.commit()
             except Exception as e:
                 logger.error(f"Failed to update sync log: {e}")
@@ -380,7 +397,7 @@ async def trigger_playlist_update_for_user(user_id: int) -> dict:
             if not user:
                 return {"success": False, "error": "User not found"}
 
-            builder = PlaylistBuilder(db, user)
+            builder = PlaylistBuilder(db, user, token_manager=TokenManager(user.id))
             results = await builder.update_all_playlists()
             await db.commit()
 
@@ -428,7 +445,7 @@ async def trigger_single_playlist_update(user_id: int, playlist_id: int) -> dict
             if not playlist:
                 return {"success": False, "error": "Playlist not found"}
 
-            builder = PlaylistBuilder(db, user)
+            builder = PlaylistBuilder(db, user, token_manager=TokenManager(user.id))
             result = await builder.update_playlist(playlist)
             await db.commit()
 
@@ -447,38 +464,71 @@ async def trigger_single_playlist_update(user_id: int, playlist_id: int) -> dict
 
 
 async def _get_valid_access_token(user_id: int) -> str | None:
-    """Get a valid Spotify access token for a user, refreshing if expired.
+    """Get a valid Spotify access token for a user.
 
-    Uses a short-lived DB session to read/update tokens.
-
-    Args:
-        user_id: The user ID.
+    Thin compatibility wrapper around :class:`TokenManager` — kept so the
+    cleanup job can call into it without restructuring. New code should
+    use ``TokenManager`` directly so it can also wire up an
+    ``on_unauthorized`` callback at the write boundary (issue #89).
 
     Returns:
         A valid access token string, or None if the user was not found.
     """
-    encryption = get_encryption_service()
+    try:
+        return await TokenManager(user_id).get_token(min_remaining_seconds=300)
+    except RuntimeError:
+        return None
 
-    async with async_session_maker() as db:
-        result = await db.execute(select(User).where(User.id == user_id))
-        user = result.scalar_one_or_none()
-        if not user:
-            return None
 
-        access_token = encryption.decrypt(user.access_token)
-        token_exp = user.token_expires_at.replace(tzinfo=UTC) if user.token_expires_at.tzinfo is None else user.token_expires_at
+def _classify_failure(
+    *,
+    playlists_attempted: int,
+    playlists_failed: int,
+    error_messages: list[str],
+    exceptions: list[BaseException],
+) -> str | None:
+    """Classify the failure mode of a playlist-update job for SyncLog.
 
-        if datetime.now(UTC) >= token_exp:
-            refresh_token = encryption.decrypt(user.refresh_token)
-            spotify = SpotifyService()
-            token_data = await spotify.refresh_access_token(refresh_token)
-            user.access_token = encryption.encrypt(token_data["access_token"])
-            user.refresh_token = encryption.encrypt(token_data["refresh_token"])
-            user.token_expires_at = token_data["expires_at"]
-            await db.commit()
-            access_token = token_data["access_token"]
+    The classification is heuristic — we don't carry structured error
+    objects around the job today. We inspect both raised exceptions
+    (typically httpx.HTTPStatusError from user-level failures) and the
+    error message strings produced by ``update_playlist`` to recognise
+    well-known patterns.
 
-        return access_token
+    Returns:
+        One of: rate_limit, token_expired, playlist_write_failed,
+        partial, unknown — or None if there were no failures.
+    """
+    import httpx  # local import to avoid cycles in tests that stub modules
+
+    if not error_messages and not exceptions:
+        return None
+
+    statuses: list[int] = []
+    methods: list[str] = []
+    for exc in exceptions:
+        if isinstance(exc, httpx.HTTPStatusError):
+            statuses.append(exc.response.status_code)
+            methods.append(exc.request.method.upper())
+
+    # Also peek into the textual errors — update_playlist wraps the
+    # underlying exception via str(e), which for httpx prints the status.
+    text_blob = " ".join(error_messages)
+
+    if 429 in statuses or "429" in text_blob or "Too Many Requests" in text_blob:
+        return "rate_limit"
+    if 401 in statuses or "401" in text_blob or "Unauthorized" in text_blob:
+        return "token_expired"
+
+    write_methods = {"PUT", "POST", "DELETE"}
+    for status, method in zip(statuses, methods, strict=False):
+        if method in write_methods and 400 <= status < 600:
+            return "playlist_write_failed"
+
+    if playlists_failed and playlists_failed < playlists_attempted:
+        return "partial"
+
+    return "unknown"
 
 
 async def remove_played_episodes_from_playlists() -> None:
@@ -520,8 +570,10 @@ async def remove_played_episodes_from_playlists() -> None:
 
     for user_id, playlists in user_playlists:
         try:
-            access_token = await _get_valid_access_token(user_id)
-            if not access_token:
+            token_manager = TokenManager(user_id)
+            try:
+                access_token = await token_manager.get_token(min_remaining_seconds=300)
+            except RuntimeError:
                 logger.warning(f"User {user_id} not found, skipping")
                 continue
 
@@ -581,8 +633,16 @@ async def remove_played_episodes_from_playlists() -> None:
                                 logger.info(
                                     f"Attempting to remove batch of {len(batch)} from playlist {playlist_name} (user {user_id}): {batch}"
                                 )
+                                # Refresh just before the write to cover the
+                                # case where the GET loop above took long
+                                # enough for the cached token to age out.
+                                spotify_client._access_token = await token_manager.get_token(
+                                    min_remaining_seconds=300
+                                )
                                 await spotify_client.remove_tracks_from_playlist(
-                                    spotify_playlist_id, batch
+                                    spotify_playlist_id,
+                                    batch,
+                                    on_unauthorized=token_manager.force_refresh,
                                 )
                                 total_removed += len(batch)
                                 logger.info(
