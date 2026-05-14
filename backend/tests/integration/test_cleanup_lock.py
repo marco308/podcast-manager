@@ -98,10 +98,12 @@ def _make_session_factory(*, recent_rebuild_at: datetime | None, users: list = N
             return None
 
         async def execute(self, stmt):
-            # We dispatch by stringifying the SQL. Crude but the queries
-            # here are distinct enough that a substring check is plenty.
+            # Dispatch by matching on the FROM table name in the stringified
+            # SQL. Anchoring on " from <table>" avoids the trap where a bare
+            # "user" substring also matches playlist queries via
+            # ``playlists.user_id``.
             sql = str(stmt).lower()
-            if "sync_logs" in sql:
+            if " from sync_logs" in sql:
                 if gate_row is not None:
                     row = MagicMock()
                     row.completed_at = gate_row
@@ -109,10 +111,10 @@ def _make_session_factory(*, recent_rebuild_at: datetime | None, users: list = N
                     row.job_type = "playlist_update"
                     return _FakeResult(row)
                 return _FakeResult(None)
-            if "users" in sql or "user" in sql:
-                return _FakeResult(users)
-            if "playlists" in sql or "playlist" in sql:
+            if " from playlists" in sql:
                 return _FakeResult([])
+            if " from users" in sql:
+                return _FakeResult(users)
             return _FakeResult(None)
 
         async def commit(self):
