@@ -30,5 +30,12 @@ class SyncLog(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+    # Failure classification (issue #89). All nullable so existing rows
+    # written before migration 012 keep working untouched.
+    failure_code: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)
+    playlists_attempted: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    playlists_failed: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    api_calls_used: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
     def __repr__(self) -> str:
         return f"<SyncLog(id={self.id}, job_type={self.job_type}, status={self.status})>"
