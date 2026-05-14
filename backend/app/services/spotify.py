@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+import time
+from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from types import TracebackType
@@ -17,6 +19,27 @@ SPOTIFY_API_BASE = "https://api.spotify.com/v1"
 SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token"
 
 MAX_RETRIES = 3
+
+# Sliding-window soft throttle. We track the last 30 seconds of request
+# timestamps and back off briefly when we cross the threshold — keeps us
+# well under Spotify's actual 429 line without bursting.
+RATE_LIMIT_WINDOW_SECONDS = 30.0
+RATE_LIMIT_THRESHOLD = 150
+SOFT_THROTTLE_SLEEP_SECONDS = 0.1
+
+# In ``cleanup_mode``, we abort the run if Spotify asks us to wait longer
+# than this — the daily rebuild has priority and we don't want a stuck
+# cleanup loop holding the rate-limit budget hostage.
+CLEANUP_MODE_RETRY_AFTER_LIMIT = 60
+
+
+class CleanupBudgetExceeded(Exception):
+    """Raised when a cleanup-mode request hits a Retry-After above the cleanup limit.
+
+    The 5-minute cleanup loop must yield to the daily rebuild rather than
+    sleep for minutes; the scheduler catches this and finalises the run
+    with a clear SyncLog entry (issue #89).
+    """
 
 
 class SpotifyService:
@@ -45,6 +68,12 @@ class SpotifyService:
         self._client = client
         self._owns_client = False
 
+        # Sliding-window throttle state (issue #89, PR2). Per-instance so
+        # each user's SpotifyService tracks its own budget — Spotify
+        # rate-limits per access token, not globally.
+        self._request_timestamps: deque[float] = deque()
+        self.api_calls_used: int = 0
+
     async def __aenter__(self) -> "SpotifyService":
         """Enter async context manager, creating a shared client if needed."""
         if self._client is None:
@@ -68,6 +97,32 @@ class SpotifyService:
         """Return a context manager that yields the shared client or a new one."""
         return _ClientContextManager(self._client)
 
+    def reset_api_counter(self) -> None:
+        """Zero the per-run API-call counter.
+
+        Called by the cleanup scheduler at the start of each run so the
+        SyncLog reflects only that run's traffic. Does not clear the
+        sliding-window deque — the actual rate-limit budget should
+        carry across runs (Spotify doesn't reset because we did).
+        """
+        self.api_calls_used = 0
+
+    async def _throttle_if_needed(self) -> None:
+        """Soft-throttle before issuing a request if the sliding window is hot.
+
+        Drops timestamps older than ``RATE_LIMIT_WINDOW_SECONDS`` from the
+        front of the deque, then — if we still hold more than
+        ``RATE_LIMIT_THRESHOLD`` — sleeps briefly to let the window
+        slide. Cheap to call on every request.
+        """
+        now = time.monotonic()
+        cutoff = now - RATE_LIMIT_WINDOW_SECONDS
+        while self._request_timestamps and self._request_timestamps[0] < cutoff:
+            self._request_timestamps.popleft()
+
+        if len(self._request_timestamps) >= RATE_LIMIT_THRESHOLD:
+            await asyncio.sleep(SOFT_THROTTLE_SLEEP_SECONDS)
+
     @property
     def _headers(self) -> dict[str, str]:
         """Get headers for API requests."""
@@ -76,6 +131,24 @@ class SpotifyService:
             headers["Authorization"] = f"Bearer {self._access_token}"
         return headers
 
+    async def _issue_request(
+        self,
+        client: httpx.AsyncClient,
+        method: str,
+        url: str,
+        **kwargs,
+    ) -> httpx.Response:
+        """Soft-throttle, count, then issue a single request.
+
+        Centralised so the 429-retry path and the 401-retry path both
+        contribute to ``api_calls_used`` and both feed the sliding
+        window — otherwise a retry storm wouldn't register as traffic.
+        """
+        await self._throttle_if_needed()
+        self._request_timestamps.append(time.monotonic())
+        self.api_calls_used += 1
+        return await client.request(method, url, **kwargs)
+
     async def _request_with_retry(
         self,
         client: httpx.AsyncClient,
@@ -83,6 +156,7 @@ class SpotifyService:
         url: str,
         *,
         on_unauthorized: Callable[[], Awaitable[str]] | None = None,
+        cleanup_mode: bool = False,
         **kwargs,
     ) -> httpx.Response:
         """Make an HTTP request with automatic retry on 429 rate limit.
@@ -95,6 +169,12 @@ class SpotifyService:
         is retried **once** (not part of the normal retry loop). Without the
         callback, 401 stays a hard failure — existing behaviour.
 
+        In ``cleanup_mode`` (issue #89, PR2) a 429 with ``Retry-After`` above
+        :data:`CLEANUP_MODE_RETRY_AFTER_LIMIT` raises
+        :class:`CleanupBudgetExceeded` instead of sleeping — the cleanup
+        loop should yield to the daily rebuild rather than hold the
+        budget for minutes.
+
         Args:
             client: The httpx client to use.
             method: HTTP method (GET, POST, PUT, DELETE).
@@ -102,22 +182,37 @@ class SpotifyService:
             on_unauthorized: Optional async callback returning a new bearer
                 token. Used to recover from token expiry that happens
                 between the in-memory check and the API call (issue #89).
+            cleanup_mode: When True, bail out on long Retry-After waits
+                instead of sleeping.
             **kwargs: Additional arguments passed to the request.
 
         Returns:
             The HTTP response.
+
+        Raises:
+            CleanupBudgetExceeded: ``cleanup_mode=True`` and Spotify
+                returned 429 with Retry-After above the cleanup limit.
         """
-        response = await client.request(method, url, **kwargs)
+        response = await self._issue_request(client, method, url, **kwargs)
         for attempt in range(MAX_RETRIES - 1):
             if response.status_code != 429:
                 break
             raw_retry_after = int(response.headers.get("Retry-After", "5"))
+
+            if cleanup_mode and raw_retry_after > CLEANUP_MODE_RETRY_AFTER_LIMIT:
+                # The daily rebuild has priority; surface this so the
+                # scheduler can finalise the run with a SyncLog row.
+                raise CleanupBudgetExceeded(
+                    f"Spotify Retry-After {raw_retry_after}s exceeds cleanup limit "
+                    f"{CLEANUP_MODE_RETRY_AFTER_LIMIT}s"
+                )
+
             retry_after = min(raw_retry_after, 300)  # Cap at 5 minutes
             if raw_retry_after > 300:
                 logger.warning(f"Spotify requested {raw_retry_after}s wait — capping to {retry_after}s")
             logger.warning(f"Rate limited by Spotify (attempt {attempt + 2}/{MAX_RETRIES}), waiting {retry_after}s")
             await asyncio.sleep(retry_after)
-            response = await client.request(method, url, **kwargs)
+            response = await self._issue_request(client, method, url, **kwargs)
 
         # Single 401 recovery attempt: refresh the token via the callback and
         # retry once. We do this AFTER the 429 loop so a rate-limited refresh
@@ -128,7 +223,7 @@ class SpotifyService:
             headers = dict(kwargs.get("headers") or {})
             headers["Authorization"] = f"Bearer {new_token}"
             kwargs["headers"] = headers
-            response = await client.request(method, url, **kwargs)
+            response = await self._issue_request(client, method, url, **kwargs)
 
         response.raise_for_status()
         return response
@@ -363,6 +458,7 @@ class SpotifyService:
         uris: list[str],
         *,
         on_unauthorized: Callable[[], Awaitable[str]] | None = None,
+        cleanup_mode: bool = False,
     ) -> None:
         """Remove tracks from a playlist.
 
@@ -371,6 +467,7 @@ class SpotifyService:
             uris: List of Spotify URIs to remove (e.g., spotify:episode:xxx).
             on_unauthorized: Optional callback to recover from 401 by
                 refreshing the bearer token and retrying once (issue #89).
+            cleanup_mode: When True, abort on long Retry-After waits (PR2).
         """
         import json as _json
 
@@ -383,9 +480,17 @@ class SpotifyService:
                 headers={**self._headers, "Content-Type": "application/json"},
                 content=body,
                 on_unauthorized=on_unauthorized,
+                cleanup_mode=cleanup_mode,
             )
 
-    async def get_playlist_tracks(self, playlist_id: str, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+    async def get_playlist_tracks(
+        self,
+        playlist_id: str,
+        limit: int = 50,
+        offset: int = 0,
+        *,
+        cleanup_mode: bool = False,
+    ) -> dict[str, Any]:
         """Get all tracks/episodes in a playlist.
 
         Args:
@@ -411,6 +516,7 @@ class SpotifyService:
                     "offset": offset,
                     "fields": "items(track(uri,resume_point(fully_played))),next,total",
                 },
+                cleanup_mode=cleanup_mode,
             )
             return resp.json()
 
