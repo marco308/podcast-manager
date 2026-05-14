@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.jobs import locks
 from app.models.playlist import Playlist
 from app.models.playlist_podcast import PlaylistPodcast
 from app.models.podcast import Podcast
@@ -384,8 +385,13 @@ async def run_playlist_update(
     # Build and update the playlist — use the same TokenManager-based
     # plumbing as the scheduled job so manual runs also get just-in-time
     # token refresh at the write boundary (issue #89, AC #5).
-    builder = PlaylistBuilder(db, user, token_manager=TokenManager(user.id))
-    result = await builder.update_playlist(playlist)
+    # Take the shared write lock so a manual run serialises against
+    # the daily rebuild and the cleanup job (issue #89, PR3, AC #3).
+    if locks.playlist_write_lock.locked():
+        logger.info("Waiting on playlist_write_lock — another job is holding it")
+    async with locks.playlist_write_lock:
+        builder = PlaylistBuilder(db, user, token_manager=TokenManager(user.id))
+        result = await builder.update_playlist(playlist)
 
     if not result.success:
         raise HTTPException(
@@ -416,8 +422,13 @@ async def run_all_playlist_updates(
         raise HTTPException(status_code=404, detail="User not found")
 
     # Update all playlists — same plumbing as the scheduled job (issue #89).
-    builder = PlaylistBuilder(db, user, token_manager=TokenManager(user.id))
-    results = await builder.update_all_playlists()
+    # Take the shared write lock so manual fan-out serialises against the
+    # daily rebuild and the cleanup job (issue #89, PR3, AC #3).
+    if locks.playlist_write_lock.locked():
+        logger.info("Waiting on playlist_write_lock — another job is holding it")
+    async with locks.playlist_write_lock:
+        builder = PlaylistBuilder(db, user, token_manager=TokenManager(user.id))
+        results = await builder.update_all_playlists()
 
     successful = [r for r in results if r.success]
     failed = [r for r in results if not r.success]

@@ -1,7 +1,7 @@
 """APScheduler setup and job management."""
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app.config import get_settings
 from app.database import async_session_maker
+from app.jobs import locks
 from app.jobs.session_cleanup import cleanup_expired_sessions as _cleanup_expired_sessions
 from app.models.playlist import Playlist
 from app.models.settings import AppSetting
@@ -19,6 +20,11 @@ from app.services.encryption import get_encryption_service
 from app.services.playlist_builder import PlaylistBuilder
 from app.services.spotify import CleanupBudgetExceeded, SpotifyService
 from app.services.token_manager import TokenManager
+
+# How recently a successful playlist_update must have run for cleanup
+# to defer to it (issue #89, PR3). Stops the cleanup job from starving
+# the daily rebuild when both want the write lock.
+CLEANUP_RECENCY_WINDOW = timedelta(minutes=60)
 
 # Per-run cap on Spotify API calls for the cleanup job (issue #89, PR2).
 # Keeps a misbehaving run from burning through the user's rate-limit
@@ -136,35 +142,39 @@ async def update_all_playlists() -> None:
     errors: list[str] = []
     error_objects: list[BaseException] = []
 
-    # Process each user with its own session
-    for user_id in user_ids:
-        async with async_session_maker() as db:
-            try:
-                result = await db.execute(select(User).where(User.id == user_id))
-                user = result.scalar_one_or_none()
+    # Serialise against cleanup and any concurrent manual run (issue #89, PR3).
+    if locks.playlist_write_lock.locked():
+        logger.info("Waiting on playlist_write_lock — another job is holding it")
+    async with locks.playlist_write_lock:
+        # Process each user with its own session
+        for user_id in user_ids:
+            async with async_session_maker() as db:
+                try:
+                    result = await db.execute(select(User).where(User.id == user_id))
+                    user = result.scalar_one_or_none()
 
-                if not user:
-                    continue
+                    if not user:
+                        continue
 
-                token_manager = TokenManager(user.id)
-                builder = PlaylistBuilder(db, user, token_manager=token_manager)
-                results = await builder.update_all_playlists()
+                    token_manager = TokenManager(user.id)
+                    builder = PlaylistBuilder(db, user, token_manager=token_manager)
+                    results = await builder.update_all_playlists()
 
-                for res in results:
-                    total_playlists += 1
-                    if res.success:
-                        total_episodes += res.episode_count
-                    else:
-                        playlists_failed += 1
-                        errors.append(f"{res.playlist_name}: {res.error}")
+                    for res in results:
+                        total_playlists += 1
+                        if res.success:
+                            total_episodes += res.episode_count
+                        else:
+                            playlists_failed += 1
+                            errors.append(f"{res.playlist_name}: {res.error}")
 
-                await db.commit()
+                    await db.commit()
 
-            except Exception as e:
-                logger.error(f"Failed to update playlists for user {user_id}: {e}")
-                errors.append(f"User {user_id}: {str(e)}")
-                error_objects.append(e)
-                await db.rollback()
+                except Exception as e:
+                    logger.error(f"Failed to update playlists for user {user_id}: {e}")
+                    errors.append(f"User {user_id}: {str(e)}")
+                    error_objects.append(e)
+                    await db.rollback()
 
     # Update sync log with a short-lived session
     if sync_log_id:
@@ -581,6 +591,36 @@ async def remove_played_episodes_from_playlists() -> None:
     _record_run("remove_played_episodes")
     logger.info("Starting remove played episodes job")
 
+    # Recency gate (issue #89, PR3): if a rebuild completed successfully
+    # in the last 60 minutes, the playlists are already fresh — there's
+    # nothing for cleanup to do, and skipping early means we don't
+    # contend for the write lock against a still-running rebuild on a
+    # tight schedule.
+    async with async_session_maker() as db:
+        try:
+            cutoff = datetime.now(UTC) - CLEANUP_RECENCY_WINDOW
+            recent_result = await db.execute(
+                select(SyncLog)
+                .where(
+                    (SyncLog.job_type == "playlist_update")
+                    & (SyncLog.status == SyncStatus.SUCCESS)
+                    & (SyncLog.completed_at > cutoff)
+                )
+                .order_by(SyncLog.completed_at.desc())
+                .limit(1)
+            )
+            recent = recent_result.scalar_one_or_none()
+        except Exception as e:
+            logger.error(f"Cleanup recency check failed (continuing anyway): {e}")
+            recent = None
+
+    if recent is not None:
+        logger.info(
+            f"Skipping cleanup — successful playlist_update at "
+            f"{recent.completed_at} (<60min ago)"
+        )
+        return
+
     # Create the SyncLog row up front so partial failures still leave a trace.
     sync_log_id: int | None = None
     async with async_session_maker() as db:
@@ -638,107 +678,111 @@ async def remove_played_episodes_from_playlists() -> None:
     error_objects: list[BaseException] = []
     aborted_for_rate_limit = False
 
-    for user_id, playlists in user_playlists:
-        if aborted_for_rate_limit:
-            break
-        token_manager = TokenManager(user_id)
-        try:
-            access_token = await token_manager.get_token(min_remaining_seconds=300)
-        except RuntimeError:
-            logger.warning(f"User {user_id} not found, skipping")
-            continue
+    # Serialise against rebuild and any concurrent manual run (issue #89, PR3).
+    if locks.playlist_write_lock.locked():
+        logger.info("Waiting on playlist_write_lock — another job is holding it")
+    async with locks.playlist_write_lock:
+        for user_id, playlists in user_playlists:
+            if aborted_for_rate_limit:
+                break
+            token_manager = TokenManager(user_id)
+            try:
+                access_token = await token_manager.get_token(min_remaining_seconds=300)
+            except RuntimeError:
+                logger.warning(f"User {user_id} not found, skipping")
+                continue
 
-        spotify_client = SpotifyService(access_token=access_token)
-        spotify_client.reset_api_counter()
+            spotify_client = SpotifyService(access_token=access_token)
+            spotify_client.reset_api_counter()
 
-        try:
-            for _playlist_id, playlist_name, spotify_playlist_id in playlists:
-                playlists_attempted += 1
+            try:
+                for _playlist_id, playlist_name, spotify_playlist_id in playlists:
+                    playlists_attempted += 1
 
-                # Per-run API budget — give up early if we've already
-                # spent the allowance, the next run picks up where we left off.
-                if spotify_client.api_calls_used >= CLEANUP_API_CALL_BUDGET:
-                    logger.warning(
-                        f"Cleanup API budget ({CLEANUP_API_CALL_BUDGET}) exhausted; "
-                        f"deferring remaining playlists to next run"
-                    )
-                    break
-
-                try:
-                    # Walk playlist-items pages, filtering inline.
-                    offset = 0
-                    limit = 50
-                    played_uris: list[str] = []
-
-                    while True:
-                        tracks_data = await spotify_client.get_playlist_tracks(
-                            spotify_playlist_id,
-                            limit=limit,
-                            offset=offset,
-                            cleanup_mode=True,
+                    # Per-run API budget — give up early if we've already
+                    # spent the allowance, the next run picks up where we left off.
+                    if spotify_client.api_calls_used >= CLEANUP_API_CALL_BUDGET:
+                        logger.warning(
+                            f"Cleanup API budget ({CLEANUP_API_CALL_BUDGET}) exhausted; "
+                            f"deferring remaining playlists to next run"
                         )
-                        items = tracks_data.get("items", [])
-                        if not items:
-                            break
+                        break
 
-                        played_uris.extend(_played_uris_from_items(items))
+                    try:
+                        # Walk playlist-items pages, filtering inline.
+                        offset = 0
+                        limit = 50
+                        played_uris: list[str] = []
 
-                        offset += limit
-                        if not tracks_data.get("next"):
-                            break
+                        while True:
+                            tracks_data = await spotify_client.get_playlist_tracks(
+                                spotify_playlist_id,
+                                limit=limit,
+                                offset=offset,
+                                cleanup_mode=True,
+                            )
+                            items = tracks_data.get("items", [])
+                            if not items:
+                                break
 
-                    if played_uris:
-                        logger.info(
-                            f"Playlist {playlist_name} ({spotify_playlist_id}) - "
-                            f"found {len(played_uris)} fully-played episodes"
-                        )
-                        for i in range(0, len(played_uris), 50):
-                            batch = played_uris[i : i + 50]
-                            try:
-                                # Refresh at the write boundary (PR1 wiring).
-                                spotify_client._access_token = await token_manager.get_token(
-                                    min_remaining_seconds=300
-                                )
-                                await spotify_client.remove_tracks_from_playlist(
-                                    spotify_playlist_id,
-                                    batch,
-                                    on_unauthorized=token_manager.force_refresh,
-                                    cleanup_mode=True,
-                                )
-                                total_removed += len(batch)
-                                logger.info(
-                                    f"Removed {len(batch)} played episodes from "
-                                    f"playlist {playlist_name} (user {user_id})"
-                                )
-                            except CleanupBudgetExceeded:
-                                raise
-                            except Exception as e:
-                                logger.error(
-                                    f"Failed to remove batch from playlist {playlist_name} "
-                                    f"(user {user_id}): {e} - batch: {batch}"
-                                )
-                                playlists_failed += 1
-                                errors.append(f"Playlist {playlist_name}: {str(e)}")
-                                error_objects.append(e)
-                                break  # stop further batches for this playlist
+                            played_uris.extend(_played_uris_from_items(items))
 
-                except CleanupBudgetExceeded:
-                    raise
-                except Exception as e:
-                    logger.error(f"Failed to clean playlist {playlist_name} (user {user_id}): {e}")
-                    playlists_failed += 1
-                    errors.append(f"Playlist {playlist_name}: {str(e)}")
-                    error_objects.append(e)
+                            offset += limit
+                            if not tracks_data.get("next"):
+                                break
 
-        except CleanupBudgetExceeded:
-            logger.warning("cleanup aborted: Spotify rate-limit Retry-After > 60s")
-            aborted_for_rate_limit = True
-        except Exception as e:
-            logger.error(f"Failed to clean playlists for user {user_id}: {e}")
-            errors.append(f"User {user_id}: {str(e)}")
-            error_objects.append(e)
-        finally:
-            api_calls_used += spotify_client.api_calls_used
+                        if played_uris:
+                            logger.info(
+                                f"Playlist {playlist_name} ({spotify_playlist_id}) - "
+                                f"found {len(played_uris)} fully-played episodes"
+                            )
+                            for i in range(0, len(played_uris), 50):
+                                batch = played_uris[i : i + 50]
+                                try:
+                                    # Refresh at the write boundary (PR1 wiring).
+                                    spotify_client._access_token = await token_manager.get_token(
+                                        min_remaining_seconds=300
+                                    )
+                                    await spotify_client.remove_tracks_from_playlist(
+                                        spotify_playlist_id,
+                                        batch,
+                                        on_unauthorized=token_manager.force_refresh,
+                                        cleanup_mode=True,
+                                    )
+                                    total_removed += len(batch)
+                                    logger.info(
+                                        f"Removed {len(batch)} played episodes from "
+                                        f"playlist {playlist_name} (user {user_id})"
+                                    )
+                                except CleanupBudgetExceeded:
+                                    raise
+                                except Exception as e:
+                                    logger.error(
+                                        f"Failed to remove batch from playlist {playlist_name} "
+                                        f"(user {user_id}): {e} - batch: {batch}"
+                                    )
+                                    playlists_failed += 1
+                                    errors.append(f"Playlist {playlist_name}: {str(e)}")
+                                    error_objects.append(e)
+                                    break  # stop further batches for this playlist
+
+                    except CleanupBudgetExceeded:
+                        raise
+                    except Exception as e:
+                        logger.error(f"Failed to clean playlist {playlist_name} (user {user_id}): {e}")
+                        playlists_failed += 1
+                        errors.append(f"Playlist {playlist_name}: {str(e)}")
+                        error_objects.append(e)
+
+            except CleanupBudgetExceeded:
+                logger.warning("cleanup aborted: Spotify rate-limit Retry-After > 60s")
+                aborted_for_rate_limit = True
+            except Exception as e:
+                logger.error(f"Failed to clean playlists for user {user_id}: {e}")
+                errors.append(f"User {user_id}: {str(e)}")
+                error_objects.append(e)
+            finally:
+                api_calls_used += spotify_client.api_calls_used
 
     # Finalise the SyncLog row.
     if aborted_for_rate_limit:
