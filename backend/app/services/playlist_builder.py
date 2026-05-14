@@ -374,13 +374,13 @@ class PlaylistBuilder:
             episode_uris = await self.build_playlist(playlist)
 
             # Re-acquire a fresh token immediately before the write. The
-            # build step above may have taken long enough that the cached
-            # token has expired (or is about to). on_unauthorized handles
-            # the residual race where the token expires between this check
-            # and Spotify processing the request.
-            fresh_token = await self._token_manager.get_token(min_remaining_seconds=300)
+            # build step above may have taken long enough for the cached
+            # token to age out; _get_spotify_client routes through
+            # TokenManager.get_token, which refreshes if under the
+            # 5-minute threshold. force_refresh handles the residual race
+            # where the token expires between this check and Spotify
+            # actually processing the request.
             spotify = await self._get_spotify_client()
-            spotify._access_token = fresh_token
             await spotify.replace_playlist_items(
                 spotify_playlist_id,
                 episode_uris,
