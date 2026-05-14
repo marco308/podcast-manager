@@ -101,18 +101,17 @@ class TokenManager:
         # Slow path: refresh under the per-user lock. Re-check after acquiring
         # in case another caller already refreshed while we were waiting.
         lock = self._lock_for(self._user_id)
-        async with lock:
-            async with async_session_maker() as db:
-                result = await db.execute(select(User).where(User.id == self._user_id))
-                user = result.scalar_one_or_none()
-                if user is None:
-                    raise RuntimeError(f"User {self._user_id} not found")
+        async with lock, async_session_maker() as db:
+            result = await db.execute(select(User).where(User.id == self._user_id))
+            user = result.scalar_one_or_none()
+            if user is None:
+                raise RuntimeError(f"User {self._user_id} not found")
 
-                if self._seconds_remaining(user.token_expires_at) > min_remaining_seconds:
-                    # Someone else refreshed while we waited for the lock.
-                    return self._encryption.decrypt(user.access_token)
+            if self._seconds_remaining(user.token_expires_at) > min_remaining_seconds:
+                # Someone else refreshed while we waited for the lock.
+                return self._encryption.decrypt(user.access_token)
 
-                return await self._refresh_locked(db, user)
+            return await self._refresh_locked(db, user)
 
     async def force_refresh(self) -> str:
         """Refresh unconditionally and return the new bearer token.
@@ -123,13 +122,12 @@ class TokenManager:
         valid (clock skew, revoked token, etc.).
         """
         lock = self._lock_for(self._user_id)
-        async with lock:
-            async with async_session_maker() as db:
-                result = await db.execute(select(User).where(User.id == self._user_id))
-                user = result.scalar_one_or_none()
-                if user is None:
-                    raise RuntimeError(f"User {self._user_id} not found")
-                return await self._refresh_locked(db, user)
+        async with lock, async_session_maker() as db:
+            result = await db.execute(select(User).where(User.id == self._user_id))
+            user = result.scalar_one_or_none()
+            if user is None:
+                raise RuntimeError(f"User {self._user_id} not found")
+            return await self._refresh_locked(db, user)
 
     async def _refresh_locked(self, db, user: User) -> str:
         """Perform the actual refresh + persist. Must be called with lock held.
