@@ -13,6 +13,7 @@ from app.models.podcast import Podcast
 from app.models.user import User
 from app.services.encryption import get_encryption_service
 from app.services.spotify import SpotifyService
+from app.services.token_manager import TokenManager
 
 logger = logging.getLogger(__name__)
 
@@ -53,42 +54,43 @@ class PodcastWithPosition:
 class PlaylistBuilder:
     """Service for building and updating playlists based on direct assignments."""
 
-    def __init__(self, db: AsyncSession, user: User) -> None:
+    def __init__(
+        self,
+        db: AsyncSession,
+        user: User,
+        token_manager: TokenManager | None = None,
+    ) -> None:
         """Initialize playlist builder.
 
         Args:
             db: Database session.
             user: The user whose playlists to update.
+            token_manager: Per-user token manager. If not supplied, one is
+                constructed for ``user.id`` — this preserves backward
+                compatibility with existing call sites while letting
+                schedulers/routers inject a shared instance (issue #89).
         """
         self._db = db
         self._user = user
         self._encryption = get_encryption_service()
+        self._token_manager = token_manager if token_manager is not None else TokenManager(user.id)
         self._spotify: SpotifyService | None = None
 
     async def _get_spotify_client(self) -> SpotifyService:
-        """Get authenticated Spotify client, refreshing token if needed."""
-        if self._spotify:
-            return self._spotify
+        """Get authenticated Spotify client with a freshly-checked token.
 
-        # Decrypt access token
-        access_token = self._encryption.decrypt(self._user.access_token)
-
-        # Check if token is expired and refresh if needed
-        token_expires = self._user.token_expires_at.replace(tzinfo=UTC) if self._user.token_expires_at.tzinfo is None else self._user.token_expires_at
-        if datetime.now(UTC) >= token_expires:
-            refresh_token = self._encryption.decrypt(self._user.refresh_token)
-            spotify = SpotifyService()
-            token_data = await spotify.refresh_access_token(refresh_token)
-
-            # Update user tokens
-            self._user.access_token = self._encryption.encrypt(token_data["access_token"])
-            self._user.refresh_token = self._encryption.encrypt(token_data["refresh_token"])
-            self._user.token_expires_at = token_data["expires_at"]
-            await self._db.flush()
-
-            access_token = token_data["access_token"]
-
-        self._spotify = SpotifyService(access_token=access_token)
+        The bearer token returned here is suitable for reads. Writes should
+        re-acquire a token via ``self._token_manager.get_token(...)`` and
+        pass ``on_unauthorized=self._token_manager.force_refresh`` so a 401
+        triggered by mid-flight expiry can be recovered.
+        """
+        access_token = await self._token_manager.get_token(min_remaining_seconds=300)
+        if self._spotify is None:
+            self._spotify = SpotifyService(access_token=access_token)
+        else:
+            # Refresh the cached client's token so any subsequent reads
+            # (and future shared-client write paths) see the new value.
+            self._spotify._access_token = access_token
         return self._spotify
 
     async def _get_playlist_podcasts(self, playlist_id: int) -> list[PodcastWithPosition]:
@@ -367,12 +369,23 @@ class PlaylistBuilder:
             # Ensure Spotify playlist exists (create if needed)
             spotify_playlist_id = await self._ensure_spotify_playlist(playlist)
 
-            # Build episode list
+            # Build episode list (may take many minutes for users with deep
+            # back-catalogues — issue #89).
             episode_uris = await self.build_playlist(playlist)
 
-            # Update Spotify playlist
+            # Re-acquire a fresh token immediately before the write. The
+            # build step above may have taken long enough that the cached
+            # token has expired (or is about to). on_unauthorized handles
+            # the residual race where the token expires between this check
+            # and Spotify processing the request.
+            fresh_token = await self._token_manager.get_token(min_remaining_seconds=300)
             spotify = await self._get_spotify_client()
-            await spotify.replace_playlist_items(spotify_playlist_id, episode_uris)
+            spotify._access_token = fresh_token
+            await spotify.replace_playlist_items(
+                spotify_playlist_id,
+                episode_uris,
+                on_unauthorized=self._token_manager.force_refresh,
+            )
 
             # Update last_updated_at
             playlist.last_updated_at = datetime.now(UTC)
