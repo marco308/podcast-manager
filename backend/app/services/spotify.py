@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from types import TracebackType
 from typing import Any
@@ -75,15 +76,32 @@ class SpotifyService:
             headers["Authorization"] = f"Bearer {self._access_token}"
         return headers
 
-    async def _request_with_retry(self, client: httpx.AsyncClient, method: str, url: str, **kwargs) -> httpx.Response:
+    async def _request_with_retry(
+        self,
+        client: httpx.AsyncClient,
+        method: str,
+        url: str,
+        *,
+        on_unauthorized: Callable[[], Awaitable[str]] | None = None,
+        **kwargs,
+    ) -> httpx.Response:
         """Make an HTTP request with automatic retry on 429 rate limit.
 
         Retries up to MAX_RETRIES times, respecting Spotify's Retry-After header.
+
+        If ``on_unauthorized`` is provided and the server responds 401, the
+        callback is invoked to obtain a fresh bearer token, the
+        ``Authorization`` header on the request is rewritten, and the request
+        is retried **once** (not part of the normal retry loop). Without the
+        callback, 401 stays a hard failure — existing behaviour.
 
         Args:
             client: The httpx client to use.
             method: HTTP method (GET, POST, PUT, DELETE).
             url: Request URL.
+            on_unauthorized: Optional async callback returning a new bearer
+                token. Used to recover from token expiry that happens
+                between the in-memory check and the API call (issue #89).
             **kwargs: Additional arguments passed to the request.
 
         Returns:
@@ -100,6 +118,18 @@ class SpotifyService:
             logger.warning(f"Rate limited by Spotify (attempt {attempt + 2}/{MAX_RETRIES}), waiting {retry_after}s")
             await asyncio.sleep(retry_after)
             response = await client.request(method, url, **kwargs)
+
+        # Single 401 recovery attempt: refresh the token via the callback and
+        # retry once. We do this AFTER the 429 loop so a rate-limited refresh
+        # doesn't burn the one retry.
+        if response.status_code == 401 and on_unauthorized is not None:
+            logger.warning("Spotify 401 — refreshing token and retrying once")
+            new_token = await on_unauthorized()
+            headers = dict(kwargs.get("headers") or {})
+            headers["Authorization"] = f"Bearer {new_token}"
+            kwargs["headers"] = headers
+            response = await client.request(method, url, **kwargs)
+
         response.raise_for_status()
         return response
 
@@ -278,12 +308,20 @@ class SpotifyService:
             response.raise_for_status()
             return response.json()
 
-    async def replace_playlist_items(self, playlist_id: str, uris: list[str]) -> None:
+    async def replace_playlist_items(
+        self,
+        playlist_id: str,
+        uris: list[str],
+        *,
+        on_unauthorized: Callable[[], Awaitable[str]] | None = None,
+    ) -> None:
         """Replace all items in a playlist.
 
         Args:
             playlist_id: Spotify playlist ID.
             uris: List of Spotify URIs (e.g., spotify:episode:xxx).
+            on_unauthorized: Optional callback to recover from 401 by
+                refreshing the bearer token and retrying once (issue #89).
         """
         async with self._get_client_contextmanager() as client:
             # Spotify limits to 100 items per request
@@ -294,6 +332,7 @@ class SpotifyService:
                     f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/items",
                     headers=self._headers,
                     json={"uris": uris},
+                    on_unauthorized=on_unauthorized,
                 )
             else:
                 # First replace with first 100
@@ -303,6 +342,7 @@ class SpotifyService:
                     f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/items",
                     headers=self._headers,
                     json={"uris": uris[:100]},
+                    on_unauthorized=on_unauthorized,
                 )
 
                 # Then add remaining in batches of 100
@@ -314,14 +354,23 @@ class SpotifyService:
                         f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/items",
                         headers=self._headers,
                         json={"uris": batch},
+                        on_unauthorized=on_unauthorized,
                     )
 
-    async def remove_tracks_from_playlist(self, playlist_id: str, uris: list[str]) -> None:
+    async def remove_tracks_from_playlist(
+        self,
+        playlist_id: str,
+        uris: list[str],
+        *,
+        on_unauthorized: Callable[[], Awaitable[str]] | None = None,
+    ) -> None:
         """Remove tracks from a playlist.
 
         Args:
             playlist_id: Spotify playlist ID.
             uris: List of Spotify URIs to remove (e.g., spotify:episode:xxx).
+            on_unauthorized: Optional callback to recover from 401 by
+                refreshing the bearer token and retrying once (issue #89).
         """
         import json as _json
 
@@ -333,6 +382,7 @@ class SpotifyService:
                 f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/items",
                 headers={**self._headers, "Content-Type": "application/json"},
                 content=body,
+                on_unauthorized=on_unauthorized,
             )
 
     async def get_playlist_tracks(self, playlist_id: str, limit: int = 50, offset: int = 0) -> dict[str, Any]:
