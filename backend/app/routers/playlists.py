@@ -25,6 +25,7 @@ from app.schemas.playlist import (
     PlaylistUpdate,
 )
 from app.services.playlist_builder import PlaylistBuilder
+from app.services.token_manager import TokenManager
 
 logger = logging.getLogger(__name__)
 
@@ -380,8 +381,10 @@ async def run_playlist_update(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Build and update the playlist
-    builder = PlaylistBuilder(db, user)
+    # Build and update the playlist — use the same TokenManager-based
+    # plumbing as the scheduled job so manual runs also get just-in-time
+    # token refresh at the write boundary (issue #89, AC #5).
+    builder = PlaylistBuilder(db, user, token_manager=TokenManager(user.id))
     result = await builder.update_playlist(playlist)
 
     if not result.success:
@@ -412,8 +415,8 @@ async def run_all_playlist_updates(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Update all playlists
-    builder = PlaylistBuilder(db, user)
+    # Update all playlists — same plumbing as the scheduled job (issue #89).
+    builder = PlaylistBuilder(db, user, token_manager=TokenManager(user.id))
     results = await builder.update_all_playlists()
 
     successful = [r for r in results if r.success]
