@@ -63,11 +63,6 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
     setIsDarkMode(computeIsDarkMode(themePreference));
   }, [themePreference]);
 
-  // Update dark mode when preference changes
-  useEffect(() => {
-    updateDarkMode();
-  }, [updateDarkMode]);
-
   // Listen for system preference changes
   useEffect(() => {
     if (themePreference !== 'system' && themePreference !== 'auto') return;
@@ -95,6 +90,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
 
   const setThemePreference = useCallback((preference: ThemePreference) => {
     setThemePreferenceState(preference);
+    setIsDarkMode(computeIsDarkMode(preference));
     localStorage.setItem(STORAGE_KEY, preference);
   }, []);
 
@@ -110,6 +106,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- hook co-located with its provider; only affects dev fast-refresh
 export function useTheme() {
   const context = useContext(ThemeContext);
   if (!context) {
