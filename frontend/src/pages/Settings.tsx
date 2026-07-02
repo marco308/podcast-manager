@@ -44,7 +44,7 @@ export function Settings() {
     }
   };
 
-  const handleScheduleSave = (_job: Job) => {
+  const handleScheduleSave = () => {
     const time = editingTime;
     if (!time) return;
     updateSchedule.mutate(
@@ -144,7 +144,7 @@ export function Settings() {
               size="small"
               loading={updateSchedule.isPending}
               disabled={!editingTime}
-              onClick={() => handleScheduleSave(record)}
+              onClick={() => handleScheduleSave()}
             >
               Save
             </Button>

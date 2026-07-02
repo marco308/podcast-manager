@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import {
   Typography,
   Button,
@@ -180,21 +180,24 @@ function PlaylistOrderingSection({ playlist }: PlaylistOrderingSectionProps) {
   const reorderPodcasts = useReorderPlaylistPodcasts();
   const [removingId, setRemovingId] = useState<number | null>(null);
   const [localPodcasts, setLocalPodcasts] = useState<PlaylistPodcast[]>([]);
+  const [syncedPodcasts, setSyncedPodcasts] = useState<PlaylistPodcast[] | undefined>(undefined);
 
-  // Update local state when data changes
-  useEffect(() => {
-    if (playlistPodcasts) {
-      const sorted = [...playlistPodcasts].sort((a, b) => {
+  // Sync the local (drag-reorderable) copy whenever the server data changes.
+  // Adjusting state during render is React's recommended alternative to a
+  // state-setting effect (the query keeps a stable reference between refetches).
+  if (playlistPodcasts && playlistPodcasts !== syncedPodcasts) {
+    setSyncedPodcasts(playlistPodcasts);
+    setLocalPodcasts(
+      [...playlistPodcasts].sort((a, b) => {
         if (a.position === null && b.position === null) {
           return a.name.localeCompare(b.name);
         }
         if (a.position === null) return 1;
         if (b.position === null) return -1;
         return a.position - b.position;
-      });
-      setLocalPodcasts(sorted);
-    }
-  }, [playlistPodcasts]);
+      })
+    );
+  }
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -360,15 +363,15 @@ export function Playlists() {
   const [runningPlaylistId, setRunningPlaylistId] = useState<number | null>(null);
   const [form] = Form.useForm();
 
-  // Automatically select the first playlist with podcast_order mode when playlists load
-  useEffect(() => {
-    if (playlists && !selectedOrderingPlaylist) {
-      const podcastOrderPlaylist = playlists.find((p) => p.ordering_mode === 'podcast_order');
-      if (podcastOrderPlaylist) {
-        setSelectedOrderingPlaylist(podcastOrderPlaylist);
-      }
+  // Automatically select the first playlist with podcast_order mode when playlists
+  // load. Adjusting state during render (guarded so it runs only until a playlist
+  // is selected) is React's recommended alternative to a state-setting effect.
+  if (playlists && !selectedOrderingPlaylist) {
+    const podcastOrderPlaylist = playlists.find((p) => p.ordering_mode === 'podcast_order');
+    if (podcastOrderPlaylist) {
+      setSelectedOrderingPlaylist(podcastOrderPlaylist);
     }
-  }, [playlists, selectedOrderingPlaylist]);
+  }
 
   const openCreateModal = () => {
     setEditingPlaylist(null);

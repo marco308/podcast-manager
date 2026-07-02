@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
+import { createContext, useContext, useCallback, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { authApi } from '../api';
 import { clearCsrfToken } from '../api/client';
@@ -17,7 +17,6 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
-  const [isInitialized, setIsInitialized] = useState(false);
 
   // Check authentication status via cookie-based session
   const { data: isAuthenticated, isLoading: isStatusLoading } = useQuery({
@@ -41,12 +40,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     enabled: isAuthenticated === true,
   });
 
-  // Mark as initialized after first status check
-  useEffect(() => {
-    if (!isStatusLoading) {
-      setIsInitialized(true);
-    }
-  }, [isStatusLoading]);
+  // Initialized once the first status check has settled. React Query keeps
+  // isStatusLoading true only until the initial fetch resolves (refetches use
+  // isFetching instead), so this latches true and stays true.
+  const isInitialized = !isStatusLoading;
 
   // Login redirects to Spotify OAuth
   const login = useCallback(() => {
@@ -77,6 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- hook co-located with its provider; only affects dev fast-refresh
 export function useAuth(): AuthContextType {
   const context = useContext(AuthContext);
   if (context === undefined) {
