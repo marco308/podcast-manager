@@ -3,10 +3,7 @@ import type { Podcast, PodcastUpdate, SyncResult, PodcastListResponse } from '..
 
 export const podcastsApi = {
   // List all podcasts with optional filters
-  async list(params?: {
-    playlistId?: number;
-    unassigned?: boolean;
-  }): Promise<Podcast[]> {
+  async list(params?: { playlistId?: number; unassigned?: boolean }): Promise<Podcast[]> {
     const queryParams: Record<string, string | number | boolean> = {};
     if (params?.playlistId !== undefined) {
       queryParams.playlist_id = params.playlistId;

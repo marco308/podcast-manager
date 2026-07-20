@@ -32,10 +32,7 @@ export interface PodcastUpdate {
 // Playlist types
 export type EpisodeMode = 'all_unplayed' | 'latest_only';
 export type PlaylistOrderingMode =
-  | 'default'
-  | 'podcast_order'
-  | 'chronological_asc'
-  | 'chronological_desc';
+  'default' | 'podcast_order' | 'chronological_asc' | 'chronological_desc';
 
 export interface Playlist {
   id: number;
