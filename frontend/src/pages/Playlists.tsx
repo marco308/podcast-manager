@@ -171,9 +171,7 @@ interface PlaylistOrderingSectionProps {
 function PlaylistOrderingSection({ playlist }: PlaylistOrderingSectionProps) {
   const shouldRender = playlist && playlist.ordering_mode === 'podcast_order';
 
-  const { data: playlistPodcasts, isLoading } = usePlaylistPodcasts(
-    playlist?.id ?? 0
-  );
+  const { data: playlistPodcasts, isLoading } = usePlaylistPodcasts(playlist?.id ?? 0);
   const { data: allPodcasts } = usePodcasts();
   const addPodcasts = useAddPodcastsToPlaylist();
   const removePodcast = useRemovePodcastFromPlaylist();
@@ -297,7 +295,9 @@ function PlaylistOrderingSection({ playlist }: PlaylistOrderingSectionProps) {
             style={{ width: '100%', maxWidth: 400 }}
             placeholder="Add a podcast to this playlist..."
             filterOption={(input, option) =>
-              String(option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+              String(option?.label ?? '')
+                .toLowerCase()
+                .includes(input.toLowerCase())
             }
             onSelect={(value: number) => handleAddPodcast(value)}
             value={undefined}
@@ -497,9 +497,7 @@ export function Playlists() {
       render: (mode: EpisodeMode) => {
         const option = episodeModeOptions.find((o) => o.value === mode);
         return (
-          <Tag color={mode === 'all_unplayed' ? 'blue' : 'green'}>
-            {option?.label || mode}
-          </Tag>
+          <Tag color={mode === 'all_unplayed' ? 'blue' : 'green'}>{option?.label || mode}</Tag>
         );
       },
     },
@@ -568,7 +566,12 @@ export function Playlists() {
             </Button>
           </Tooltip>
           <Tooltip title="Edit">
-            <Button size="small" icon={<EditOutlined />} onClick={() => openEditModal(record)} aria-label="Edit playlist" />
+            <Button
+              size="small"
+              icon={<EditOutlined />}
+              onClick={() => openEditModal(record)}
+              aria-label="Edit playlist"
+            />
           </Tooltip>
           <Popconfirm
             title="Delete playlist"

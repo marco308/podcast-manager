@@ -107,10 +107,7 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
     setSelectedPodcast(null);
   };
 
-  const handlePlaylistsChange = async (
-    podcast: Podcast,
-    newPlaylistIds: number[]
-  ) => {
+  const handlePlaylistsChange = async (podcast: Podcast, newPlaylistIds: number[]) => {
     setUpdatingId(podcast.spotify_id);
     try {
       const oldIds = new Set(podcast.playlist_ids);
@@ -487,7 +484,7 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
                   value={selectedPodcast.playlist_ids}
                   onChange={(value) => {
                     handlePlaylistsChange(selectedPodcast, value);
-                    setSelectedPodcast(prev => prev ? { ...prev, playlist_ids: value } : prev);
+                    setSelectedPodcast((prev) => (prev ? { ...prev, playlist_ids: value } : prev));
                   }}
                   loading={updatingId === selectedPodcast.spotify_id}
                   style={{ width: '100%' }}
@@ -506,7 +503,9 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
                   checked={selectedPodcast.is_sequential}
                   onChange={(checked) => {
                     handleSequentialChange(selectedPodcast.spotify_id, checked);
-                    setSelectedPodcast(prev => prev ? { ...prev, is_sequential: checked } : prev);
+                    setSelectedPodcast((prev) =>
+                      prev ? { ...prev, is_sequential: checked } : prev
+                    );
                   }}
                   loading={updatingId === selectedPodcast.spotify_id}
                 />
