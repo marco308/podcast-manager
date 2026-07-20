@@ -1,5 +1,6 @@
 """APScheduler setup and job management."""
 
+import contextlib
 import logging
 from datetime import UTC, datetime, timedelta
 
@@ -338,15 +339,11 @@ async def get_job_status() -> list[dict]:
             # Try to get from the actual trigger
             for field in job.trigger.fields:
                 if field.name == "hour":
-                    try:
+                    with contextlib.suppress(ValueError, TypeError):
                         hour = int(str(field))
-                    except (ValueError, TypeError):
-                        pass
                 elif field.name == "minute":
-                    try:
+                    with contextlib.suppress(ValueError, TypeError):
                         minute = int(str(field))
-                    except (ValueError, TypeError):
-                        pass
             info["schedule"] = {"hour": hour, "minute": minute}
             info["is_configurable"] = job.id == "daily_playlist_update"
             if job.id == "daily_playlist_update":
@@ -356,7 +353,7 @@ async def get_job_status() -> list[dict]:
             # Get interval in minutes
             interval_seconds = job.trigger.interval.total_seconds()
             info["interval_minutes"] = int(interval_seconds / 60)
-            info["last_run"] = _last_run_times.get(job.id, None)
+            info["last_run"] = _last_run_times.get(job.id)
             if info["last_run"] and isinstance(info["last_run"], datetime):
                 if info["last_run"].tzinfo is None:
                     info["last_run"] = info["last_run"].isoformat() + "Z"
