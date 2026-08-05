@@ -5,7 +5,7 @@ import {
   UnorderedListOutlined,
   SettingOutlined,
 } from '@ant-design/icons';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router';
 import type { MenuProps } from 'antd';
 
 const { Sider } = Layout;

@@ -1,5 +1,5 @@
 import { Layout, theme } from 'antd';
-import { Outlet, Navigate } from 'react-router-dom';
+import { Outlet, Navigate } from 'react-router';
 import { Header } from './Header';
 import { Sidebar } from './Sidebar';
 import { useAuth } from '../../hooks';
