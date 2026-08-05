@@ -1,6 +1,6 @@
 import { Button, Card, Typography, Space } from 'antd';
 import { SpotifyOutlined } from '@ant-design/icons';
-import { Navigate } from 'react-router-dom';
+import { Navigate } from 'react-router';
 import { useAuth } from '../hooks';
 import { LoadingSpinner } from '../components';
 
