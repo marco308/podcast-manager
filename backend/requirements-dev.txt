@@ -1,0 +1,9 @@
+# Development and test dependencies (not installed in the Docker image)
+-r requirements.txt
+
+# Lint / format (keep the minor pinned — the formatter's output must match CI)
+ruff>=0.16.1,<0.17
+
+# Tests
+pytest>=8.3,<10
+pytest-asyncio>=1.0,<2.0
