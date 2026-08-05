@@ -11,8 +11,7 @@ Podcast Manager is a self-hosted web app that sits on top of Spotify and adds a 
 - `backend/` — FastAPI + async SQLAlchemy + APScheduler (Python 3.11+)
 - `frontend/` — React 19 + TypeScript + Vite + Ant Design 6
 - `ios/` — Native SwiftUI companion app (see `ios/CLAUDE.md` for iOS-specific guidance)
-- `deploy.sh` + `docker-stack-traefik.yml` — Docker Swarm deployment behind Traefik
-- `nimbalyst-local/plans/` — scratch planning notes, not shipped code
+- `docker-compose.yml` — single-host deployment; `deploy.sh` + `docker-stack-traefik.example.yml` — Docker Swarm deployment behind Traefik (copy the example to the gitignored `docker-stack-traefik.yml` and fill in your domains)
 
 ## Commands
 
@@ -30,6 +29,9 @@ uvicorn app.main:app --reload \
 # Lint / format (ruff, configured in backend/pyproject.toml)
 ruff check app
 ruff format app
+
+# Tests (pytest + pytest-asyncio; install via requirements-dev.txt)
+pytest tests
 
 # Database migrations
 alembic upgrade head
@@ -68,7 +70,7 @@ Use `127.0.0.1` (not `localhost`) in `SPOTIFY_REDIRECT_URI`.
 ./deploy.sh [backend|frontend|all]
 ```
 
-Builds Docker images, updates the Swarm services, and runs `alembic upgrade head` inside the running backend container. Production hosts: `podcastmanager.marcuslab.uk` (frontend) and `api-podcastmanager.marcuslab.uk` (API).
+Builds Docker images, updates the Swarm services, and runs `alembic upgrade head` inside the running backend container. Assumes a stack deployed from your (gitignored) copy of `docker-stack-traefik.example.yml`. For single-host setups, `docker compose up -d --build` from the repo root works instead.
 
 ## Architecture
 
@@ -87,9 +89,9 @@ Builds Docker images, updates the Swarm services, and runs `alembic upgrade head
    - `csrf_token` — readable by JS (not httpOnly)
 3. Axios client (`frontend/src/api/client.ts`) uses `withCredentials: true`. A request interceptor reads `csrf_token` from `document.cookie` and adds `X-CSRF-Token` header for POST/PUT/PATCH/DELETE.
 4. On 401 the interceptor redirects to `/login`; on 403 CSRF failure it re-reads the cookie and retries once.
-5. Cookies can be scoped cross-subdomain via `COOKIE_DOMAIN` env (e.g. `.marcuslab.uk`).
+5. Cookies can be scoped cross-subdomain via `COOKIE_DOMAIN` env (e.g. `.example.com`).
 
-The iOS app does OAuth via `ASWebAuthenticationSession` and a `redirect_scheme=podcastmanager` query param; backend redirects to `podcastmanager://auth/callback?session_id=...&csrf_token=...` and the app stores both in Keychain, sending them as `Cookie` + `X-CSRF-Token` headers.
+The iOS app does OAuth via `ASWebAuthenticationSession` and a `redirect_scheme=podcastmanager` query param; backend redirects to `podcastmanager://auth/callback?code=...` with a single-use exchange code, which the app trades for real credentials via `POST /api/auth/mobile-exchange`. Session ID and CSRF token are stored in Keychain and sent as `Cookie` + `X-CSRF-Token` headers.
 
 ### Background Jobs (APScheduler)
 
@@ -181,7 +183,7 @@ SPOTIFY_REDIRECT_URI=https://127.0.0.1:8000/api/auth/callback   # 127.0.0.1, NOT
 ENCRYPTION_KEY=...   # python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 SECRET_KEY=...       # python -c "import secrets; print(secrets.token_urlsafe(32))"
 FRONTEND_URL=https://127.0.0.1:3000
-COOKIE_DOMAIN=       # empty for local; ".marcuslab.uk" in prod
+COOKIE_DOMAIN=       # empty for local; ".example.com"-style value in prod
 PLAYLIST_UPDATE_HOUR=4
 PLAYLIST_UPDATE_MINUTE=0
 DEBUG=false
@@ -209,8 +211,8 @@ Spotify scopes requested: `user-read-playback-position`, `user-library-read`, `u
 
 ## Testing
 
-The `backend/tests/` directory exists (with `unit/` and `integration/` subfolders) but currently contains only stale pycache artifacts — no live `.py` tests are checked in. Don't assume a test suite is wired up; add tests explicitly if the task calls for them.
+Backend tests live in `backend/tests/` (`unit/`, `integration/`, and `test_playlist_builder.py`) and run with pytest — `pip install -r requirements-dev.txt`, then `pytest tests` from `backend/`. `tests/conftest.py` injects dummy env vars, so no `.env` is needed. CI runs the suite plus ruff/ESLint/build checks on every PR. The frontend has no test suite beyond `npm run build`'s type-checking; the iOS `PodcastManagerTests` target has a couple of model-decoding tests (`xcodebuild test`, not run in CI).
 
 ## iOS Companion App
 
-Non-trivial SwiftUI app living in `ios/`. When working on anything iOS-specific, read `ios/CLAUDE.md` — it covers the XcodeGen workflow, TestFlight upload commands, keychain-backed auth, and the custom `Podcast` `Codable` handling for partial schemas.
+Non-trivial SwiftUI app living in `ios/`. When working on anything iOS-specific, read `ios/CLAUDE.md` — it covers the XcodeGen workflow, the gitignored `Local.yml` for signing/server-URL build overrides, TestFlight upload commands, keychain-backed auth, and the custom `Podcast` `Codable` handling for partial schemas. The backend server URL is configured at runtime on the login screen (falling back to the `DefaultServerURL` Info.plist value, if the build set one).
