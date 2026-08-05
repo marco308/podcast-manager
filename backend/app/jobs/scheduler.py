@@ -72,7 +72,11 @@ async def refresh_all_tokens() -> None:
             users = result.scalars().all()
 
             for user in users:
-                token_exp = user.token_expires_at.replace(tzinfo=UTC) if user.token_expires_at.tzinfo is None else user.token_expires_at
+                token_exp = (
+                    user.token_expires_at.replace(tzinfo=UTC)
+                    if user.token_expires_at.tzinfo is None
+                    else user.token_expires_at
+                )
                 if (token_exp.timestamp() - datetime.now(UTC).timestamp()) < 900:
                     users_to_refresh.append((user.id, user.display_name, user.refresh_token))
         except Exception as e:
@@ -207,8 +211,7 @@ async def update_all_playlists() -> None:
                 logger.error(f"Failed to update sync log: {e}")
 
     logger.info(
-        f"Playlist update job completed: {total_playlists} playlists, "
-        f"{total_episodes} episodes, {len(errors)} errors"
+        f"Playlist update job completed: {total_playlists} playlists, {total_episodes} episodes, {len(errors)} errors"
     )
 
 
@@ -222,16 +225,12 @@ async def init_scheduler() -> None:
     update_minute = settings.PLAYLIST_UPDATE_MINUTE
     try:
         async with async_session_maker() as db:
-            result = await db.execute(
-                select(AppSetting).where(AppSetting.key == "playlist_update_hour")
-            )
+            result = await db.execute(select(AppSetting).where(AppSetting.key == "playlist_update_hour"))
             hour_setting = result.scalar_one_or_none()
             if hour_setting:
                 update_hour = int(hour_setting.value)
 
-            result = await db.execute(
-                select(AppSetting).where(AppSetting.key == "playlist_update_minute")
-            )
+            result = await db.execute(select(AppSetting).where(AppSetting.key == "playlist_update_minute"))
             minute_setting = result.scalar_one_or_none()
             if minute_setting:
                 update_minute = int(minute_setting.value)
@@ -283,10 +282,7 @@ async def init_scheduler() -> None:
     )
 
     scheduler.start()
-    logger.info(
-        f"Scheduler started with daily update at "
-        f"{update_hour:02d}:{update_minute:02d}"
-    )
+    logger.info(f"Scheduler started with daily update at {update_hour:02d}:{update_minute:02d}")
 
 
 def shutdown_scheduler() -> None:
@@ -612,10 +608,7 @@ async def remove_played_episodes_from_playlists() -> None:
             recent = None
 
     if recent is not None:
-        logger.info(
-            f"Skipping cleanup — successful playlist_update at "
-            f"{recent.completed_at} (<60min ago)"
-        )
+        logger.info(f"Skipping cleanup — successful playlist_update at {recent.completed_at} (<60min ago)")
         return
 
     # Create the SyncLog row up front so partial failures still leave a trace.
@@ -646,11 +639,7 @@ async def remove_played_episodes_from_playlists() -> None:
                 )
                 playlists = playlists_result.scalars().all()
 
-                playlist_info = [
-                    (p.id, p.name, p.spotify_playlist_id)
-                    for p in playlists
-                    if p.spotify_playlist_id
-                ]
+                playlist_info = [(p.id, p.name, p.spotify_playlist_id) for p in playlists if p.spotify_playlist_id]
                 if playlist_info:
                     user_playlists.append((user.id, playlist_info))
         except Exception as e:
@@ -786,8 +775,7 @@ async def remove_played_episodes_from_playlists() -> None:
         status = SyncStatus.FAILED
         failure_code = "rate_limit"
         details = (
-            f"cleanup aborted: Spotify rate-limit Retry-After > 60s. "
-            f"Removed {total_removed} episodes before abort."
+            f"cleanup aborted: Spotify rate-limit Retry-After > 60s. Removed {total_removed} episodes before abort."
         )
     elif errors:
         status = SyncStatus.FAILED
@@ -797,18 +785,13 @@ async def remove_played_episodes_from_playlists() -> None:
             error_messages=errors,
             exceptions=error_objects,
         )
-        details = (
-            f"Removed {total_removed} episodes across {playlists_attempted} playlists. "
-            f"Errors: {len(errors)}"
-        )
+        details = f"Removed {total_removed} episodes across {playlists_attempted} playlists. Errors: {len(errors)}"
         if errors:
             details += f"\n{chr(10).join(errors[:10])}"
     else:
         status = SyncStatus.SUCCESS
         failure_code = None
-        details = (
-            f"Removed {total_removed} episodes across {playlists_attempted} playlists."
-        )
+        details = f"Removed {total_removed} episodes across {playlists_attempted} playlists."
 
     await _finalise_cleanup_log(
         sync_log_id,

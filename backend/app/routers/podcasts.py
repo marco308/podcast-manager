@@ -56,10 +56,7 @@ async def get_user_with_token(
 
 async def _get_playlist_ids_for_podcast(db: AsyncSession, podcast_id: int) -> list[int]:
     """Get all playlist IDs that a podcast is assigned to."""
-    result = await db.execute(
-        select(PlaylistPodcast.playlist_id)
-        .where(PlaylistPodcast.podcast_id == podcast_id)
-    )
+    result = await db.execute(select(PlaylistPodcast.playlist_id).where(PlaylistPodcast.podcast_id == podcast_id))
     return [row[0] for row in result.all()]
 
 
@@ -128,8 +125,9 @@ async def list_podcasts(
     playlist_ids_map: dict[int, list[int]] = {pid: [] for pid in podcast_ids}
     if podcast_ids:
         pp_result = await db.execute(
-            select(PlaylistPodcast.podcast_id, PlaylistPodcast.playlist_id)
-            .where(PlaylistPodcast.podcast_id.in_(podcast_ids))
+            select(PlaylistPodcast.podcast_id, PlaylistPodcast.playlist_id).where(
+                PlaylistPodcast.podcast_id.in_(podcast_ids)
+            )
         )
         for podcast_id, playlist_id in pp_result.all():
             playlist_ids_map[podcast_id].append(playlist_id)
