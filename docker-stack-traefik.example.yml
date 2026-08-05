@@ -1,3 +1,11 @@
+# Example Docker Swarm stack for running behind an existing Traefik reverse proxy.
+#
+# Copy to docker-stack-traefik.yml (gitignored), then replace:
+#   - podcastmanager.example.com / api-podcastmanager.example.com with your domains
+#   - .example.com with your cookie domain (or drop COOKIE_DOMAIN for same-origin)
+#   - your-backend-node / your-frontend-node with your Swarm node hostnames
+#
+# For a single-host setup without Swarm/Traefik, use docker-compose.yml instead.
 version: '3.8'
 
 networks:
@@ -20,7 +28,7 @@ services:
       - .env
     environment:
       - DATABASE_URL=sqlite+aiosqlite:///./data/podcast_manager.db
-      - COOKIE_DOMAIN=.marcuslab.uk
+      - COOKIE_DOMAIN=.example.com
     volumes:
       - podcast_data:/app/data
     healthcheck:
@@ -34,10 +42,10 @@ services:
       replicas: 1
       placement:
         constraints:
-          - node.hostname == HomeBase
+          - node.hostname == your-backend-node
       labels:
         - "traefik.enable=true"
-        - "traefik.http.routers.podcastmanager-api.rule=Host(`api-podcastmanager.marcuslab.uk`) && PathPrefix(`/api`)"
+        - "traefik.http.routers.podcastmanager-api.rule=Host(`api-podcastmanager.example.com`) && PathPrefix(`/api`)"
         - "traefik.http.routers.podcastmanager-api.entrypoints=websecure"
         - "traefik.http.routers.podcastmanager-api.tls.certresolver=letsencrypt"
         - "traefik.http.routers.podcastmanager-api.priority=100"
@@ -69,16 +77,16 @@ services:
       replicas: 1
       placement:
         constraints:
-          - node.hostname == zaphod
+          - node.hostname == your-frontend-node
       labels:
         - "traefik.enable=true"
         # HTTPS router
-        - "traefik.http.routers.podcastmanager-frontend.rule=Host(`podcastmanager.marcuslab.uk`)"
+        - "traefik.http.routers.podcastmanager-frontend.rule=Host(`podcastmanager.example.com`)"
         - "traefik.http.routers.podcastmanager-frontend.entrypoints=websecure"
         - "traefik.http.routers.podcastmanager-frontend.tls.certresolver=letsencrypt"
         - "traefik.http.services.podcastmanager-frontend.loadbalancer.server.port=80"
         # HTTP to HTTPS redirect
-        - "traefik.http.routers.podcastmanager-frontend-http.rule=Host(`podcastmanager.marcuslab.uk`)"
+        - "traefik.http.routers.podcastmanager-frontend-http.rule=Host(`podcastmanager.example.com`)"
         - "traefik.http.routers.podcastmanager-frontend-http.entrypoints=web"
         - "traefik.http.routers.podcastmanager-frontend-http.middlewares=podcastmanager-redirect-to-https"
         - "traefik.http.middlewares.podcastmanager-redirect-to-https.redirectscheme.scheme=https"
