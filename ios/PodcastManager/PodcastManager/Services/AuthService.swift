@@ -20,7 +20,12 @@ class AuthService {
 
     func login() {
         error = nil
-        let loginURL = URL(string: "https://api-podcastmanager.marcuslab.uk/api/auth/login?redirect_scheme=podcastmanager")!
+        guard let base = ServerConfig.baseURL,
+              let loginURL = URL(string: "\(base.absoluteString)/api/auth/login?redirect_scheme=podcastmanager")
+        else {
+            error = "Enter your server URL first"
+            return
+        }
 
         let session = ASWebAuthenticationSession(
             url: loginURL,

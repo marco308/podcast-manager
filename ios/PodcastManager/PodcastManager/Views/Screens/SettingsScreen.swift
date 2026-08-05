@@ -126,6 +126,14 @@ struct SettingsScreen: View {
 
                 Section("About") {
                     HStack {
+                        Text("Server")
+                        Spacer()
+                        Text(ServerConfig.baseURL?.absoluteString ?? "Not configured")
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    HStack {
                         Text("Version")
                         Spacer()
                         Text("1.0.0")

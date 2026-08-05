@@ -2,7 +2,9 @@ import Foundation
 import Security
 
 enum KeychainService {
-    private static let service = "com.marcuslab.podcastmanager"
+    // Follows the app's bundle ID so forks with their own identifier get their
+    // own keychain namespace; the fallback never applies to a real app bundle.
+    private static let service = Bundle.main.bundleIdentifier ?? "PodcastManager"
 
     enum Key: String {
         case sessionId = "session_id"
