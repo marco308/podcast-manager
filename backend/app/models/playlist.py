@@ -3,11 +3,12 @@
 from datetime import datetime
 from enum import Enum as PyEnum
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String
+from sqlalchemy import Boolean, Enum, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from app.database import Base
+from app.models.types import UTCDateTime
 
 
 class EpisodeMode(str, PyEnum):
@@ -45,10 +46,10 @@ class Playlist(Base):
     )
 
     # Tracking
-    last_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_updated_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
 
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, server_default=func.now(), nullable=False)
 
     # Relationships
     podcast_assignments = relationship("PlaylistPodcast", back_populates="playlist", cascade="all, delete-orphan")

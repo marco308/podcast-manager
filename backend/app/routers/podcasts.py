@@ -88,17 +88,20 @@ async def list_podcasts(
     user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> PodcastListResponse:
-    """List all podcasts with optional filters."""
+    """List all podcasts with optional filters.
+
+    Podcasts are a global table, not a per-user one — see the single-user
+    note in ``CLAUDE.md`` (issue #154). Authentication is still required
+    (``get_current_user_id``); there is simply no per-user partition to
+    enforce, because registration closes after the first user.
+    """
     query = select(Podcast)
 
     if playlist_id is not None:
-        # Verify the playlist belongs to the caller before filtering through it.
-        # Today the single-user guard in auth.py makes this a no-op, but this
-        # closes a latent IDOR if multi-user is ever enabled.
-        owner_check = await db.execute(
-            select(Playlist.id).where((Playlist.id == playlist_id) & (Playlist.user_id == user_id))
-        )
-        if owner_check.scalar_one_or_none() is None:
+        # Existence check only — a filter on an unknown playlist should 404
+        # rather than silently return an empty list.
+        exists = await db.execute(select(Playlist.id).where(Playlist.id == playlist_id))
+        if exists.scalar_one_or_none() is None:
             raise HTTPException(status_code=404, detail="Playlist not found")
 
         # Filter to podcasts in this playlist
@@ -250,43 +253,31 @@ async def sync_podcasts(
             result = await db.execute(select(Podcast).where(Podcast.spotify_id == spotify_id))
             podcast = result.scalar_one_or_none()
 
-            # Get image URL (prefer medium size)
+            # Spotify returns images largest-first; take the largest available.
             images = show.get("images", [])
             image_url = images[0]["url"] if images else None
 
-            # Count unplayed episodes by fetching episodes with resume_point
-            unplayed_count = 0
-            try:
-                episodes_data = await spotify.get_show_episodes(spotify_id, limit=50)
-                episodes = episodes_data.get("items", [])
-
-                for episode in episodes:
-                    resume_point = episode.get("resume_point", {})
-                    fully_played = resume_point.get("fully_played", False)
-                    if not fully_played:
-                        unplayed_count += 1
-
-                # If there are more than 50 episodes, approximate based on first 50
-                total_eps = show.get("total_episodes", 0)
-                if total_eps > 50 and len(episodes) > 0:
-                    unplayed_ratio = unplayed_count / len(episodes)
-                    unplayed_count = int(total_eps * unplayed_ratio)
-            except Exception as e:
-                # If we can't fetch episodes, keep previous count or 0
-                logger.warning(f"Failed to fetch episodes for {spotify_id}: {e}")
-                unplayed_count = podcast.unplayed_episodes if podcast else 0
-
+            # No per-show episode fetch here (issue #155). This used to call
+            # GET /shows/{id}/episodes for *every* subscribed show — one extra
+            # API call each, against the same rate-limit budget the cleanup
+            # job is careful with — and then extrapolate an unplayed count
+            # from the newest 50 episodes. Spotify returns episodes
+            # newest-first, so the sample was systematically the least-played
+            # and the estimate ran high, yet it was stored and displayed as a
+            # real number. unplayed_episodes is now maintained by the playlist
+            # build, which already fetches full episode lists with
+            # resume_point and can count exactly.
             if podcast:
-                # Update existing podcast
+                # Update existing podcast; leave unplayed_episodes alone.
                 podcast.name = show.get("name", podcast.name)
                 podcast.description = show.get("description")
                 podcast.image_url = image_url
                 podcast.publisher = show.get("publisher")
                 podcast.total_episodes = show.get("total_episodes", 0)
-                podcast.unplayed_episodes = unplayed_count
                 podcast.last_synced_at = datetime.now(UTC)
             else:
-                # Create new podcast
+                # Create new podcast. unplayed_episodes starts at 0 and is
+                # filled in by the next playlist build.
                 podcast = Podcast(
                     spotify_id=spotify_id,
                     name=show.get("name", "Unknown"),
@@ -294,7 +285,7 @@ async def sync_podcasts(
                     image_url=image_url,
                     publisher=show.get("publisher"),
                     total_episodes=show.get("total_episodes", 0),
-                    unplayed_episodes=unplayed_count,
+                    unplayed_episodes=0,
                     last_synced_at=datetime.now(UTC),
                 )
                 db.add(podcast)

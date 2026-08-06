@@ -130,3 +130,27 @@ export interface UpdateScheduleResponse {
   message: string;
   next_run: string;
 }
+
+// Result of a manual single-playlist run.
+// `skipped` is set when a weekend-only playlist was deliberately left
+// untouched; `partial` when it was written from incomplete data because some
+// podcasts could not be fetched.
+export interface PlaylistRunResult {
+  message: string;
+  playlist_id: number;
+  episode_count: number;
+  skipped?: boolean;
+  partial?: boolean;
+}
+
+export interface PlaylistRunAllResult {
+  message: string;
+  results: {
+    playlist_id: number;
+    playlist_name: string;
+    success: boolean;
+    episode_count: number;
+    error: string | null;
+    skipped: boolean;
+  }[];
+}

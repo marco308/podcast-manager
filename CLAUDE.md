@@ -163,12 +163,14 @@ frontend/src/
 
 **Playlist settings:**
 - `episode_mode`: `all_unplayed` (every unplayed episode) or `latest_only` (newest unplayed per podcast)
-- `is_weekend_only`: populate only Fri/Sat/Sun or UK public holidays (holiday lookup in `utils/holidays.py`)
+- `is_weekend_only`: on a day that isn't Fri/Sat/Sun or a UK public holiday, the playlist is **skipped entirely** — `update_playlist` returns early with `skipped=True` before any Spotify call, so the previous contents survive untouched. Holiday lookup is in `utils/holidays.py`. Note the gate lives in `update_playlist`, not `build_playlist`: an earlier version gated the build, which returned an empty list and — because `replace_playlist_items` is a full replace — *blanked* the playlist on weekdays (issue #150).
 - `ordering_mode`: `default`, `podcast_order`, `chronological_asc`, `chronological_desc`
 - `is_enabled`: jobs skip disabled playlists
 
 **Podcast attribute:**
 - `is_sequential`: story-based, always ordered oldest-first regardless of playlist `ordering_mode`
+
+**Single-user by construction:** `auth.py` closes registration once one `User` row exists, so the deployment has exactly one user. Consequently `podcasts` is a **deliberately global table** — it has no `user_id`, and the podcast routes do not filter by owner. `playlists` *is* user-scoped (it predates the decision and the column is harmless), but nothing depends on that scoping for security. If multi-user is ever wanted, adding `Podcast.user_id` and filtering every podcast route is a prerequisite, not an optimisation (issue #154).
 
 **SyncLog:** history of `playlist_update` runs (status, details, timestamps). Consulted for "last run" in `get_job_status()`.
 

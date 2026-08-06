@@ -2,11 +2,12 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, UniqueConstraint
+from sqlalchemy import ForeignKey, Integer, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from app.database import Base
+from app.models.types import UTCDateTime
 
 
 class PlaylistPodcast(Base):
@@ -21,7 +22,7 @@ class PlaylistPodcast(Base):
         Integer, ForeignKey("podcasts.id", ondelete="CASCADE"), nullable=False, index=True
     )
     position: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, server_default=func.now(), nullable=False)
 
     # Relationships
     playlist = relationship("Playlist", back_populates="podcast_assignments")

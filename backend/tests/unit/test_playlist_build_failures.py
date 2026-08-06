@@ -142,3 +142,57 @@ class TestPartialFailures:
         assert result.success is True
         assert result.error is None
         assert result.episode_count == 1
+
+
+class TestUnplayedCountSideEffect:
+    """unplayed_episodes is now an exact by-product of the build (issue #155).
+
+    sync_podcasts used to extrapolate it from the newest 50 episodes and store
+    the guess as fact; the build already has the full episode list.
+    """
+
+    @pytest.mark.asyncio
+    async def test_exact_count_is_recorded_on_the_podcast(self):
+        podcast = _make_podcast("Alpha", "show1")
+        podcast.unplayed_episodes = 999
+        builder = _builder_with_podcasts(podcast)
+
+        spotify = AsyncMock()
+        # 3 episodes, one already played -> 2 unplayed.
+        spotify.get_show_episodes_all = AsyncMock(
+            return_value=[
+                {"id": "a", "uri": "spotify:episode:a", "release_date": "2026-01-01"},
+                {"id": "b", "uri": "spotify:episode:b", "release_date": "2026-01-02"},
+                {
+                    "id": "c",
+                    "uri": "spotify:episode:c",
+                    "release_date": "2026-01-03",
+                    "resume_point": {"fully_played": True},
+                },
+            ]
+        )
+        builder._get_spotify_client = AsyncMock(return_value=spotify)
+
+        result = await builder._get_unplayed_episodes(podcast)
+
+        assert len(result) == 2
+        assert podcast.unplayed_episodes == 2
+
+    @pytest.mark.asyncio
+    async def test_count_is_left_alone_when_the_fetch_hit_the_cap(self):
+        """A capped fetch can't see the whole catalogue, so don't claim a total."""
+        podcast = _make_podcast("Alpha", "show1")
+        podcast.unplayed_episodes = 999
+        builder = _builder_with_podcasts(podcast)
+
+        spotify = AsyncMock()
+        spotify.get_show_episodes_all = AsyncMock(
+            return_value=[
+                {"id": str(i), "uri": f"spotify:episode:{i}", "release_date": "2026-01-01"} for i in range(10)
+            ]
+        )
+        builder._get_spotify_client = AsyncMock(return_value=spotify)
+
+        await builder._get_unplayed_episodes(podcast, max_episodes=10)
+
+        assert podcast.unplayed_episodes == 999, "a truncated fetch must not overwrite the count"

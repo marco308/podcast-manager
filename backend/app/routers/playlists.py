@@ -423,6 +423,16 @@ async def run_playlist_update(
         logger.error(f"Manual run failed for playlist '{playlist.name}': {result.error}")
         raise HTTPException(status_code=500, detail="Failed to update playlist. Check the server logs for details.")
 
+    if result.skipped:
+        # Weekend-only playlist on a non-qualifying day — deliberately left
+        # untouched, so say so rather than claiming an update (issue #150).
+        return {
+            "message": f"Playlist '{playlist.name}' is weekend-only and was left unchanged today",
+            "playlist_id": playlist_id,
+            "episode_count": 0,
+            "skipped": True,
+        }
+
     if result.partial:
         # The playlist was written, just from incomplete data — the message
         # names the podcasts we couldn't reach, which is ours, not an
@@ -463,11 +473,16 @@ async def run_all_playlist_updates(
         builder = PlaylistBuilder(db, user, token_manager=TokenManager(user.id))
         results = await builder.update_all_playlists()
 
-    successful = [r for r in results if r.success]
+    skipped = [r for r in results if r.skipped]
+    successful = [r for r in results if r.success and not r.skipped]
     failed = [r for r in results if not r.success]
 
+    message = f"Updated {len(successful)} playlists, {len(failed)} failed"
+    if skipped:
+        message += f", {len(skipped)} skipped (weekend-only)"
+
     return {
-        "message": f"Updated {len(successful)} playlists, {len(failed)} failed",
+        "message": message,
         "results": [
             {
                 "playlist_id": r.playlist_id,
@@ -475,6 +490,7 @@ async def run_all_playlist_updates(
                 "success": r.success,
                 "episode_count": r.episode_count,
                 "error": r.error,
+                "skipped": r.skipped,
             }
             for r in results
         ],
