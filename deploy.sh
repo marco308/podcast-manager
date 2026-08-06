@@ -55,6 +55,23 @@ service_target_node() {
         | tr -d '[:space:]'
 }
 
+# Content digests of an image's filesystem layers.
+#
+# Deliberately NOT the image ID: `docker save`/`docker load` does not preserve
+# it (BuildKit attestation metadata is dropped in the round-trip), so the same
+# image legitimately has different IDs on the two nodes. The RootFS layer
+# digests are content-addressed and do survive, which makes them the right
+# thing to compare.
+LAYER_FMT='{{range .RootFS.Layers}}{{println .}}{{end}}'
+
+image_layers_here() {
+    docker image inspect "$1" --format "$LAYER_FMT" 2>/dev/null || true
+}
+
+image_layers_on() {
+    ssh -o BatchMode=yes "$2" "docker image inspect '$1' --format '$LAYER_FMT'" 2>/dev/null || true
+}
+
 # Copy a locally-built image to another Swarm node over SSH. Gzipped because
 # `docker save` emits uncompressed layer tarballs and this usually crosses a
 # real network.
@@ -68,19 +85,23 @@ ship_image_to_node() {
         return 1
     fi
 
-    # Confirm the target actually has the image we just built, rather than
+    # Confirm the target actually has the content we just built, rather than
     # trusting that `docker load` said something reassuring.
-    local local_id remote_id
-    local_id=$(docker image inspect "$image" --format '{{.Id}}')
-    remote_id=$(ssh -o BatchMode=yes "$node" "docker image inspect '$image' --format '{{.Id}}'" 2>/dev/null || true)
+    local here there
+    here=$(image_layers_here "$image")
+    there=$(image_layers_on "$image" "$node")
 
-    if [[ "$local_id" != "$remote_id" ]]; then
-        echo "ERROR: $node does not have the image we just built." >&2
-        echo "  expected: $local_id" >&2
-        echo "  found:    ${remote_id:-<none>}" >&2
+    if [[ -z "$there" ]]; then
+        echo "ERROR: $image is not present on $node after loading it." >&2
         return 1
     fi
-    echo "$node now has $image ($(cut -c1-19 <<<"$local_id"))."
+    if [[ "$here" != "$there" ]]; then
+        echo "ERROR: $node has a different build of $image than the one just built." >&2
+        echo "  local layers:  $(tr -d '\n' <<<"$here" | md5sum | cut -c1-12)" >&2
+        echo "  remote layers: $(tr -d '\n' <<<"$there" | md5sum | cut -c1-12)" >&2
+        return 1
+    fi
+    echo "$node now has $image ($(grep -c . <<<"$here") layers, content verified)."
 }
 
 # Make an image available wherever its service is scheduled to run.
