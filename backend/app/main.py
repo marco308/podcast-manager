@@ -84,12 +84,14 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 # CORS middleware - restrict origins based on environment
 cors_origins = [settings.FRONTEND_URL]
 if settings.DEBUG:
-    cors_origins.extend([
-        "https://127.0.0.1:3000",
-        "https://localhost:3000",
-        "http://localhost:5173",
-        "http://localhost:3000",
-    ])
+    cors_origins.extend(
+        [
+            "https://127.0.0.1:3000",
+            "https://localhost:3000",
+            "http://localhost:5173",
+            "http://localhost:3000",
+        ]
+    )
 
 app.add_middleware(
     CORSMiddleware,
@@ -114,5 +116,3 @@ async def health_check() -> dict:
         "app": settings.APP_NAME,
         "version": "1.0.0",
     }
-
-

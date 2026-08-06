@@ -3,8 +3,6 @@ import Foundation
 actor APIClient {
     static let shared = APIClient()
 
-    private let baseURL = "https://api-podcastmanager.marcuslab.uk"
-
     private let session: URLSession
     private let decoder: JSONDecoder
 
@@ -15,10 +13,6 @@ actor APIClient {
 
         self.decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
-    }
-
-    var loginURL: URL {
-        URL(string: "\(baseURL)/api/auth/login?redirect_scheme=podcastmanager")!
     }
 
     // MARK: - Auth
@@ -134,7 +128,10 @@ actor APIClient {
     }
 
     private func makeRequest(path: String, method: String) throws -> URLRequest {
-        guard let url = URL(string: "\(baseURL)\(path)") else {
+        guard let base = ServerConfig.baseURL else {
+            throw APIError.serverNotConfigured
+        }
+        guard let url = URL(string: "\(base.absoluteString)\(path)") else {
             throw APIError.invalidURL
         }
 
@@ -176,6 +173,7 @@ actor APIClient {
 }
 
 enum APIError: LocalizedError {
+    case serverNotConfigured
     case invalidURL
     case invalidResponse
     case unauthorized
@@ -188,6 +186,8 @@ enum APIError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .serverNotConfigured:
+            return "No server configured. Enter your server URL on the login screen."
         case .invalidURL:
             return "Invalid URL"
         case .invalidResponse:

@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     # Frontend URL for redirects
     FRONTEND_URL: str = "http://localhost:5173"
 
-    # Cookie domain for cross-subdomain sharing (e.g., ".marcuslab.uk")
+    # Cookie domain for cross-subdomain sharing (e.g., ".example.com")
     # Leave empty for same-origin cookies (local development)
     COOKIE_DOMAIN: str = ""
 

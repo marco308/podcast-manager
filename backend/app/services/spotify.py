@@ -203,8 +203,7 @@ class SpotifyService:
                 # The daily rebuild has priority; surface this so the
                 # scheduler can finalise the run with a SyncLog row.
                 raise CleanupBudgetExceeded(
-                    f"Spotify Retry-After {raw_retry_after}s exceeds cleanup limit "
-                    f"{CLEANUP_MODE_RETRY_AFTER_LIMIT}s"
+                    f"Spotify Retry-After {raw_retry_after}s exceeds cleanup limit {CLEANUP_MODE_RETRY_AFTER_LIMIT}s"
                 )
 
             retry_after = min(raw_retry_after, 300)  # Cap at 5 minutes
@@ -228,9 +227,7 @@ class SpotifyService:
         response.raise_for_status()
         return response
 
-    async def exchange_code_for_tokens(
-        self, code: str, code_verifier: str | None = None
-    ) -> dict[str, Any]:
+    async def exchange_code_for_tokens(self, code: str, code_verifier: str | None = None) -> dict[str, Any]:
         """Exchange authorization code for access and refresh tokens.
 
         Args:

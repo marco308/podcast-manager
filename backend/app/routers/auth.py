@@ -59,7 +59,7 @@ def get_cookie_settings() -> dict:
         "max_age": COOKIE_MAX_AGE,
         "path": "/",
     }
-    # Add domain for cross-subdomain cookies (e.g., ".marcuslab.uk")
+    # Add domain for cross-subdomain cookies (e.g., ".example.com")
     if settings.COOKIE_DOMAIN:
         cookie_settings["domain"] = settings.COOKIE_DOMAIN
     return cookie_settings
@@ -173,15 +173,11 @@ async def login(redirect_scheme: str | None = Query(None)) -> RedirectResponse:
     if settings.COOKIE_DOMAIN:
         state_cookie_settings["domain"] = settings.COOKIE_DOMAIN
     response.set_cookie(key=OAUTH_STATE_COOKIE_NAME, value=state, **state_cookie_settings)
-    response.set_cookie(
-        key=OAUTH_VERIFIER_COOKIE_NAME, value=code_verifier, **state_cookie_settings
-    )
+    response.set_cookie(key=OAUTH_VERIFIER_COOKIE_NAME, value=code_verifier, **state_cookie_settings)
 
     # Store mobile redirect scheme if provided (for iOS/Android OAuth flow)
     if redirect_scheme:
-        response.set_cookie(
-            key=MOBILE_REDIRECT_COOKIE, value=redirect_scheme, **state_cookie_settings
-        )
+        response.set_cookie(key=MOBILE_REDIRECT_COOKIE, value=redirect_scheme, **state_cookie_settings)
 
     return response
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Native iOS companion app for Podcast Manager. Connects to the FastAPI backend at `https://api-podcastmanager.marcuslab.uk`.
+Native iOS companion app for Podcast Manager. Connects to any Podcast Manager backend — the server URL is entered on the login screen at runtime, with an optional build-time default via `SERVER_URL_DEFAULT` in `Local.yml` (see below).
 
 ## Stack
 
@@ -10,12 +10,25 @@ Native iOS companion app for Podcast Manager. Connects to the FastAPI backend at
 - **XcodeGen** for project generation (`project.yml` → `.xcodeproj`)
 - **No third-party dependencies** — URLSession, Keychain, UNUserNotificationCenter
 
+## Local Setup (one-time)
+
+The `.xcodeproj` is generated, not committed. After cloning:
+
+```bash
+brew install xcodegen   # if needed
+cd ios/PodcastManager
+cp Local.yml.example Local.yml   # then set DEVELOPMENT_TEAM (+ optional SERVER_URL_DEFAULT)
+xcodegen generate
+```
+
+`Local.yml` is a gitignored optional include of `project.yml` — signing team and the baked-in default server URL live there, never in committed files. Simulator builds work without a team ID.
+
 ## Commands
 
 ```bash
 cd ios/PodcastManager
 
-# Regenerate Xcode project (after adding/removing files or changing project.yml)
+# Regenerate Xcode project (after adding/removing files or changing project.yml/Local.yml)
 xcodegen generate
 
 # Build
@@ -35,7 +48,7 @@ xcodebuild archive -project PodcastManager.xcodeproj -scheme PodcastManager \
 xcodebuild -exportArchive -archivePath ./build/PodcastManager.xcarchive \
   -exportPath ./build/export -exportOptionsPlist ExportOptions.plist -allowProvisioningUpdates
 xcrun altool --upload-app -f ./build/export/PodcastManager.ipa -t ios \
-  --apiKey JANTUJ6C57 --apiIssuer 45bb81ca-41c2-4ebb-ae88-b1a493488af6
+  --apiKey <YOUR_ASC_KEY_ID> --apiIssuer <YOUR_ASC_ISSUER_ID>
 ```
 
 ## Architecture
@@ -52,6 +65,7 @@ PodcastManager/
 ├── Services/
 │   ├── APIClient.swift            # Actor-based, URLSession, all API calls
 │   ├── AuthService.swift          # Spotify OAuth via ASWebAuthenticationSession
+│   ├── ServerConfig.swift         # Backend URL resolution (UserDefaults → Info.plist default)
 │   ├── KeychainService.swift      # Session/CSRF token storage
 │   └── NotificationService.swift  # Local notifications (background only)
 ├── Views/
@@ -77,8 +91,13 @@ PodcastManager/
 **Authentication:**
 - Spotify OAuth via ASWebAuthenticationSession
 - Backend `/api/auth/login?redirect_scheme=podcastmanager` triggers mobile flow
-- Callback redirects to `podcastmanager://auth/callback?session_id=...&csrf_token=...`
+- Callback redirects to `podcastmanager://auth/callback?code=...` with a single-use exchange code
+- App trades the code via `POST /api/auth/mobile-exchange`; credentials arrive in the JSON body
 - Tokens stored in Keychain, sent as Cookie header + X-CSRF-Token header
+
+**Server URL:**
+- `ServerConfig.baseURL`: user-entered URL (UserDefaults) → `DefaultServerURL` Info.plist value → nil
+- Login screen has the URL field; `APIClient` throws `.serverNotConfigured` when unset
 
 **API Client:**
 - Actor-based singleton (`APIClient.shared`)
@@ -100,6 +119,6 @@ PodcastManager/
 
 ## Bundle & Signing
 
-- Bundle ID: `com.marcuslab.podcastmanager`
-- Team ID: `Z62E7MGREE`
+- Bundle ID defaults to `com.marcuslab.podcastmanager` — forks should change `bundleIdPrefix` and `PRODUCT_BUNDLE_IDENTIFIER` in `project.yml` (the Keychain service name follows the bundle ID automatically)
+- `DEVELOPMENT_TEAM` comes from the gitignored `Local.yml` (copy `Local.yml.example`); required for device/TestFlight builds only
 - Code signing: Automatic
