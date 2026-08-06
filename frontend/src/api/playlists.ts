@@ -6,6 +6,8 @@ import type {
   PlaylistListResponse,
   PlaylistPodcast,
   PlaylistPodcastListResponse,
+  PlaylistRunResult,
+  PlaylistRunAllResult,
 } from '../types';
 
 export const playlistsApi = {
@@ -33,18 +35,14 @@ export const playlistsApi = {
   },
 
   // Manually trigger a single playlist update
-  async run(id: number): Promise<{ success: boolean; message: string }> {
-    const response = await apiClient.post<{ success: boolean; message: string }>(
-      `/playlists/${id}/run`
-    );
+  async run(id: number): Promise<PlaylistRunResult> {
+    const response = await apiClient.post<PlaylistRunResult>(`/playlists/${id}/run`);
     return response.data;
   },
 
   // Trigger all playlist updates
-  async runAll(): Promise<{ success: boolean; message: string }> {
-    const response = await apiClient.post<{ success: boolean; message: string }>(
-      '/playlists/run-all'
-    );
+  async runAll(): Promise<PlaylistRunAllResult> {
+    const response = await apiClient.post<PlaylistRunAllResult>('/playlists/run-all');
     return response.data;
   },
 

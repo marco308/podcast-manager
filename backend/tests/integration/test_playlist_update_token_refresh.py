@@ -5,11 +5,6 @@ Issue #89: simulate the exact scenario from the bug — a long GET phase
 stale, then assert the subsequent PUT picks up a fresh bearer token
 rather than reusing the original.
 
-TODO(issue #89, PR1): requires ``pytest-asyncio`` and ``respx``. Neither
-is in ``requirements.txt`` today — adding them is scope creep for this
-PR. Install locally to run::
-
-    pip install pytest-asyncio respx
 """
 
 from __future__ import annotations

@@ -31,6 +31,15 @@ actor APIClient {
         try await post("/api/auth/mobile-exchange", body: ["code": code])
     }
 
+    /// Invalidate the session server-side.
+    ///
+    /// Clearing the Keychain alone left the `Session` row valid for its full
+    /// 24-hour lifetime, so a captured `session_id` kept working after the
+    /// user signed out (issue #148).
+    func logout() async throws {
+        let _: MessageResponse = try await post("/api/auth/logout")
+    }
+
     // MARK: - Podcasts
 
     func fetchPodcasts(limit: Int = 50, offset: Int = 0, unassigned: Bool = false) async throws -> PodcastListResponse {
@@ -165,7 +174,7 @@ actor APIClient {
 
         guard 200..<300 ~= httpResponse.statusCode else {
             let detail = try? decoder.decode(ErrorResponse.self, from: data)
-            throw APIError.httpError(httpResponse.statusCode, detail?.detail ?? "Unknown error")
+            throw APIError.httpError(httpResponse.statusCode, detail?.message ?? "Unknown error")
         }
 
         return try decoder.decode(T.self, from: data)
@@ -200,6 +209,32 @@ enum APIError: LocalizedError {
     }
 }
 
-private struct ErrorResponse: Codable {
-    let detail: String
+/// FastAPI's error envelope.
+///
+/// `detail` is a plain string for `HTTPException`, but an **array** of
+/// `{loc, msg, type}` objects for 422 validation errors. Decoding it as a
+/// bare `String` meant every validation error decoded to nil and surfaced as
+/// "Unknown error" (issue #163).
+private struct ErrorResponse: Decodable {
+    let message: String
+
+    private struct ValidationError: Decodable {
+        let msg: String
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        if let text = try? container.decode(String.self, forKey: .detail) {
+            message = text
+            return
+        }
+
+        let errors = try container.decode([ValidationError].self, forKey: .detail)
+        message = errors.map(\.msg).joined(separator: "; ")
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case detail
+    }
 }

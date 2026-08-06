@@ -1,6 +1,9 @@
 """Playlists router for managing playlist configurations."""
 
+import asyncio
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func, select
@@ -8,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.jobs import locks
-from app.models.playlist import Playlist
+from app.models.playlist import Playlist, PlaylistOrderingMode
 from app.models.playlist_podcast import PlaylistPodcast
 from app.models.podcast import Podcast
 from app.models.session import Session
@@ -31,6 +34,34 @@ from app.services.token_manager import TokenManager
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/playlists", tags=["Playlists"])
+
+# How long a manual run will wait for the shared write lock before giving up.
+# A scheduled rebuild can hold it for many minutes, and nginx cuts the request
+# off at 30s anyway — so fail fast with a 409 the UI can explain, rather than
+# blocking until the client times out (issue #153).
+WRITE_LOCK_WAIT_SECONDS = 5
+
+
+@asynccontextmanager
+async def _playlist_write_lock() -> AsyncIterator[None]:
+    """Acquire the shared playlist write lock or raise 409.
+
+    Serialises manual runs against the daily rebuild and the cleanup job
+    (issue #89, PR3) without leaving the caller hanging (issue #153).
+    """
+    try:
+        await asyncio.wait_for(locks.playlist_write_lock.acquire(), timeout=WRITE_LOCK_WAIT_SECONDS)
+    except TimeoutError:
+        logger.info("Manual run rejected — playlist_write_lock held by another job")
+        raise HTTPException(
+            status_code=409,
+            detail="A playlist update is already running. Please try again shortly.",
+        ) from None
+
+    try:
+        yield
+    finally:
+        locks.playlist_write_lock.release()
 
 
 async def _get_podcast_count(db: AsyncSession, playlist_id: int) -> int:
@@ -93,8 +124,6 @@ async def create_playlist(
     db: AsyncSession = Depends(get_db),
 ) -> PlaylistResponse:
     """Create a new playlist."""
-    from app.models.playlist import PlaylistOrderingMode
-
     playlist = Playlist(
         user_id=session.user_id,
         name=playlist_data.name,
@@ -137,8 +166,6 @@ async def update_playlist(
     db: AsyncSession = Depends(get_db),
 ) -> PlaylistResponse:
     """Update playlist configuration."""
-    from app.models.playlist import PlaylistOrderingMode
-
     result = await db.execute(
         select(Playlist).where((Playlist.id == playlist_id) & (Playlist.user_id == session.user_id))
     )
@@ -387,17 +414,35 @@ async def run_playlist_update(
     # token refresh at the write boundary (issue #89, AC #5).
     # Take the shared write lock so a manual run serialises against
     # the daily rebuild and the cleanup job (issue #89, PR3, AC #3).
-    if locks.playlist_write_lock.locked():
-        logger.info("Waiting on playlist_write_lock — another job is holding it")
-    async with locks.playlist_write_lock:
+    async with _playlist_write_lock():
         builder = PlaylistBuilder(db, user, token_manager=TokenManager(user.id))
         result = await builder.update_playlist(playlist)
 
-    if not result.success:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to update playlist: {result.error}",
-        )
+    if not result.success and not result.partial:
+        # Log the detail; don't hand raw exception text to the client (issue #161).
+        logger.error(f"Manual run failed for playlist '{playlist.name}': {result.error}")
+        raise HTTPException(status_code=500, detail="Failed to update playlist. Check the server logs for details.")
+
+    if result.skipped:
+        # Weekend-only playlist on a non-qualifying day — deliberately left
+        # untouched, so say so rather than claiming an update (issue #150).
+        return {
+            "message": f"Playlist '{playlist.name}' is weekend-only and was left unchanged today",
+            "playlist_id": playlist_id,
+            "episode_count": 0,
+            "skipped": True,
+        }
+
+    if result.partial:
+        # The playlist was written, just from incomplete data — the message
+        # names the podcasts we couldn't reach, which is ours, not an
+        # arbitrary exception string.
+        return {
+            "message": f"Playlist '{playlist.name}' updated with warnings: {result.error}",
+            "playlist_id": playlist_id,
+            "episode_count": result.episode_count,
+            "partial": True,
+        }
 
     return {
         "message": f"Playlist '{playlist.name}' updated successfully",
@@ -424,17 +469,20 @@ async def run_all_playlist_updates(
     # Update all playlists — same plumbing as the scheduled job (issue #89).
     # Take the shared write lock so manual fan-out serialises against the
     # daily rebuild and the cleanup job (issue #89, PR3, AC #3).
-    if locks.playlist_write_lock.locked():
-        logger.info("Waiting on playlist_write_lock — another job is holding it")
-    async with locks.playlist_write_lock:
+    async with _playlist_write_lock():
         builder = PlaylistBuilder(db, user, token_manager=TokenManager(user.id))
         results = await builder.update_all_playlists()
 
-    successful = [r for r in results if r.success]
+    skipped = [r for r in results if r.skipped]
+    successful = [r for r in results if r.success and not r.skipped]
     failed = [r for r in results if not r.success]
 
+    message = f"Updated {len(successful)} playlists, {len(failed)} failed"
+    if skipped:
+        message += f", {len(skipped)} skipped (weekend-only)"
+
     return {
-        "message": f"Updated {len(successful)} playlists, {len(failed)} failed",
+        "message": message,
         "results": [
             {
                 "playlist_id": r.playlist_id,
@@ -442,6 +490,7 @@ async def run_all_playlist_updates(
                 "success": r.success,
                 "episode_count": r.episode_count,
                 "error": r.error,
+                "skipped": r.skipped,
             }
             for r in results
         ],

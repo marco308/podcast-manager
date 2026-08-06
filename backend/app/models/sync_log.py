@@ -3,10 +3,11 @@
 from datetime import datetime
 from enum import Enum as PyEnum
 
-from sqlalchemy import DateTime, Enum, Integer, String, Text
+from sqlalchemy import Enum, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
+from app.models.types import UTCDateTime
 
 
 class SyncStatus(str, PyEnum):
@@ -27,8 +28,8 @@ class SyncLog(Base):
     job_type: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[SyncStatus] = mapped_column(Enum(SyncStatus), nullable=False)
     details: Mapped[str | None] = mapped_column(Text, nullable=True)
-    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
 
     # Failure classification (issue #89). All nullable so existing rows
     # written before migration 012 keep working untouched.

@@ -66,11 +66,12 @@ class TokenManager:
 
     @staticmethod
     def _seconds_remaining(token_expires_at: datetime) -> float:
-        """Compute seconds until token expiry, tolerating naive datetimes."""
-        exp = token_expires_at
-        if exp.tzinfo is None:
-            exp = exp.replace(tzinfo=UTC)
-        return exp.timestamp() - datetime.now(UTC).timestamp()
+        """Compute seconds until token expiry.
+
+        ``User.token_expires_at`` is a :class:`UTCDateTime`, so it always
+        reads back timezone-aware and needs no naive fix-up (issue #156).
+        """
+        return (token_expires_at - datetime.now(UTC)).total_seconds()
 
     async def get_token(self, *, min_remaining_seconds: int = 300) -> str:
         """Return a valid bearer token, refreshing if it expires soon.

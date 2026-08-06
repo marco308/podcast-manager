@@ -11,7 +11,14 @@ enum KeychainService {
         case csrfToken = "csrf_token"
     }
 
-    static func save(_ value: String, for key: Key) {
+    /// Store a value, replacing any existing one.
+    ///
+    /// - Returns: `true` on success. The status used to be discarded, so a
+    ///   failed write left the app looking signed in while holding no
+    ///   credentials — every request then failed and the next launch silently
+    ///   signed the user out (issue #163).
+    @discardableResult
+    static func save(_ value: String, for key: Key) -> Bool {
         let data = Data(value.utf8)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -27,7 +34,13 @@ enum KeychainService {
         // Only accessible while the device is unlocked, and never sync to iCloud
         // Keychain / follow a device restore. Tokens stay pinned to this install.
         addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-        SecItemAdd(addQuery as CFDictionary, nil)
+
+        let status = SecItemAdd(addQuery as CFDictionary, nil)
+        if status != errSecSuccess {
+            print("Keychain write failed for \(key.rawValue): OSStatus \(status)")
+            return false
+        }
+        return true
     }
 
     static func get(_ key: Key) -> String? {

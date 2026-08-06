@@ -303,3 +303,72 @@ async def test_manual_run_takes_same_lock():
     assert events.index("cleanup_released") < events.index("manual_update_ran"), (
         f"manual run executed before cleanup released the lock: {events}"
     )
+
+
+@pytest.mark.asyncio
+async def test_manual_run_returns_409_when_lock_is_held_too_long():
+    """A long-held lock must produce a 409, not a request that hangs.
+
+    Issue #153: the manual endpoints used to await the lock unbounded, so a
+    multi-minute rebuild left the caller blocked well past nginx's 30s
+    proxy_read_timeout. Now they give up after WRITE_LOCK_WAIT_SECONDS.
+    """
+    from fastapi import HTTPException
+
+    from app.routers import playlists as playlists_router
+
+    handler = getattr(
+        playlists_router.run_all_playlist_updates,
+        "__wrapped__",
+        playlists_router.run_all_playlist_updates,
+    )
+
+    user = MagicMock()
+    user.id = 7
+
+    fake_db = MagicMock()
+
+    async def _exec(_stmt):
+        r = MagicMock()
+        r.scalar_one_or_none.return_value = user
+        return r
+
+    fake_db.execute = AsyncMock(side_effect=_exec)
+
+    ran = False
+
+    async def _fake_update_all(self):
+        nonlocal ran
+        ran = True
+        return []
+
+    async def hold_lock_forever(release: asyncio.Event):
+        async with locks.playlist_write_lock:
+            await release.wait()
+
+    release = asyncio.Event()
+    holder = asyncio.create_task(hold_lock_forever(release))
+    await asyncio.sleep(0.01)
+    assert locks.playlist_write_lock.locked()
+
+    with (
+        patch("app.routers.playlists.PlaylistBuilder.update_all_playlists", _fake_update_all),
+        patch("app.routers.playlists.WRITE_LOCK_WAIT_SECONDS", 0.05),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await handler(
+                request=MagicMock(),
+                session=MagicMock(user_id=user.id),
+                db=fake_db,
+            )
+
+    assert exc_info.value.status_code == 409
+    assert not ran, "the update must not run when the lock could not be acquired"
+
+    release.set()
+    await holder
+
+    # The failed acquire must not have left the lock in a broken state.
+    assert not locks.playlist_write_lock.locked()
+    async with locks.playlist_write_lock:
+        pass

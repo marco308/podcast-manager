@@ -311,9 +311,9 @@ async def callback(
             logger.info("Redirecting to mobile app with exchange code")
             return response
 
-        # Web flow: redirect to frontend with cookies
-        frontend_base = settings.FRONTEND_URL.rstrip("/")
-        response = RedirectResponse(url=frontend_base, status_code=302)
+        # Web flow: redirect to frontend with cookies. FRONTEND_URL is
+        # normalised (trailing slash stripped) by Settings itself.
+        response = RedirectResponse(url=settings.FRONTEND_URL, status_code=302)
         set_session_cookies(response, session)
         response.delete_cookie(key=OAUTH_STATE_COOKIE_NAME, **delete_kwargs)
         response.delete_cookie(key=OAUTH_VERIFIER_COOKIE_NAME, **delete_kwargs)
@@ -321,6 +321,11 @@ async def callback(
         logger.info("Redirecting to frontend with session cookie")
         return response
 
+    except HTTPException:
+        # Deliberate rejections (e.g. the single-user registration gate above)
+        # carry their own status and message — don't flatten them into a
+        # generic "Authentication failed" (issue #152).
+        raise
     except Exception as e:
         logger.exception(f"OAuth callback failed: {str(e)}")
         raise HTTPException(status_code=400, detail="Authentication failed") from None

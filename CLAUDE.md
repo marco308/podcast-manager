@@ -8,7 +8,7 @@ Podcast Manager is a self-hosted web app that sits on top of Spotify and adds a 
 
 ## Repo Layout
 
-- `backend/` — FastAPI + async SQLAlchemy + APScheduler (Python 3.11+)
+- `backend/` — FastAPI + async SQLAlchemy + APScheduler (Python 3.11+ supported; CI and the Docker image run 3.14)
 - `frontend/` — React 19 + TypeScript + Vite + Ant Design 6
 - `ios/` — Native SwiftUI companion app (see `ios/CLAUDE.md` for iOS-specific guidance)
 - `docker-compose.yml` — single-host deployment; `deploy.sh` + `docker-stack-traefik.example.yml` — Docker Swarm deployment behind Traefik (copy the example to the gitignored `docker-stack-traefik.yml` and fill in your domains)
@@ -40,6 +40,8 @@ alembic revision --autogenerate -m "description"
 
 SQLite DB lives at `backend/data/podcast_manager.db` (path from `DATABASE_URL`).
 
+**Alembic owns the schema.** The app does not create tables at startup — run `alembic upgrade head` before serving locally. In Docker, `backend/entrypoint.sh` does it for you. Databases created by the old `create_all` startup path (tables, but no `alembic_version` row) are adopted automatically by `scripts/adopt_legacy_schema.py`, which stamps them at head so migrations can proceed.
+
 ### Frontend (React/Vite)
 
 ```bash
@@ -70,7 +72,7 @@ Use `127.0.0.1` (not `localhost`) in `SPOTIFY_REDIRECT_URI`.
 ./deploy.sh [backend|frontend|all]
 ```
 
-Builds Docker images, updates the Swarm services, and runs `alembic upgrade head` inside the running backend container. Assumes a stack deployed from your (gitignored) copy of `docker-stack-traefik.example.yml`. For single-host setups, `docker compose up -d --build` from the repo root works instead.
+Builds Docker images and updates the Swarm services. Migrations run automatically in the container entrypoint (`backend/entrypoint.sh`) before uvicorn starts, so both this path and `docker compose up -d --build` get a migrated database. Assumes a stack deployed from your (gitignored) copy of `docker-stack-traefik.example.yml`.
 
 ## Architecture
 
@@ -101,7 +103,7 @@ Registered in `app/jobs/scheduler.py`, started from the FastAPI lifespan context
 |---|---|---|
 | `daily_playlist_update` | Cron, hour/minute from `AppSetting` or `PLAYLIST_UPDATE_HOUR/MINUTE` env | Rebuild every enabled playlist for every user |
 | `token_refresh` | Every 45 min | Refresh Spotify tokens expiring within 15 min |
-| `remove_played_episodes` | Every 5 min | Fetch playlist tracks, pull episode details, drop any with `resume_point.fully_played` |
+| `remove_played_episodes` | Every 30 min | Fetch playlist tracks and drop any whose `resume_point.fully_played` is set — filtered inline from the playlist-items `fields` mask, no per-episode fetch |
 | `session_cleanup` | Every hour | Delete expired `Session` rows |
 
 - Last-run times for interval jobs are tracked in the in-memory `_last_run_times` dict in `scheduler.py`; `daily_playlist_update` last-run comes from the `SyncLog` table instead.
@@ -124,9 +126,9 @@ List endpoints return `{ items: [], total: N }`.
 
 ```
 backend/app/
-├── main.py              # FastAPI app, lifespan (init_db + init_scheduler), CORS, routers
+├── main.py              # FastAPI app, lifespan (init_scheduler), CORS, routers
 ├── config.py            # Pydantic Settings (loads .env)
-├── database.py          # Async SQLAlchemy engine/session, init_db
+├── database.py          # Async SQLAlchemy engine/session (Alembic owns the schema)
 ├── models/              # SQLAlchemy ORM: user, session, podcast, playlist,
 │                        #   playlist_podcast (M2M), sync_log, settings (AppSetting)
 ├── schemas/             # Pydantic request/response schemas
@@ -161,12 +163,14 @@ frontend/src/
 
 **Playlist settings:**
 - `episode_mode`: `all_unplayed` (every unplayed episode) or `latest_only` (newest unplayed per podcast)
-- `is_weekend_only`: populate only Fri/Sat/Sun or UK public holidays (holiday lookup in `utils/holidays.py`)
+- `is_weekend_only`: on a day that isn't Fri/Sat/Sun or a UK public holiday, the playlist is **skipped entirely** — `update_playlist` returns early with `skipped=True` before any Spotify call, so the previous contents survive untouched. Holiday lookup is in `utils/holidays.py`. Note the gate lives in `update_playlist`, not `build_playlist`: an earlier version gated the build, which returned an empty list and — because `replace_playlist_items` is a full replace — *blanked* the playlist on weekdays (issue #150).
 - `ordering_mode`: `default`, `podcast_order`, `chronological_asc`, `chronological_desc`
 - `is_enabled`: jobs skip disabled playlists
 
 **Podcast attribute:**
 - `is_sequential`: story-based, always ordered oldest-first regardless of playlist `ordering_mode`
+
+**Single-user by construction:** `auth.py` closes registration once one `User` row exists, so the deployment has exactly one user. Consequently `podcasts` is a **deliberately global table** — it has no `user_id`, and the podcast routes do not filter by owner. `playlists` *is* user-scoped (it predates the decision and the column is harmless), but nothing depends on that scoping for security. If multi-user is ever wanted, adding `Podcast.user_id` and filtering every podcast route is a prerequisite, not an optimisation (issue #154).
 
 **SyncLog:** history of `playlist_update` runs (status, details, timestamps). Consulted for "last run" in `get_job_status()`.
 
@@ -181,7 +185,6 @@ SPOTIFY_CLIENT_ID=...
 SPOTIFY_CLIENT_SECRET=...
 SPOTIFY_REDIRECT_URI=https://127.0.0.1:8000/api/auth/callback   # 127.0.0.1, NOT localhost
 ENCRYPTION_KEY=...   # python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-SECRET_KEY=...       # python -c "import secrets; print(secrets.token_urlsafe(32))"
 FRONTEND_URL=https://127.0.0.1:3000
 COOKIE_DOMAIN=       # empty for local; ".example.com"-style value in prod
 PLAYLIST_UPDATE_HOUR=4
@@ -201,13 +204,12 @@ Spotify scopes requested: `user-read-playback-position`, `user-library-read`, `u
 - All other "Get Several X" batch endpoints — **removed**
 
 **Still available and in use:**
-- `GET /episodes/{id}` — single fetch, called via `SpotifyService.get_episodes()` with a semaphore of 3
 - `GET /shows/{id}/episodes` — paginated show episodes
 - `GET /me/shows` — user's subscribed podcasts (primary sync source)
 - `GET /me/episodes` — user's saved episodes
 - All playlist and user-profile endpoints
 
-**Rate limiting:** Spotify 429s carry a `Retry-After`. `SpotifyService._request_with_retry()` handles up to 3 retries; every looped call goes through it. Keep per-episode concurrency low — the `remove_played_episodes` job runs every 5 minutes and can touch a lot of episodes.
+**Rate limiting:** Spotify 429s carry a `Retry-After`. `SpotifyService._request_with_retry()` issues up to 3 attempts total (1 + 2 retries); every request goes through it. A per-instance sliding-window soft throttle backs off before Spotify has to 429 us, and the `remove_played_episodes` job additionally runs under a per-run API-call budget (`CLEANUP_API_CALL_BUDGET`).
 
 ## Testing
 

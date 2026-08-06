@@ -1,6 +1,7 @@
 """Spotify Web API client service."""
 
 import asyncio
+import json
 import logging
 import time
 from collections import deque
@@ -161,7 +162,8 @@ class SpotifyService:
     ) -> httpx.Response:
         """Make an HTTP request with automatic retry on 429 rate limit.
 
-        Retries up to MAX_RETRIES times, respecting Spotify's Retry-After header.
+        Issues at most MAX_RETRIES attempts in total (one initial request plus
+        MAX_RETRIES - 1 retries), respecting Spotify's Retry-After header.
 
         If ``on_unauthorized`` is provided and the server responds 401, the
         callback is invoked to obtain a fresh bearer token, the
@@ -257,14 +259,14 @@ class SpotifyService:
                 ),
             )
             response.raise_for_status()
-            data = response.json()
+            payload = response.json()
 
             # Calculate absolute expiration time
-            expires_at = datetime.now(UTC) + timedelta(seconds=data["expires_in"])
+            expires_at = datetime.now(UTC) + timedelta(seconds=payload["expires_in"])
 
             return {
-                "access_token": data["access_token"],
-                "refresh_token": data["refresh_token"],
+                "access_token": payload["access_token"],
+                "refresh_token": payload["refresh_token"],
                 "expires_at": expires_at,
             }
 
@@ -307,11 +309,12 @@ class SpotifyService:
             User profile data from Spotify.
         """
         async with self._get_client_contextmanager() as client:
-            response = await client.get(
+            response = await self._request_with_retry(
+                client,
+                "GET",
                 f"{SPOTIFY_API_BASE}/me",
                 headers=self._headers,
             )
-            response.raise_for_status()
             return response.json()
 
     async def get_user_shows(self, limit: int = 50, offset: int = 0) -> dict[str, Any]:
@@ -359,36 +362,30 @@ class SpotifyService:
             )
             return resp.json()
 
-    async def get_playlist(self, playlist_id: str) -> dict[str, Any]:
-        """Get a playlist by ID.
-
-        Args:
-            playlist_id: Spotify playlist ID.
-
-        Returns:
-            Playlist data.
-        """
-        async with self._get_client_contextmanager() as client:
-            response = await client.get(
-                f"{SPOTIFY_API_BASE}/playlists/{playlist_id}",
-                headers=self._headers,
-            )
-            response.raise_for_status()
-            return response.json()
-
-    async def create_playlist(self, name: str, description: str = "", public: bool = False) -> dict[str, Any]:
+    async def create_playlist(
+        self,
+        name: str,
+        description: str = "",
+        public: bool = False,
+        *,
+        on_unauthorized: Callable[[], Awaitable[str]] | None = None,
+    ) -> dict[str, Any]:
         """Create a new playlist.
 
         Args:
             name: Playlist name.
             description: Playlist description.
             public: Whether the playlist should be public.
+            on_unauthorized: Optional callback to recover from 401 by
+                refreshing the bearer token and retrying once.
 
         Returns:
             Created playlist data.
         """
         async with self._get_client_contextmanager() as client:
-            response = await client.post(
+            response = await self._request_with_retry(
+                client,
+                "POST",
                 f"{SPOTIFY_API_BASE}/me/playlists",
                 headers=self._headers,
                 json={
@@ -396,8 +393,8 @@ class SpotifyService:
                     "description": description,
                     "public": public,
                 },
+                on_unauthorized=on_unauthorized,
             )
-            response.raise_for_status()
             return response.json()
 
     async def replace_playlist_items(
@@ -466,10 +463,8 @@ class SpotifyService:
                 refreshing the bearer token and retrying once (issue #89).
             cleanup_mode: When True, abort on long Retry-After waits (PR2).
         """
-        import json as _json
-
         async with self._get_client_contextmanager() as client:
-            body = _json.dumps({"items": [{"uri": uri} for uri in uris]})
+            body = json.dumps({"items": [{"uri": uri} for uri in uris]})
             await self._request_with_retry(
                 client,
                 "DELETE",
@@ -516,41 +511,6 @@ class SpotifyService:
                 cleanup_mode=cleanup_mode,
             )
             return resp.json()
-
-    async def get_episodes(self, episode_ids: list[str]) -> list[dict[str, Any]]:
-        """Get multiple episodes by IDs using individual fetches with rate limiting.
-
-        The batch GET /episodes endpoint was deprecated by Spotify in Feb 2026
-        for Dev Mode apps, so we fetch individually with concurrency control.
-
-        Args:
-            episode_ids: List of Spotify episode IDs.
-
-        Returns:
-            List of episode data.
-        """
-        if not episode_ids:
-            return []
-
-        # Fetch sequentially to avoid Spotify 429 rate limits
-        results: list[dict[str, Any] | None] = []
-
-        async with self._get_client_contextmanager() as client:
-            for episode_id in episode_ids:
-                try:
-                    resp = await self._request_with_retry(
-                        client,
-                        "GET",
-                        f"{SPOTIFY_API_BASE}/episodes/{episode_id}",
-                        headers=self._headers,
-                        params={"market": "from_token"},
-                    )
-                    results.append(resp.json())
-                except Exception:
-                    logger.warning("Failed to fetch episode %s, skipping", episode_id)
-                    results.append(None)
-
-        return [ep for ep in results if ep is not None]
 
     async def get_show_episodes_all(self, show_id: str, max_episodes: int = 200) -> list[dict[str, Any]]:
         """Get all episodes for a show with pagination.

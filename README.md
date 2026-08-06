@@ -84,7 +84,8 @@ The app has four main screens:
 ### Prerequisites
 
 - A Spotify account and a Spotify Developer application (see below)
-- Docker (for deployment) or Python 3.11+ and Node.js (for local dev)
+- Docker (for deployment) or Python 3.11+ and Node.js (for local dev).
+  3.11 is the supported floor (what `ruff`'s `target-version` targets); CI and the Docker image run 3.14.
 
 ### Registering Your Spotify App (required)
 
@@ -111,7 +112,6 @@ SPOTIFY_CLIENT_ID=...
 SPOTIFY_CLIENT_SECRET=...
 SPOTIFY_REDIRECT_URI=https://127.0.0.1:8000/api/auth/callback
 ENCRYPTION_KEY=...    # python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-SECRET_KEY=...        # python -c "import secrets; print(secrets.token_urlsafe(32))"
 FRONTEND_URL=https://127.0.0.1:3000
 PLAYLIST_UPDATE_HOUR=4
 PLAYLIST_UPDATE_MINUTE=0

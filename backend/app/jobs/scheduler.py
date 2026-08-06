@@ -72,12 +72,9 @@ async def refresh_all_tokens() -> None:
             users = result.scalars().all()
 
             for user in users:
-                token_exp = (
-                    user.token_expires_at.replace(tzinfo=UTC)
-                    if user.token_expires_at.tzinfo is None
-                    else user.token_expires_at
-                )
-                if (token_exp.timestamp() - datetime.now(UTC).timestamp()) < 900:
+                # token_expires_at is a UTCDateTime, so it always reads back
+                # timezone-aware — no naive fix-up needed (issue #156).
+                if (user.token_expires_at - datetime.now(UTC)).total_seconds() < 900:
                     users_to_refresh.append((user.id, user.display_name, user.refresh_token))
         except Exception as e:
             logger.error(f"Token refresh job failed reading DB: {e}")
@@ -144,6 +141,7 @@ async def update_all_playlists() -> None:
     total_playlists = 0
     total_episodes = 0
     playlists_failed = 0
+    playlists_skipped = 0
     errors: list[str] = []
     error_objects: list[BaseException] = []
 
@@ -166,6 +164,12 @@ async def update_all_playlists() -> None:
                     results = await builder.update_all_playlists()
 
                     for res in results:
+                        if res.skipped:
+                            # Weekend-only playlist on a non-qualifying day —
+                            # deliberately untouched, so don't count it as an
+                            # attempted rebuild (issue #150).
+                            playlists_skipped += 1
+                            continue
                         total_playlists += 1
                         if res.success:
                             total_episodes += res.episode_count
@@ -193,6 +197,8 @@ async def update_all_playlists() -> None:
                     sync_log.details = (
                         f"Updated {total_playlists} playlists with {total_episodes} episodes. Errors: {len(errors)}"
                     )
+                    if playlists_skipped:
+                        sync_log.details += f" Skipped (weekend-only): {playlists_skipped}."
                     if errors:
                         sync_log.details += f"\n{chr(10).join(errors[:10])}"
 
@@ -211,7 +217,8 @@ async def update_all_playlists() -> None:
                 logger.error(f"Failed to update sync log: {e}")
 
     logger.info(
-        f"Playlist update job completed: {total_playlists} playlists, {total_episodes} episodes, {len(errors)} errors"
+        f"Playlist update job completed: {total_playlists} playlists, {total_episodes} episodes, "
+        f"{len(errors)} errors, {playlists_skipped} skipped"
     )
 
 
@@ -308,10 +315,9 @@ async def get_job_status() -> list[dict]:
             )
             last_sync = result.scalar_one_or_none()
             if last_sync and last_sync.started_at:
-                if last_sync.started_at.tzinfo is None:
-                    playlist_last_run = last_sync.started_at.isoformat() + "Z"
-                else:
-                    playlist_last_run = last_sync.started_at.isoformat()
+                # UTCDateTime guarantees an aware value, so isoformat() already
+                # carries the offset — no manual "Z" suffix (issue #156).
+                playlist_last_run = last_sync.started_at.isoformat()
     except Exception:
         pass
 
@@ -349,12 +355,9 @@ async def get_job_status() -> list[dict]:
             # Get interval in minutes
             interval_seconds = job.trigger.interval.total_seconds()
             info["interval_minutes"] = int(interval_seconds / 60)
-            info["last_run"] = _last_run_times.get(job.id)
-            if info["last_run"] and isinstance(info["last_run"], datetime):
-                if info["last_run"].tzinfo is None:
-                    info["last_run"] = info["last_run"].isoformat() + "Z"
-                else:
-                    info["last_run"] = info["last_run"].isoformat()
+            # _record_run always stores datetime.now(UTC), so these are aware.
+            last_run = _last_run_times.get(job.id)
+            info["last_run"] = last_run.isoformat() if last_run else None
 
         result.append(info)
 
@@ -364,7 +367,13 @@ async def get_job_status() -> list[dict]:
 async def reschedule_playlist_update(hour: int, minute: int) -> str | None:
     """Reschedule the daily playlist update and persist the new time.
 
-    Returns the next run time ISO string, or None on failure.
+    Returns:
+        The next run time as an ISO string, or None if the job has no next
+        run (i.e. it is paused). Failures raise rather than returning None —
+        the exception carries the reason and is already logged (issue #159).
+
+    Raises:
+        Exception: propagated from APScheduler or the settings write.
     """
     try:
         scheduler.reschedule_job(
@@ -475,23 +484,6 @@ async def trigger_single_playlist_update(user_id: int, playlist_id: int) -> dict
             logger.error(f"Single playlist update failed: {e}")
             await db.rollback()
             return {"success": False, "error": str(e)}
-
-
-async def _get_valid_access_token(user_id: int) -> str | None:
-    """Get a valid Spotify access token for a user.
-
-    Thin compatibility wrapper around :class:`TokenManager` — kept so the
-    cleanup job can call into it without restructuring. New code should
-    use ``TokenManager`` directly so it can also wire up an
-    ``on_unauthorized`` callback at the write boundary (issue #89).
-
-    Returns:
-        A valid access token string, or None if the user was not found.
-    """
-    try:
-        return await TokenManager(user_id).get_token(min_remaining_seconds=300)
-    except RuntimeError:
-        return None
 
 
 def _classify_failure(
@@ -683,16 +675,18 @@ async def remove_played_episodes_from_playlists() -> None:
 
             try:
                 for _playlist_id, playlist_name, spotify_playlist_id in playlists:
-                    playlists_attempted += 1
-
                     # Per-run API budget — give up early if we've already
                     # spent the allowance, the next run picks up where we left off.
+                    # Checked before counting the playlist as attempted, so a
+                    # deferred playlist isn't reported as one we tried (issue #161).
                     if spotify_client.api_calls_used >= CLEANUP_API_CALL_BUDGET:
                         logger.warning(
                             f"Cleanup API budget ({CLEANUP_API_CALL_BUDGET}) exhausted; "
                             f"deferring remaining playlists to next run"
                         )
                         break
+
+                    playlists_attempted += 1
 
                     try:
                         # Walk playlist-items pages, filtering inline.

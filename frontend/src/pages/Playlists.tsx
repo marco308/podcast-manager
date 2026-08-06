@@ -450,7 +450,13 @@ export function Playlists() {
     setRunningPlaylistId(id);
     try {
       const result = await runPlaylist.mutateAsync(id);
-      message.success(result.message);
+      // A skipped weekend-only playlist and a partial rebuild both come back
+      // 200, but neither is a clean success — don't report them as one.
+      if (result.skipped || result.partial) {
+        message.warning(result.message);
+      } else {
+        message.success(result.message);
+      }
     } catch (err: unknown) {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
       message.error(detail || 'Failed to update playlist');

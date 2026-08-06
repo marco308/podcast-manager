@@ -1,7 +1,9 @@
 """Application configuration using Pydantic Settings."""
 
+import urllib.parse
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,6 +18,7 @@ class Settings(BaseSettings):
 
     # Application
     APP_NAME: str = "Podcast Manager"
+    APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
 
     # Database
@@ -35,7 +38,6 @@ class Settings(BaseSettings):
 
     # Security
     ENCRYPTION_KEY: str  # Fernet key for token encryption
-    SECRET_KEY: str  # Session/JWT secret
 
     # Frontend URL for redirects
     FRONTEND_URL: str = "http://localhost:5173"
@@ -48,6 +50,18 @@ class Settings(BaseSettings):
     PLAYLIST_UPDATE_HOUR: int = 4
     PLAYLIST_UPDATE_MINUTE: int = 0
 
+    @field_validator("FRONTEND_URL")
+    @classmethod
+    def _strip_trailing_slash(cls, value: str) -> str:
+        """Normalise FRONTEND_URL so it can be used as a CORS origin.
+
+        A browser's ``Origin`` header never carries a trailing slash, so
+        ``https://app.example.com/`` would never match and every API call
+        would fail preflight — while the OAuth redirect kept working,
+        because it stripped the slash locally (issue #157).
+        """
+        return value.rstrip("/")
+
     def spotify_auth_url(self, state: str, code_challenge: str) -> str:
         """Build Spotify authorization URL with OAuth state + PKCE challenge.
 
@@ -55,8 +69,6 @@ class Settings(BaseSettings):
         token exchange: whoever intercepts the authorization code still
         needs the `code_verifier` we hold server-side to redeem it.
         """
-        import urllib.parse
-
         params = {
             "client_id": self.SPOTIFY_CLIENT_ID,
             "response_type": "code",
