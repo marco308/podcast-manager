@@ -59,8 +59,18 @@ class AuthService {
 
                 do {
                     let creds = try await APIClient.shared.exchangeMobileAuthCode(code)
-                    KeychainService.save(creds.sessionId, for: .sessionId)
-                    KeychainService.save(creds.csrfToken, for: .csrfToken)
+
+                    // A failed Keychain write must not look like a successful
+                    // login — without credentials every request would 401 and
+                    // the next launch would sign the user out (issue #163).
+                    let storedSession = KeychainService.save(creds.sessionId, for: .sessionId)
+                    let storedCsrf = KeychainService.save(creds.csrfToken, for: .csrfToken)
+                    guard storedSession, storedCsrf else {
+                        KeychainService.clearAll()
+                        self.error = "Could not securely store your login. Please try again."
+                        return
+                    }
+
                     self.isAuthenticated = true
                     await self.fetchUser()
                 } catch {
@@ -90,13 +100,29 @@ class AuthService {
         do {
             currentUser = try await APIClient.shared.fetchCurrentUser()
         } catch let apiError as APIError where apiError.isUnauthorized {
-            logout()
+            // The session is already dead server-side; just drop local state.
+            clearLocalSession()
         } catch {
             self.error = error.localizedDescription
         }
     }
 
-    func logout() {
+    /// Sign out, invalidating the session on the server first.
+    ///
+    /// Local state is cleared regardless of the outcome — a network failure
+    /// must not strand the user in a signed-in-looking state (issue #148).
+    func logout() async {
+        do {
+            try await APIClient.shared.logout()
+        } catch {
+            // Best effort: the session may already be expired or the server
+            // unreachable. Either way the user asked to sign out.
+            print("Server-side logout failed, clearing local session anyway: \(error)")
+        }
+        clearLocalSession()
+    }
+
+    private func clearLocalSession() {
         KeychainService.clearAll()
         isAuthenticated = false
         currentUser = nil

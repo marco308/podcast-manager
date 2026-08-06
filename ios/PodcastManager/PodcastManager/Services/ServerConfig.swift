@@ -24,8 +24,17 @@ enum ServerConfig {
         UserDefaults.standard.set(url.absoluteString, forKey: defaultsKey)
     }
 
+    /// Hosts allowed to use plain `http`, for local development only.
+    private static let plaintextAllowedHosts: Set<String> = ["localhost", "127.0.0.1", "::1"]
+
     /// Accepts "host", "host:port", or a full URL; returns a normalized URL
     /// with no trailing slash, or nil if unusable. Scheme defaults to https.
+    ///
+    /// `http` is rejected for non-loopback hosts: the session cookie and CSRF
+    /// token would travel in cleartext, and the backend requires HTTPS anyway
+    /// (Spotify OAuth rejects non-HTTPS redirects and session cookies are set
+    /// `Secure`), so a plaintext remote URL can only ever be broken or
+    /// unsafe (issue #163).
     static func normalize(_ raw: String) -> URL? {
         var trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
@@ -40,6 +49,11 @@ enum ServerConfig {
               scheme == "https" || scheme == "http",
               let host = components.host, !host.isEmpty
         else { return nil }
+
+        if scheme == "http", !plaintextAllowedHosts.contains(host.lowercased()) {
+            return nil
+        }
+
         return components.url
     }
 }

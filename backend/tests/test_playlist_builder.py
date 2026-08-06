@@ -70,7 +70,7 @@ class TestUpdatePlaylistWeekendOnly:
         builder = PlaylistBuilder(db, user)
 
         builder._ensure_spotify_playlist = AsyncMock(return_value="spotify123")
-        builder.build_playlist = AsyncMock(return_value=["spotify:episode:1"])
+        builder._build_playlist_content = AsyncMock(return_value=(["spotify:episode:1"], []))
         builder._get_spotify_client = AsyncMock()
         mock_spotify = AsyncMock()
         builder._get_spotify_client.return_value = mock_spotify
@@ -81,7 +81,7 @@ class TestUpdatePlaylistWeekendOnly:
 
         assert result.success is True
         assert result.episode_count == 1
-        builder.build_playlist.assert_called_once()
+        builder._build_playlist_content.assert_called_once()
         mock_spotify.replace_playlist_items.assert_called_once()
 
     @pytest.mark.asyncio
@@ -92,7 +92,7 @@ class TestUpdatePlaylistWeekendOnly:
         builder = PlaylistBuilder(db, user)
 
         builder._ensure_spotify_playlist = AsyncMock(return_value="spotify123")
-        builder.build_playlist = AsyncMock(return_value=["spotify:episode:1"])
+        builder._build_playlist_content = AsyncMock(return_value=(["spotify:episode:1"], []))
         builder._get_spotify_client = AsyncMock()
         mock_spotify = AsyncMock()
         builder._get_spotify_client.return_value = mock_spotify
@@ -103,7 +103,7 @@ class TestUpdatePlaylistWeekendOnly:
 
         assert result.success is True
         assert result.episode_count == 1
-        builder.build_playlist.assert_called_once()
+        builder._build_playlist_content.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_update_runs_on_weekday_for_normal_playlist(self):
@@ -113,7 +113,7 @@ class TestUpdatePlaylistWeekendOnly:
         builder = PlaylistBuilder(db, user)
 
         builder._ensure_spotify_playlist = AsyncMock(return_value="spotify123")
-        builder.build_playlist = AsyncMock(return_value=["spotify:episode:1", "spotify:episode:2"])
+        builder._build_playlist_content = AsyncMock(return_value=(["spotify:episode:1", "spotify:episode:2"], []))
         builder._get_spotify_client = AsyncMock()
         mock_spotify = AsyncMock()
         builder._get_spotify_client.return_value = mock_spotify
@@ -124,4 +124,4 @@ class TestUpdatePlaylistWeekendOnly:
 
         assert result.success is True
         assert result.episode_count == 2
-        builder.build_playlist.assert_called_once()
+        builder._build_playlist_content.assert_called_once()

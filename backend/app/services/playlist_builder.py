@@ -1,6 +1,7 @@
 """Playlist builder service for generating playlist content based on assignments."""
 
 import logging
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -11,11 +12,29 @@ from app.models.playlist import Playlist, PlaylistOrderingMode
 from app.models.playlist_podcast import PlaylistPodcast
 from app.models.podcast import Podcast
 from app.models.user import User
-from app.services.encryption import get_encryption_service
 from app.services.spotify import SpotifyService
 from app.services.token_manager import TokenManager
 
 logger = logging.getLogger(__name__)
+
+
+class EpisodeFetchError(Exception):
+    """Raised when a podcast's episodes could not be fetched from Spotify.
+
+    Previously a failed fetch was swallowed and reported as "no unplayed
+    episodes", which is indistinguishable from a genuinely empty podcast —
+    see :class:`PlaylistBuildError` for why that mattered (issue #145).
+    """
+
+
+class PlaylistBuildError(Exception):
+    """Raised when a playlist's content could not be built safely.
+
+    ``replace_playlist_items`` is a full replace: writing an empty URI list
+    clears the playlist on Spotify. If *every* assigned podcast failed to
+    fetch, an empty build is a transient upstream failure rather than a real
+    "nothing to play", so we refuse to write it (issue #145).
+    """
 
 
 @dataclass
@@ -41,6 +60,10 @@ class PlaylistUpdateResult:
     success: bool
     episode_count: int
     error: str | None = None
+    # True when the playlist *was* written but from incomplete data — some
+    # podcasts failed to fetch. Distinguishes "degraded" from "didn't run",
+    # which callers report differently (issue #145).
+    partial: bool = False
 
 
 @dataclass
@@ -72,7 +95,6 @@ class PlaylistBuilder:
         """
         self._db = db
         self._user = user
-        self._encryption = get_encryption_service()
         self._token_manager = token_manager if token_manager is not None else TokenManager(user.id)
         self._spotify: SpotifyService | None = None
 
@@ -128,6 +150,12 @@ class PlaylistBuilder:
 
         Returns:
             List of unplayed episodes (excluding subscriber-only/restricted content).
+
+        Raises:
+            EpisodeFetchError: if Spotify could not be reached or refused the
+                request. Callers must distinguish this from an empty result —
+                returning ``[]`` here used to let a transient outage clear the
+                user's playlist (issue #145).
         """
         spotify = await self._get_spotify_client()
 
@@ -135,7 +163,7 @@ class PlaylistBuilder:
             episodes_data = await spotify.get_show_episodes_all(podcast.spotify_id, max_episodes=max_episodes)
         except Exception as e:
             logger.error(f"Failed to fetch episodes for {podcast.name}: {e}")
-            return []
+            raise EpisodeFetchError(f"{podcast.name}: {e}") from e
 
         unplayed = []
         for ep in episodes_data:
@@ -189,6 +217,51 @@ class PlaylistBuilder:
             reverse=not sequential,  # sequential = oldest first, non-sequential = newest first
         )
 
+    @staticmethod
+    def _order_chronologically(
+        episodes: list[Episode],
+        podcasts: list[Podcast],
+        *,
+        descending: bool,
+    ) -> list[Episode]:
+        """Sort episodes by release date, keeping sequential shows oldest-first.
+
+        A sequential podcast keeps whichever slots it won in the global
+        date ordering — so non-sequential shows still interleave around it —
+        but those slots are filled oldest-first rather than following the
+        global direction.
+
+        This used to be attempted with :func:`itertools.groupby`, which only
+        groups *consecutive* runs. After a global date sort a show's episodes
+        are rarely adjacent, so the grouping silently collapsed to size-1
+        groups and ``is_sequential`` was ignored in ``chronological_desc``
+        (issue #146).
+
+        Args:
+            episodes: Episodes to order.
+            podcasts: Podcasts assigned to the playlist, for the
+                ``is_sequential`` lookup.
+            descending: True for newest-first, False for oldest-first.
+
+        Returns:
+            Ordered list of episodes.
+        """
+        ordered = sorted(episodes, key=lambda e: (e.release_date, e.show_id), reverse=descending)
+
+        sequential_shows = {p.spotify_id for p in podcasts if p.is_sequential}
+        if not sequential_shows:
+            return ordered
+
+        for show_id in sequential_shows:
+            slots = [i for i, episode in enumerate(ordered) if episode.show_id == show_id]
+            if len(slots) < 2:
+                continue
+            chronological = sorted((ordered[i] for i in slots), key=lambda e: e.release_date)
+            for slot, episode in zip(slots, chronological, strict=True):
+                ordered[slot] = episode
+
+        return ordered
+
     def _apply_ordering(
         self, episodes: list[Episode], ordering_mode: str, podcast_entries: list[PodcastWithPosition] | None = None
     ) -> list[Episode]:
@@ -207,35 +280,13 @@ class PlaylistBuilder:
         Returns:
             Ordered list of episodes
         """
-        from itertools import groupby
-
         podcasts = [entry.podcast for entry in podcast_entries] if podcast_entries else []
 
         if ordering_mode == PlaylistOrderingMode.CHRONOLOGICAL_ASC.value:
-            # Sort by release date ascending, but respect is_sequential
-            sorted_eps = sorted(episodes, key=lambda e: (e.release_date, e.show_id))
-            result = []
-            for show_id, group in groupby(sorted_eps, key=lambda e: e.show_id):
-                podcast = next((p for p in podcasts if p.spotify_id == show_id), None)
-                group_list = list(group)
-                if podcast and podcast.is_sequential:
-                    # Sequential podcasts: always oldest first (already sorted ASC)
-                    pass
-                # Non-sequential: keep the ASC order as-is
-                result.extend(group_list)
-            return result
+            return self._order_chronologically(episodes, podcasts, descending=False)
 
         elif ordering_mode == PlaylistOrderingMode.CHRONOLOGICAL_DESC.value:
-            # Sort by release date descending, but respect is_sequential
-            sorted_eps = sorted(episodes, key=lambda e: (e.release_date, e.show_id), reverse=True)
-            result = []
-            for show_id, group in groupby(sorted_eps, key=lambda e: e.show_id):
-                podcast = next((p for p in podcasts if p.spotify_id == show_id), None)
-                group_list = list(group)
-                if podcast and podcast.is_sequential:
-                    group_list.sort(key=lambda e: e.release_date)
-                result.extend(group_list)
-            return result
+            return self._order_chronologically(episodes, podcasts, descending=True)
 
         elif ordering_mode == PlaylistOrderingMode.PODCAST_ORDER.value and podcast_entries:
             # Order by position from PodcastWithPosition entries
@@ -247,26 +298,18 @@ class PlaylistBuilder:
                 for entry in podcast_entries
             }
 
-            sorted_eps = sorted(
-                episodes,
-                key=lambda e: (
-                    podcast_order_map.get(e.show_id, (float("inf"), False))[0],
-                    e.show_id,
-                ),
-            )
+            # Group by show explicitly rather than relying on the sort making a
+            # show's episodes adjacent — that assumption is what broke the
+            # chronological modes (issue #146).
+            by_show: dict[str, list[Episode]] = defaultdict(list)
+            for episode in episodes:
+                by_show[episode.show_id].append(episode)
 
             result = []
-            for show_id, group in groupby(sorted_eps, key=lambda e: e.show_id):
-                group_list = list(group)
-                podcast_info = podcast_order_map.get(show_id, (float("inf"), False))
-                is_sequential = podcast_info[1]
-
-                if is_sequential:
-                    group_list.sort(key=lambda e: e.release_date)
-                else:
-                    group_list.sort(key=lambda e: e.release_date, reverse=True)
-
-                result.extend(group_list)
+            for show_id in sorted(by_show, key=lambda s: (podcast_order_map.get(s, (float("inf"), False))[0], s)):
+                _position, is_sequential = podcast_order_map.get(show_id, (float("inf"), False))
+                # Sequential shows play oldest-first; everything else newest-first.
+                result.extend(sorted(by_show[show_id], key=lambda e: e.release_date, reverse=not is_sequential))
 
             return result
 
@@ -282,27 +325,69 @@ class PlaylistBuilder:
 
         Returns:
             List of episode URIs for the playlist.
+
+        Raises:
+            PlaylistBuildError: if every assigned podcast failed to fetch.
+        """
+        uris, _failed = await self._build_playlist_content(playlist)
+        return uris
+
+    async def _build_playlist_content(self, playlist: Playlist) -> tuple[list[str], list[str]]:
+        """Build playlist content, reporting which podcasts failed to fetch.
+
+        Args:
+            playlist: The playlist configuration.
+
+        Returns:
+            ``(episode_uris, failed_podcast_names)``. A non-empty failure list
+            means the URIs are incomplete — the caller decides whether that is
+            safe to write.
+
+        Raises:
+            PlaylistBuildError: if the playlist has assigned podcasts but every
+                one of them failed to fetch. Writing the resulting empty list
+                would clear the playlist on Spotify (issue #145).
         """
         podcast_entries = await self._get_playlist_podcasts(playlist.id)
 
         if not podcast_entries:
-            return []
+            return [], []
 
         all_episodes: list[Episode] = []
+        failed_podcasts: list[str] = []
 
         for entry in podcast_entries:
             podcast = entry.podcast
-            if playlist.episode_mode == "all_unplayed":
-                # Get all unplayed episodes
-                episodes = await self._get_unplayed_episodes(podcast)
-                sorted_episodes = self._sort_episodes(episodes, podcast.is_sequential)
-                all_episodes.extend(sorted_episodes)
-            elif playlist.episode_mode == "latest_only":
-                # Get latest unplayed episode only
-                episodes = await self._get_unplayed_episodes(podcast, max_episodes=10)
-                if episodes:
-                    sorted_eps = self._sort_episodes(episodes, sequential=False)
-                    all_episodes.append(sorted_eps[0])
+            try:
+                if playlist.episode_mode == "all_unplayed":
+                    # Get all unplayed episodes
+                    episodes = await self._get_unplayed_episodes(podcast)
+                    sorted_episodes = self._sort_episodes(episodes, podcast.is_sequential)
+                    all_episodes.extend(sorted_episodes)
+                elif playlist.episode_mode == "latest_only":
+                    # Get latest unplayed episode only
+                    episodes = await self._get_unplayed_episodes(podcast, max_episodes=10)
+                    if episodes:
+                        sorted_eps = self._sort_episodes(episodes, sequential=False)
+                        all_episodes.append(sorted_eps[0])
+            except EpisodeFetchError:
+                # Keep going: one permanently-broken show (region-locked,
+                # delisted) shouldn't block the rest of the playlist forever.
+                failed_podcasts.append(podcast.name)
+
+        if failed_podcasts and len(failed_podcasts) == len(podcast_entries):
+            # Nothing fetched. An empty write here would wipe the playlist,
+            # so refuse it and let the next run retry (issue #145).
+            raise PlaylistBuildError(
+                f"All {len(podcast_entries)} podcast(s) failed to fetch; "
+                f"refusing to overwrite '{playlist.name}' with an empty list"
+            )
+
+        if failed_podcasts:
+            logger.warning(
+                f"Playlist '{playlist.name}' built without {len(failed_podcasts)} "
+                f"of {len(podcast_entries)} podcast(s): {', '.join(failed_podcasts)}"
+            )
 
         # Apply ordering
         ordering = (
@@ -321,7 +406,7 @@ class PlaylistBuilder:
         else:
             all_episodes = self._apply_ordering(all_episodes, ordering, podcast_entries)
 
-        return [ep.uri for ep in all_episodes]
+        return [ep.uri for ep in all_episodes], failed_podcasts
 
     async def _ensure_spotify_playlist(self, playlist: Playlist) -> str:
         """Ensure a Spotify playlist exists, creating one if needed.
@@ -344,6 +429,7 @@ class PlaylistBuilder:
             name=playlist.name,
             description=description,
             public=False,
+            on_unauthorized=self._token_manager.force_refresh,
         )
 
         # Save the Spotify playlist ID
@@ -370,8 +456,10 @@ class PlaylistBuilder:
             spotify_playlist_id = await self._ensure_spotify_playlist(playlist)
 
             # Build episode list (may take many minutes for users with deep
-            # back-catalogues — issue #89).
-            episode_uris = await self.build_playlist(playlist)
+            # back-catalogues — issue #89). Raises PlaylistBuildError rather
+            # than returning an empty list when every fetch failed, so a
+            # transient outage can't clear the playlist (issue #145).
+            episode_uris, failed_podcasts = await self._build_playlist_content(playlist)
 
             # Re-acquire a fresh token immediately before the write. The
             # build step above may have taken long enough for the cached
@@ -392,6 +480,19 @@ class PlaylistBuilder:
             await self._db.flush()
 
             logger.info(f"Updated playlist '{playlist.name}' with {len(episode_uris)} episodes")
+
+            if failed_podcasts:
+                # The write went through, but on incomplete data. Report it as
+                # a failure so the SyncLog and the UI don't imply the playlist
+                # is a faithful rebuild (issue #145).
+                return PlaylistUpdateResult(
+                    playlist_id=playlist.id,
+                    playlist_name=playlist.name,
+                    success=False,
+                    episode_count=len(episode_uris),
+                    error=f"Episodes could not be fetched for: {', '.join(failed_podcasts)}",
+                    partial=True,
+                )
 
             return PlaylistUpdateResult(
                 playlist_id=playlist.id,

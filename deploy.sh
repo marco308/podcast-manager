@@ -41,22 +41,10 @@ wait_for_service() {
     return 1
 }
 
-# Run alembic migrations inside the first running backend task. Using the
-# task name (service.1.xxx) — not a name-filter on `docker ps` — avoids
-# accidentally targeting a sibling stack that happens to match the prefix.
-run_migrations() {
-    wait_for_service "$BACKEND_SERVICE"
-    local task_container
-    task_container=$(docker ps \
-        --filter "label=com.docker.swarm.service.name=${BACKEND_SERVICE}" \
-        --format '{{.ID}}' | head -n1)
-    if [[ -z "$task_container" ]]; then
-        echo "ERROR: no running container found for $BACKEND_SERVICE" >&2
-        return 1
-    fi
-    echo "Running migrations in container $task_container..."
-    docker exec "$task_container" alembic upgrade head
-}
+# Migrations run in the container's entrypoint (backend/entrypoint.sh) before
+# uvicorn starts, so a task that reaches Running has already migrated — and
+# the compose path gets the same treatment (issue #149). A failing migration
+# exits the container, which surfaces here as wait_for_service timing out.
 
 case "$COMPONENT" in
     backend)
@@ -64,7 +52,7 @@ case "$COMPONENT" in
         docker build -t podcast-manager-backend:latest ./backend
         echo "Updating backend service..."
         docker service update --force "$BACKEND_SERVICE"
-        run_migrations
+        wait_for_service "$BACKEND_SERVICE"
         ;;
     frontend)
         echo "Building frontend..."
@@ -81,7 +69,7 @@ case "$COMPONENT" in
         echo "Updating services..."
         docker service update --force "$BACKEND_SERVICE"
         docker service update --force "$FRONTEND_SERVICE"
-        run_migrations
+        wait_for_service "$BACKEND_SERVICE"
         wait_for_service "$FRONTEND_SERVICE"
         ;;
 esac

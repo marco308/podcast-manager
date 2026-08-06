@@ -63,7 +63,17 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
 
-async def init_db() -> None:
-    """Initialize database tables."""
+async def create_all_for_tests() -> None:
+    """Create every table directly from the models, bypassing Alembic.
+
+    **Tests only.** Alembic owns the real schema — see ``alembic/versions``
+    and the migration step in ``backend/entrypoint.sh``.
+
+    This used to run on every application start as ``init_db()``, which meant
+    a fresh deployment got its tables from ``create_all`` with no
+    ``alembic_version`` row; the next ``alembic upgrade head`` then tried to
+    replay ``001_initial`` against tables that already existed and failed
+    (issue #149).
+    """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

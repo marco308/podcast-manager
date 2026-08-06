@@ -12,7 +12,6 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from app.config import get_settings
-from app.database import init_db
 from app.jobs.scheduler import init_scheduler, shutdown_scheduler
 from app.rate_limit import limiter
 from app.routers import auth_router, jobs_router, playlists_router, podcasts_router
@@ -40,8 +39,9 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI) -> AsyncGenerator:
     """Application lifespan manager."""
     logger.info("Starting Podcast Manager API...")
-    # Startup
-    await init_db()
+    # Startup. The schema is owned by Alembic and applied by entrypoint.sh
+    # before the server boots — the app no longer creates tables itself
+    # (issue #149).
     await init_scheduler()
     logger.info("Application started successfully")
     yield
@@ -54,7 +54,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
 app = FastAPI(
     title=settings.APP_NAME,
     description="Podcast management and playlist automation",
-    version="1.0.0",
+    version=settings.APP_VERSION,
     lifespan=lifespan,
     docs_url="/api/docs",
     redoc_url="/api/redoc",
@@ -114,5 +114,5 @@ async def health_check() -> dict:
     return {
         "status": "healthy",
         "app": settings.APP_NAME,
-        "version": "1.0.0",
+        "version": settings.APP_VERSION,
     }

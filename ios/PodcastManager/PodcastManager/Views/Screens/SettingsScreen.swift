@@ -143,7 +143,7 @@ struct SettingsScreen: View {
 
                 Section {
                     Button("Sign Out", role: .destructive) {
-                        authService.logout()
+                        Task { await authService.logout() }
                     }
                 }
             }

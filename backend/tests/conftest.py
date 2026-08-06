@@ -13,4 +13,3 @@ _DUMMY_FERNET_KEY = "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE="
 os.environ.setdefault("SPOTIFY_CLIENT_ID", "test-client-id")
 os.environ.setdefault("SPOTIFY_CLIENT_SECRET", "test-client-secret")
 os.environ.setdefault("ENCRYPTION_KEY", _DUMMY_FERNET_KEY)
-os.environ.setdefault("SECRET_KEY", "test-secret-key")

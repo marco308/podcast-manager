@@ -364,7 +364,13 @@ async def get_job_status() -> list[dict]:
 async def reschedule_playlist_update(hour: int, minute: int) -> str | None:
     """Reschedule the daily playlist update and persist the new time.
 
-    Returns the next run time ISO string, or None on failure.
+    Returns:
+        The next run time as an ISO string, or None if the job has no next
+        run (i.e. it is paused). Failures raise rather than returning None —
+        the exception carries the reason and is already logged (issue #159).
+
+    Raises:
+        Exception: propagated from APScheduler or the settings write.
     """
     try:
         scheduler.reschedule_job(
@@ -475,23 +481,6 @@ async def trigger_single_playlist_update(user_id: int, playlist_id: int) -> dict
             logger.error(f"Single playlist update failed: {e}")
             await db.rollback()
             return {"success": False, "error": str(e)}
-
-
-async def _get_valid_access_token(user_id: int) -> str | None:
-    """Get a valid Spotify access token for a user.
-
-    Thin compatibility wrapper around :class:`TokenManager` — kept so the
-    cleanup job can call into it without restructuring. New code should
-    use ``TokenManager`` directly so it can also wire up an
-    ``on_unauthorized`` callback at the write boundary (issue #89).
-
-    Returns:
-        A valid access token string, or None if the user was not found.
-    """
-    try:
-        return await TokenManager(user_id).get_token(min_remaining_seconds=300)
-    except RuntimeError:
-        return None
 
 
 def _classify_failure(
@@ -683,16 +672,18 @@ async def remove_played_episodes_from_playlists() -> None:
 
             try:
                 for _playlist_id, playlist_name, spotify_playlist_id in playlists:
-                    playlists_attempted += 1
-
                     # Per-run API budget — give up early if we've already
                     # spent the allowance, the next run picks up where we left off.
+                    # Checked before counting the playlist as attempted, so a
+                    # deferred playlist isn't reported as one we tried (issue #161).
                     if spotify_client.api_calls_used >= CLEANUP_API_CALL_BUDGET:
                         logger.warning(
                             f"Cleanup API budget ({CLEANUP_API_CALL_BUDGET}) exhausted; "
                             f"deferring remaining playlists to next run"
                         )
                         break
+
+                    playlists_attempted += 1
 
                     try:
                         # Walk playlist-items pages, filtering inline.
