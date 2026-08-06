@@ -21,6 +21,10 @@ set -euo pipefail
 
 COMPONENT="${1:-all}"
 
+# Build contexts below are relative, so operate on the repo this script lives
+# in rather than whatever directory it happened to be invoked from.
+cd "$(dirname "${BASH_SOURCE[0]}")"
+
 STACK="podcast-manager"
 BACKEND_SERVICE="${STACK}_backend"
 FRONTEND_SERVICE="${STACK}_frontend"
