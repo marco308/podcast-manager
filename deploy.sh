@@ -2,19 +2,24 @@
 set -euo pipefail
 
 # Deployment script for Podcast Manager
-# Usage: [REGISTRY=registry.example.com/you] ./deploy.sh [backend|frontend|all]
+# Usage: [REGISTRY=ghcr.io/you] [IMAGE_TAG=<sha>] ./deploy.sh [backend|frontend|all]
+#
+# With REGISTRY set, this deploys images CI already built and published: no
+# build runs here, so the swarm does no compile work, and every node pulls the
+# identical image instead of whatever it happened to build locally (issue
+# #169). IMAGE_TAG defaults to "latest"; pass a commit SHA to deploy or roll
+# back to one exact build.
 #
 # Without REGISTRY the images are built locally as :latest and the services
-# are bounced with --force — which only works on a single-node swarm, since
-# other nodes would keep running whatever stale image they already have
-# (issue #169). For a multi-node swarm, set REGISTRY to a prefix every node
-# can pull from; the script then tags/pushes both images and repoints the
-# services at the pushed reference (resolved to a digest on update).
+# are bounced with --force. That only works on a single-node swarm, since
+# other nodes would keep running whatever stale image they already have, so
+# the multi-node case is refused below.
 
 COMPONENT="${1:-all}"
 BACKEND_SERVICE="podcast-manager_backend"
 FRONTEND_SERVICE="podcast-manager_frontend"
 REGISTRY="${REGISTRY:-}"
+IMAGE_TAG="${IMAGE_TAG:-latest}"
 
 case "$COMPONENT" in
     backend|frontend|all) ;;
@@ -68,31 +73,28 @@ wait_for_service() {
     return 1
 }
 
-# Build one component's image; with REGISTRY, also tag and push it so every
-# swarm node can pull the exact build being deployed.
+# Build one component's image locally. Only reached in the registry-less
+# single-node case: with REGISTRY the image was already built and published
+# by CI, and rebuilding it here would put back the compute load on the swarm
+# that publishing exists to remove.
 build_image() {
     local component="$1"
-    local image="podcast-manager-${component}:latest"
     echo "Building ${component}..."
-    docker build -t "$image" "./${component}"
-    if [[ -n "$REGISTRY" ]]; then
-        echo "Pushing ${REGISTRY}/${image}..."
-        docker tag "$image" "${REGISTRY}/${image}"
-        docker push "${REGISTRY}/${image}"
-    fi
+    docker build -t "podcast-manager-${component}:latest" "./${component}"
 }
 
 # Update the swarm service. With REGISTRY the service is repointed at the
-# pushed reference — Swarm resolves it to a digest, so every node pulls this
-# exact build (and rollback targets the previous digest). Without it, --force
-# restarts the service on the locally-built :latest.
+# published reference, which Swarm resolves to a digest so every node pulls
+# this exact build; --with-registry-auth forwards the manager's credentials
+# so workers can pull a private package. Without it, --force restarts the
+# service on the locally-built :latest.
 update_service() {
     local component="$1"
     local service="$2"
     echo "Updating ${service}..."
     if [[ -n "$REGISTRY" ]]; then
         docker service update --force --with-registry-auth \
-            --image "${REGISTRY}/podcast-manager-${component}:latest" "$service"
+            --image "${REGISTRY}/podcast-manager-${component}:${IMAGE_TAG}" "$service"
     else
         docker service update --force "$service"
     fi
@@ -103,20 +105,26 @@ update_service() {
 # the compose path gets the same treatment (issue #149). A failing migration
 # exits the container, which surfaces here as wait_for_service timing out.
 
+if [[ -n "$REGISTRY" ]]; then
+    echo "Deploying published images from ${REGISTRY} (tag: ${IMAGE_TAG}); no local build."
+fi
+
 case "$COMPONENT" in
     backend)
-        build_image backend
+        if [[ -z "$REGISTRY" ]]; then build_image backend; fi
         update_service backend "$BACKEND_SERVICE"
         wait_for_service "$BACKEND_SERVICE"
         ;;
     frontend)
-        build_image frontend
+        if [[ -z "$REGISTRY" ]]; then build_image frontend; fi
         update_service frontend "$FRONTEND_SERVICE"
         wait_for_service "$FRONTEND_SERVICE"
         ;;
     all)
-        build_image backend
-        build_image frontend
+        if [[ -z "$REGISTRY" ]]; then
+            build_image backend
+            build_image frontend
+        fi
         update_service backend "$BACKEND_SERVICE"
         update_service frontend "$FRONTEND_SERVICE"
         wait_for_service "$BACKEND_SERVICE"
