@@ -7,8 +7,9 @@ set -euo pipefail
 # With REGISTRY set, this deploys images CI already built and published: no
 # build runs here, so the swarm does no compile work, and every node pulls the
 # identical image instead of whatever it happened to build locally (issue
-# #169). IMAGE_TAG defaults to "latest"; pass a commit SHA to deploy or roll
-# back to one exact build.
+# #169). IMAGE_TAG defaults to the checked-out commit, so pull the commit you
+# intend to ship before deploying; pass IMAGE_TAG=<sha> to roll back to an
+# earlier build, or IMAGE_TAG=latest for the previous moving-tag behaviour.
 #
 # Without REGISTRY the images are built locally as :latest and the services
 # are bounced with --force. That only works on a single-node swarm, since
@@ -19,7 +20,18 @@ COMPONENT="${1:-all}"
 BACKEND_SERVICE="podcast-manager_backend"
 FRONTEND_SERVICE="podcast-manager_frontend"
 REGISTRY="${REGISTRY:-}"
-IMAGE_TAG="${IMAGE_TAG:-latest}"
+
+# Deploy the commit that is actually checked out, not a moving :latest. Swarm
+# stores the tag rather than resolving it to a digest, so a service left on
+# :latest would come back on whatever had been published most recently if a
+# task restarted later (node reboot, crash) — not the build it was deployed
+# with. Pinning to the commit SHA makes a deploy reproducible and lets a
+# rollback name an exact prior build. CI publishes both tags for every merge.
+if [[ -n "$REGISTRY" ]]; then
+    IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse HEAD 2>/dev/null || echo latest)}"
+else
+    IMAGE_TAG="${IMAGE_TAG:-latest}"
+fi
 
 case "$COMPONENT" in
     backend|frontend|all) ;;
@@ -100,6 +112,21 @@ update_service() {
     fi
 }
 
+# Confirm the image exists before touching any service. Deploying "all" runs
+# two updates, so an unpublished tag discovered on the second one would leave
+# the stack half-updated. Usually this means CI has not finished publishing
+# this commit, or the commit was never merged to main.
+require_published_image() {
+    local component="$1"
+    local ref="${REGISTRY}/podcast-manager-${component}:${IMAGE_TAG}"
+    if ! docker manifest inspect "$ref" >/dev/null 2>&1; then
+        echo "ERROR: ${ref} is not in the registry." >&2
+        echo "CI publishes an image for every merge to main — check that its run has" >&2
+        echo "finished, or pass an explicit IMAGE_TAG=<published sha|latest>." >&2
+        exit 1
+    fi
+}
+
 # Migrations run in the container's entrypoint (backend/entrypoint.sh) before
 # uvicorn starts, so a task that reaches Running has already migrated — and
 # the compose path gets the same treatment (issue #149). A failing migration
@@ -107,6 +134,11 @@ update_service() {
 
 if [[ -n "$REGISTRY" ]]; then
     echo "Deploying published images from ${REGISTRY} (tag: ${IMAGE_TAG}); no local build."
+    case "$COMPONENT" in
+        backend)  require_published_image backend ;;
+        frontend) require_published_image frontend ;;
+        all)      require_published_image backend; require_published_image frontend ;;
+    esac
 fi
 
 case "$COMPONENT" in
