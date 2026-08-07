@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { podcastsApi } from '../api';
 import type { PodcastUpdate } from '../types';
+import { playlistKeys } from './usePlaylists';
 
 // Query key factory for podcasts
 export const podcastKeys = {
@@ -53,6 +54,9 @@ export function useSyncPodcasts() {
     onSuccess: () => {
       // Invalidate all podcast queries to refetch fresh data
       queryClient.invalidateQueries({ queryKey: podcastKeys.all });
+      // A sync can delete podcasts (and their assignments), changing
+      // playlist podcast_counts and memberships
+      queryClient.invalidateQueries({ queryKey: playlistKeys.all });
     },
   });
 }
@@ -66,6 +70,9 @@ export function useUnfollowPodcast() {
     onSuccess: () => {
       // Invalidate all podcast queries to refetch fresh data
       queryClient.invalidateQueries({ queryKey: podcastKeys.all });
+      // Unfollowing deletes the podcast's playlist assignments, changing
+      // playlist podcast_counts and memberships
+      queryClient.invalidateQueries({ queryKey: playlistKeys.all });
     },
   });
 }

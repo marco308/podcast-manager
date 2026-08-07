@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import {
+  App,
   Typography,
   Button,
   Table,
@@ -10,7 +11,6 @@ import {
   Input,
   Select,
   Switch,
-  message,
   Popconfirm,
   Alert,
   Card,
@@ -48,7 +48,9 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { useQueryClient } from '@tanstack/react-query';
 import {
+  playlistKeys,
   usePlaylists,
   usePlaylistPodcasts,
   useCreatePlaylist,
@@ -62,6 +64,7 @@ import {
   useReorderPlaylistPodcasts,
 } from '../hooks';
 import { LoadingSpinner } from '../components';
+import { getErrorMessage } from '../api';
 import type {
   Playlist,
   PlaylistCreate,
@@ -100,7 +103,6 @@ function SortableItem({ podcast, onRemove, removing }: SortableItemProps) {
       <List.Item
         style={{
           padding: '12px 0',
-          touchAction: 'none',
         }}
       >
         <div
@@ -171,6 +173,8 @@ interface PlaylistOrderingSectionProps {
 function PlaylistOrderingSection({ playlist }: PlaylistOrderingSectionProps) {
   const shouldRender = playlist && playlist.ordering_mode === 'podcast_order';
 
+  const { message } = App.useApp();
+  const queryClient = useQueryClient();
   const { data: playlistPodcasts, isLoading } = usePlaylistPodcasts(playlist?.id ?? 0);
   const { data: allPodcasts } = usePodcasts();
   const addPodcasts = useAddPodcastsToPlaylist();
@@ -237,9 +241,12 @@ function PlaylistOrderingSection({ playlist }: PlaylistOrderingSectionProps) {
       message.success('Order updated');
     } catch {
       message.error('Failed to update order');
-      if (playlistPodcasts) {
-        setLocalPodcasts(playlistPodcasts);
-      }
+      // Refetch the authoritative order rather than snapping back to the last
+      // fetched snapshot, which may predate a reorder that already committed.
+      // Clearing the sync marker makes the render-time sync block re-run even
+      // if the refetch returns referentially identical data.
+      setSyncedPodcasts(undefined);
+      queryClient.invalidateQueries({ queryKey: playlistKeys.podcasts(playlist.id) });
     }
   };
 
@@ -348,6 +355,7 @@ function PlaylistOrderingSection({ playlist }: PlaylistOrderingSectionProps) {
 }
 
 export function Playlists() {
+  const { message } = App.useApp();
   const { data: playlists, isLoading, error } = usePlaylists();
   const createPlaylist = useCreatePlaylist();
   const updatePlaylist = useUpdatePlaylist();
@@ -363,13 +371,25 @@ export function Playlists() {
   const [runningPlaylistId, setRunningPlaylistId] = useState<number | null>(null);
   const [form] = Form.useForm();
 
-  // Automatically select the first playlist with podcast_order mode when playlists
-  // load. Adjusting state during render (guarded so it runs only until a playlist
-  // is selected) is React's recommended alternative to a state-setting effect.
-  if (playlists && !selectedOrderingPlaylist) {
-    const podcastOrderPlaylist = playlists.find((p) => p.ordering_mode === 'podcast_order');
-    if (podcastOrderPlaylist) {
-      setSelectedOrderingPlaylist(podcastOrderPlaylist);
+  // Keep the ordering selection reconciled with fresh playlist data on every
+  // render (React's recommended alternative to a state-setting effect; React
+  // Query's structural sharing keeps references stable when data is unchanged):
+  // clear the selection if the playlist was deleted or left podcast_order mode,
+  // refresh the object reference when the playlist changed, and otherwise
+  // auto-select the first podcast_order playlist.
+  if (playlists) {
+    if (selectedOrderingPlaylist) {
+      const fresh = playlists.find((p) => p.id === selectedOrderingPlaylist.id);
+      if (!fresh || fresh.ordering_mode !== 'podcast_order') {
+        setSelectedOrderingPlaylist(null);
+      } else if (fresh !== selectedOrderingPlaylist) {
+        setSelectedOrderingPlaylist(fresh);
+      }
+    } else {
+      const podcastOrderPlaylist = playlists.find((p) => p.ordering_mode === 'podcast_order');
+      if (podcastOrderPlaylist) {
+        setSelectedOrderingPlaylist(podcastOrderPlaylist);
+      }
     }
   }
 
@@ -458,8 +478,7 @@ export function Playlists() {
         message.success(result.message);
       }
     } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      message.error(detail || 'Failed to update playlist');
+      message.error(getErrorMessage(err));
     } finally {
       setRunningPlaylistId(null);
     }
@@ -468,10 +487,28 @@ export function Playlists() {
   const handleRunAll = async () => {
     try {
       const result = await runAllPlaylists.mutateAsync();
-      message.success(result.message);
+      // A 200 only means the batch ran — each playlist carries its own
+      // success/skipped/error status, so summarise rather than blanket-success.
+      const failed = result.results.filter((r) => !r.success);
+      const skipped = result.results.filter((r) => r.success && r.skipped);
+      const succeeded = result.results.filter((r) => r.success && !r.skipped);
+
+      let summary = `Updated ${succeeded.length} playlist${succeeded.length === 1 ? '' : 's'}`;
+      if (skipped.length > 0) {
+        summary += `, ${skipped.length} skipped (weekend-only)`;
+      }
+
+      if (failed.length > 0) {
+        message.error(
+          `${summary}, ${failed.length} failed: ${failed.map((r) => r.playlist_name).join(', ')}`
+        );
+      } else if (skipped.length > 0) {
+        message.warning(summary);
+      } else {
+        message.success(summary);
+      }
     } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      message.error(detail || 'Failed to update playlists');
+      message.error(getErrorMessage(err));
     }
   };
 

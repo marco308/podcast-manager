@@ -1,4 +1,4 @@
-import { Card, Row, Col, Statistic, Button, Space, Typography, Tag, message, Grid } from 'antd';
+import { App, Card, Row, Col, Statistic, Button, Space, Typography, Tag, Grid } from 'antd';
 import {
   SyncOutlined,
   CustomerServiceOutlined,
@@ -9,11 +9,13 @@ import {
 import dayjs from 'dayjs';
 import { usePodcasts, useSyncPodcasts, usePlaylists, useRunAllPlaylists } from '../hooks';
 import { LoadingSpinner } from '../components';
+import { getErrorMessage } from '../api';
 
 const { Title, Text } = Typography;
 const { useBreakpoint } = Grid;
 
 export function Dashboard() {
+  const { message } = App.useApp();
   const { data: podcasts, isLoading: podcastsLoading } = usePodcasts();
   const { data: playlists, isLoading: playlistsLoading } = usePlaylists();
   const syncPodcasts = useSyncPodcasts();
@@ -33,9 +35,28 @@ export function Dashboard() {
   const handleRunAll = async () => {
     try {
       const result = await runAllPlaylists.mutateAsync();
-      message.success(result.message);
-    } catch {
-      message.error('Failed to update playlists');
+      // A 200 only means the batch ran — each playlist carries its own
+      // success/skipped/error status, so summarise rather than blanket-success.
+      const failed = result.results.filter((r) => !r.success);
+      const skipped = result.results.filter((r) => r.success && r.skipped);
+      const succeeded = result.results.filter((r) => r.success && !r.skipped);
+
+      let summary = `Updated ${succeeded.length} playlist${succeeded.length === 1 ? '' : 's'}`;
+      if (skipped.length > 0) {
+        summary += `, ${skipped.length} skipped (weekend-only)`;
+      }
+
+      if (failed.length > 0) {
+        message.error(
+          `${summary}, ${failed.length} failed: ${failed.map((r) => r.playlist_name).join(', ')}`
+        );
+      } else if (skipped.length > 0) {
+        message.warning(summary);
+      } else {
+        message.success(summary);
+      }
+    } catch (err: unknown) {
+      message.error(getErrorMessage(err));
     }
   };
 

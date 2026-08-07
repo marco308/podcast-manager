@@ -1,9 +1,10 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import {
+  App,
   Table,
   Avatar,
   Switch,
-  message,
   Typography,
   Space,
   Tag,
@@ -30,6 +31,7 @@ import {
 import dayjs from 'dayjs';
 import type { Podcast } from '../../types';
 import {
+  podcastKeys,
   useUpdatePodcast,
   useUnfollowPodcast,
   usePlaylists,
@@ -42,12 +44,13 @@ const { Text } = Typography;
 
 interface PodcastTableProps {
   podcasts: Podcast[];
-  loading?: boolean;
 }
 
 type ViewMode = 'cards' | 'table';
 
-export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
+export function PodcastTable({ podcasts }: PodcastTableProps) {
+  const { message } = App.useApp();
+  const queryClient = useQueryClient();
   const updatePodcast = useUpdatePodcast();
   const unfollowPodcast = useUnfollowPodcast();
   const { data: playlists } = usePlaylists();
@@ -107,15 +110,26 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
     setSelectedPodcast(null);
   };
 
+  // Optimistically rewrite one podcast's playlist_ids in the cached list so
+  // the table Select reflects a change immediately (and a second change diffs
+  // against fresh data instead of stale props).
+  const setCachedPlaylistIds = (podcastId: number, playlistIds: number[]) => {
+    queryClient.setQueryData<Podcast[]>(podcastKeys.list(), (old) =>
+      old?.map((p) => (p.id === podcastId ? { ...p, playlist_ids: playlistIds } : p))
+    );
+  };
+
   const handlePlaylistsChange = async (podcast: Podcast, newPlaylistIds: number[]) => {
     setUpdatingId(podcast.spotify_id);
+    const previousIds = podcast.playlist_ids;
+    setCachedPlaylistIds(podcast.id, newPlaylistIds);
     try {
-      const oldIds = new Set(podcast.playlist_ids);
+      const oldIds = new Set(previousIds);
       const newIds = new Set(newPlaylistIds);
 
       // Find IDs to add and remove
       const toAdd = newPlaylistIds.filter((id) => !oldIds.has(id));
-      const toRemove = podcast.playlist_ids.filter((id) => !newIds.has(id));
+      const toRemove = previousIds.filter((id) => !newIds.has(id));
 
       // Process additions and removals in parallel
       await Promise.all([
@@ -135,6 +149,13 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
 
       message.success('Playlist assignments updated');
     } catch {
+      // Roll back both optimistic copies (cached list and drawer state);
+      // successful sub-mutations trigger an invalidation that will settle
+      // any partial state from the server.
+      setCachedPlaylistIds(podcast.id, previousIds);
+      setSelectedPodcast((prev) =>
+        prev && prev.id === podcast.id ? { ...prev, playlist_ids: previousIds } : prev
+      );
       message.error('Failed to update playlist assignments');
     } finally {
       setUpdatingId(null);
@@ -147,6 +168,10 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
       await updatePodcast.mutateAsync({ spotifyId, data: { is_sequential: checked } });
       message.success(checked ? 'Marked as sequential' : 'Removed sequential flag');
     } catch {
+      // Roll back the drawer's optimistic toggle to the pre-change value
+      setSelectedPodcast((prev) =>
+        prev && prev.spotify_id === spotifyId ? { ...prev, is_sequential: !checked } : prev
+      );
       message.error('Failed to update');
     } finally {
       setUpdatingId(null);
@@ -432,7 +457,6 @@ export function PodcastTable({ podcasts, loading }: PodcastTableProps) {
             dataSource={filteredPodcasts}
             columns={columns}
             rowKey="spotify_id"
-            loading={loading}
             pagination={{
               pageSize: pageSize,
               showSizeChanger: true,
