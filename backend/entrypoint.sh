@@ -17,6 +17,13 @@ python -m scripts.adopt_legacy_schema
 echo "Running database migrations..."
 alembic upgrade head
 
+# Trust X-Forwarded-* from the reverse proxy so request.client.host is the
+# real client IP (per-client rate limiting) instead of the proxy's address
+# (issue #173). The backend publishes no host port in either deployment path
+# — it is only reachable via nginx/Traefik on the internal Docker network —
+# so trusting any peer is sound here. Override to restrict.
+FORWARDED_ALLOW_IPS="${FORWARDED_ALLOW_IPS:-*}"
+
 # Serve over HTTPS when certs are mounted (local mkcert setup); otherwise
 # plain HTTP behind whatever TLS-terminating proxy is in front.
 if [ -f /app/certs/localhost+2.pem ] && [ -f /app/certs/localhost+2-key.pem ]; then
@@ -24,9 +31,12 @@ if [ -f /app/certs/localhost+2.pem ] && [ -f /app/certs/localhost+2-key.pem ]; t
     exec uvicorn app.main:app \
         --host 0.0.0.0 \
         --port 8000 \
+        --proxy-headers \
+        --forwarded-allow-ips "$FORWARDED_ALLOW_IPS" \
         --ssl-keyfile=/app/certs/localhost+2-key.pem \
         --ssl-certfile=/app/certs/localhost+2.pem
 fi
 
 echo "Starting uvicorn..."
-exec uvicorn app.main:app --host 0.0.0.0 --port 8000
+exec uvicorn app.main:app --host 0.0.0.0 --port 8000 \
+    --proxy-headers --forwarded-allow-ips "$FORWARDED_ALLOW_IPS"

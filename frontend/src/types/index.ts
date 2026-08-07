@@ -152,5 +152,6 @@ export interface PlaylistRunAllResult {
     episode_count: number;
     error: string | null;
     skipped: boolean;
+    partial: boolean;
   }[];
 }

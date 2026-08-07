@@ -136,7 +136,7 @@ async def create_playlist(
         else PlaylistOrderingMode.DEFAULT,
     )
     db.add(playlist)
-    await db.flush()
+    await db.commit()  # persist before the response is sent (see get_db)
 
     return _build_playlist_response(playlist, 0)
 
@@ -187,7 +187,7 @@ async def update_playlist(
     if update_data.ordering_mode is not None:
         playlist.ordering_mode = PlaylistOrderingMode(update_data.ordering_mode.value)
 
-    await db.flush()
+    await db.commit()  # persist before the response is sent (see get_db)
 
     count = await _get_podcast_count(db, playlist.id)
     return _build_playlist_response(playlist, count)
@@ -209,6 +209,7 @@ async def delete_playlist(
         raise HTTPException(status_code=404, detail="Playlist not found")
 
     await db.delete(playlist)
+    await db.commit()  # persist before the response is sent (see get_db)
     return {"message": "Playlist deleted"}
 
 
@@ -281,7 +282,10 @@ async def add_podcasts_to_playlist(
     max_position = max_pos_result.scalar() or 0
 
     added = 0
-    for podcast_id in data.podcast_ids:
+    # Dedupe while preserving order — with autoflush off, a repeated ID in one
+    # request passes the existence check twice (the second SELECT can't see the
+    # first pending add) and 500s on the unique constraint (issue #182).
+    for podcast_id in dict.fromkeys(data.podcast_ids):
         # Verify podcast exists
         podcast_result = await db.execute(select(Podcast).where(Podcast.id == podcast_id))
         if not podcast_result.scalar_one_or_none():
@@ -305,7 +309,7 @@ async def add_podcasts_to_playlist(
         db.add(assignment)
         added += 1
 
-    await db.flush()
+    await db.commit()  # persist before the response is sent (see get_db)
 
     return {"message": f"Added {added} podcast(s) to playlist", "added": added}
 
@@ -336,7 +340,7 @@ async def remove_podcast_from_playlist(
         raise HTTPException(status_code=404, detail="Podcast not assigned to this playlist")
 
     await db.delete(assignment)
-    await db.flush()
+    await db.commit()  # persist before the response is sent (see get_db)
 
     return {"message": "Podcast removed from playlist"}
 
@@ -376,7 +380,7 @@ async def reorder_playlist_podcasts(
 
         assignment.position = position
 
-    await db.flush()
+    await db.commit()  # persist before the response is sent (see get_db)
 
     return {"message": "Podcasts reordered"}
 
@@ -417,6 +421,10 @@ async def run_playlist_update(
     async with _playlist_write_lock():
         builder = PlaylistBuilder(db, user, token_manager=TokenManager(user.id))
         result = await builder.update_playlist(playlist)
+
+    # Persist the builder's flushed writes (last_updated_at) before the
+    # response is sent (see get_db). No-op on the failure path.
+    await db.commit()
 
     if not result.success and not result.partial:
         # Log the detail; don't hand raw exception text to the client (issue #161).
@@ -473,11 +481,24 @@ async def run_all_playlist_updates(
         builder = PlaylistBuilder(db, user, token_manager=TokenManager(user.id))
         results = await builder.update_all_playlists()
 
+    # Persist the builder's flushed writes (last_updated_at) before the
+    # response is sent (see get_db).
+    await db.commit()
+
     skipped = [r for r in results if r.skipped]
+    partial = [r for r in results if r.partial]
     successful = [r for r in results if r.success and not r.skipped]
-    failed = [r for r in results if not r.success]
+    failed = [r for r in results if not r.success and not r.partial]
+
+    # Log the detail; don't hand raw exception text to the client (issue #161).
+    # Partial results keep their message — it names the podcasts we couldn't
+    # reach, which is ours, not an arbitrary exception string.
+    for r in failed:
+        logger.error(f"Manual run-all failed for playlist '{r.playlist_name}': {r.error}")
 
     message = f"Updated {len(successful)} playlists, {len(failed)} failed"
+    if partial:
+        message += f", {len(partial)} updated with warnings"
     if skipped:
         message += f", {len(skipped)} skipped (weekend-only)"
 
@@ -489,7 +510,10 @@ async def run_all_playlist_updates(
                 "playlist_name": r.playlist_name,
                 "success": r.success,
                 "episode_count": r.episode_count,
-                "error": r.error,
+                "error": r.error
+                if r.partial
+                else ("Failed to update playlist. Check the server logs for details." if r.error else None),
+                "partial": r.partial,
                 "skipped": r.skipped,
             }
             for r in results

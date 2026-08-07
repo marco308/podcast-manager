@@ -48,7 +48,12 @@ struct LoginScreen: View {
                 signIn()
             } label: {
                 HStack {
-                    Image(systemName: "music.note")
+                    if authService.isLoading {
+                        ProgressView()
+                            .tint(.white)
+                    } else {
+                        Image(systemName: "music.note")
+                    }
                     Text("Sign in with Spotify")
                 }
                 .font(.headline)
@@ -59,7 +64,10 @@ struct LoginScreen: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
             }
             .padding(.horizontal, 32)
-            .disabled(serverURLText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .disabled(
+                serverURLText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || authService.isLoading
+            )
 
             if let error = authService.error {
                 Text(error)

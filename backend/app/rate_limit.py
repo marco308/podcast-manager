@@ -24,6 +24,12 @@ def _rate_limit_key(request: Request) -> str:
     Falls back to remote address for unauthenticated requests (e.g. the
     login redirect). Using the session ID means a single user's limits
     don't bleed into a shared-NAT neighbour's.
+
+    The cookie is only a trustworthy key on endpoints whose dependencies
+    validate the session before doing any work — a forged cookie gets a
+    fresh bucket per value. Unauthenticated endpoints must override this
+    with ``key_func=get_remote_address`` on their ``limiter.limit`` call,
+    as ``/auth/mobile-exchange`` does (issue #173).
     """
     session_id = request.cookies.get(_SESSION_COOKIE)
     if session_id:

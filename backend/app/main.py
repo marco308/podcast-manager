@@ -67,21 +67,8 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
-# Global exception handler
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Handle uncaught exceptions globally."""
-    logger.exception(f"Unhandled exception for {request.method} {request.url}: {exc}")
-    return JSONResponse(
-        status_code=500,
-        content={
-            "detail": "An internal server error occurred. Please try again later.",
-            "path": str(request.url.path),
-        },
-    )
-
-
-# CORS middleware - restrict origins based on environment
+# CORS origins - restrict based on environment (shared by the middleware and
+# the global exception handler below)
 cors_origins = [settings.FRONTEND_URL]
 if settings.DEBUG:
     cors_origins.extend(
@@ -92,6 +79,34 @@ if settings.DEBUG:
             "http://localhost:3000",
         ]
     )
+
+
+# Global exception handler
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Handle uncaught exceptions globally."""
+    logger.exception(f"Unhandled exception for {request.method} {request.url}: {exc}")
+    # This handler runs outside CORSMiddleware, so without these headers the
+    # browser hides the 500 behind a CORS/network error (issue #182). Mirror
+    # the middleware config: echo the Origin only if it's one we allow, and
+    # include credentials since the middleware does.
+    headers = {}
+    origin = request.headers.get("origin")
+    if origin and origin in cors_origins:
+        headers = {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+            "Vary": "Origin",
+        }
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "An internal server error occurred. Please try again later.",
+            "path": str(request.url.path),
+        },
+        headers=headers,
+    )
+
 
 app.add_middleware(
     CORSMiddleware,

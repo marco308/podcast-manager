@@ -1,4 +1,4 @@
-import { Typography, Button, Space, message, Alert } from 'antd';
+import { App, Typography, Button, Space, Alert } from 'antd';
 import { SyncOutlined } from '@ant-design/icons';
 import { usePodcasts, useSyncPodcasts } from '../hooks';
 import { PodcastTable, LoadingSpinner } from '../components';
@@ -6,6 +6,7 @@ import { PodcastTable, LoadingSpinner } from '../components';
 const { Title, Text } = Typography;
 
 export function Podcasts() {
+  const { message } = App.useApp();
   const { data: podcasts, isLoading, error } = usePodcasts();
   const syncPodcasts = useSyncPodcasts();
 
@@ -89,7 +90,7 @@ export function Podcasts() {
         />
       ) : (
         <div style={{ overflowX: 'auto' }}>
-          <PodcastTable podcasts={podcasts} loading={isLoading} />
+          <PodcastTable podcasts={podcasts} />
         </div>
       )}
     </div>

@@ -1,7 +1,7 @@
 [tool.ruff]
 target-version = "py311"
 line-length = 120
-src = ["app"]
+src = ["app", "scripts"]
 exclude = ["alembic/versions"]
 
 [tool.ruff.lint]
@@ -21,7 +21,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["app"]
+known-first-party = ["app", "scripts"]
 
 [tool.ruff.format]
 quote-style = "double"

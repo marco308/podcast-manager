@@ -99,8 +99,11 @@ async def list_podcasts(
 
     if playlist_id is not None:
         # Existence check only — a filter on an unknown playlist should 404
-        # rather than silently return an empty list.
-        exists = await db.execute(select(Playlist.id).where(Playlist.id == playlist_id))
+        # rather than silently return an empty list. Scoped to the user like
+        # every other playlist read (issue #182).
+        exists = await db.execute(
+            select(Playlist.id).where((Playlist.id == playlist_id) & (Playlist.user_id == user_id))
+        )
         if exists.scalar_one_or_none() is None:
             raise HTTPException(status_code=404, detail="Playlist not found")
 
@@ -180,7 +183,7 @@ async def update_podcast(
 
     podcast.updated_at = datetime.now(UTC)
 
-    await db.flush()
+    await db.commit()  # persist before the response is sent (see get_db)
 
     pids = await _get_playlist_ids_for_podcast(db, podcast.id)
     return _build_podcast_response(podcast, pids)
@@ -212,7 +215,7 @@ async def unfollow_podcast(
 
     # Remove from local database (cascade will remove join table entries)
     await db.delete(podcast)
-    await db.flush()
+    await db.commit()  # persist before the response is sent (see get_db)
 
     return {"message": f"Successfully unfollowed '{podcast.name}'"}
 
@@ -233,6 +236,11 @@ async def sync_podcasts(
     new_count = 0
     offset = 0
     limit = 50
+    # Spotify pagination can hand back the same show on two pages (the list
+    # shifts under us mid-sync). With autoflush off, the existence SELECT
+    # can't see the first pending insert, so a repeat would 500 the whole
+    # sync on the unique constraint — skip anything already seen (issue #182).
+    seen_spotify_ids: set[str] = set()
 
     while True:
         # Fetch shows from Spotify
@@ -246,8 +254,9 @@ async def sync_podcasts(
             show = item.get("show", {})
             spotify_id = show.get("id")
 
-            if not spotify_id:
+            if not spotify_id or spotify_id in seen_spotify_ids:
                 continue
+            seen_spotify_ids.add(spotify_id)
 
             # Check if podcast exists
             result = await db.execute(select(Podcast).where(Podcast.spotify_id == spotify_id))
@@ -299,7 +308,7 @@ async def sync_podcasts(
         if len(items) < limit:
             break
 
-    await db.flush()
+    await db.commit()  # persist before the response is sent (see get_db)
 
     return {
         "message": "Sync completed",

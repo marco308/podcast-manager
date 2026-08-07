@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
+from slowapi.util import get_remote_address
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -126,7 +127,9 @@ def validate_csrf_token(
     if not x_csrf_token:
         raise HTTPException(status_code=403, detail="CSRF token missing")
 
-    if not secrets.compare_digest(x_csrf_token, session.csrf_token):
+    # Compare as bytes — compare_digest raises TypeError on non-ASCII str
+    # input, which would turn a garbage header into a 500 (issue #182).
+    if not secrets.compare_digest(x_csrf_token.encode(), session.csrf_token.encode()):
         raise HTTPException(status_code=403, detail="CSRF token invalid")
 
     return session
@@ -213,7 +216,9 @@ async def callback(
         logger.error("Missing OAuth state parameter or state cookie")
         raise HTTPException(status_code=400, detail="Missing OAuth state parameter")
 
-    if not secrets.compare_digest(state, oauth_state):
+    # Compare as bytes — compare_digest raises TypeError on non-ASCII str
+    # input, which would turn an attacker-supplied state into a 500 (issue #182).
+    if not secrets.compare_digest(state.encode(), oauth_state.encode()):
         logger.error("OAuth state mismatch - possible CSRF attack")
         raise HTTPException(status_code=400, detail="OAuth state mismatch")
 
@@ -223,6 +228,15 @@ async def callback(
     if not oauth_verifier:
         logger.error("Missing PKCE verifier cookie on callback")
         raise HTTPException(status_code=400, detail="Missing PKCE verifier")
+
+    # Re-validate the mobile redirect scheme against the allowlist. /login
+    # validates it on the way in, but the cookie itself is attacker-writable
+    # when COOKIE_DOMAIN spans subdomains — a planted value would exfiltrate
+    # the single-use exchange code to an arbitrary URL scheme (issue #172).
+    # Ignore it and fall through to the web flow; the cookie is deleted below.
+    if mobile_redirect_scheme is not None and mobile_redirect_scheme not in ALLOWED_REDIRECT_SCHEMES:
+        logger.warning(f"Ignoring disallowed mobile redirect scheme cookie: {mobile_redirect_scheme!r}")
+        mobile_redirect_scheme = None
 
     encryption = get_encryption_service()
 
@@ -317,6 +331,8 @@ async def callback(
         set_session_cookies(response, session)
         response.delete_cookie(key=OAUTH_STATE_COOKIE_NAME, **delete_kwargs)
         response.delete_cookie(key=OAUTH_VERIFIER_COOKIE_NAME, **delete_kwargs)
+        # Also clears any disallowed scheme cookie ignored above (issue #172).
+        response.delete_cookie(key=MOBILE_REDIRECT_COOKIE, **delete_kwargs)
 
         logger.info("Redirecting to frontend with session cookie")
         return response
@@ -340,8 +356,12 @@ class MobileExchangeResponse(BaseModel):
     csrf_token: str
 
 
+# Key on client IP, not the default session-cookie key: this endpoint is
+# unauthenticated, so an attacker could rotate forged session_id cookies to
+# get a fresh bucket per request — bypassing the limit and growing slowapi's
+# in-memory store without bound (issue #173).
 @router.post("/mobile-exchange", response_model=MobileExchangeResponse)
-@limiter.limit("10/minute")
+@limiter.limit("10/minute", key_func=get_remote_address)
 async def mobile_exchange(
     request: Request,
     body: MobileExchangeRequest,

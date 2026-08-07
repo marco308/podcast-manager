@@ -444,9 +444,14 @@ class PlaylistBuilder:
             on_unauthorized=self._token_manager.force_refresh,
         )
 
-        # Save the Spotify playlist ID
+        # Save the Spotify playlist ID — commit, not just flush. The playlist
+        # already exists on Spotify (a committed external side effect); if a
+        # later build step fails and the session rolls back, a flushed-only
+        # write is forgotten and the next run creates a duplicate (issue
+        # #175). Mid-flow commit is safe: the session factory uses
+        # expire_on_commit=False.
         playlist.spotify_playlist_id = spotify_playlist["id"]
-        await self._db.flush()
+        await self._db.commit()
 
         logger.info(f"Created Spotify playlist '{playlist.name}' with ID {playlist.spotify_playlist_id}")
 

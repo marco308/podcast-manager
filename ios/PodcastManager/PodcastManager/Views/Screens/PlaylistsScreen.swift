@@ -51,9 +51,12 @@ struct PlaylistsScreen: View {
                         .clipShape(Capsule())
                         .padding(.bottom, 8)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
-                        .onAppear {
-                            Task {
-                                try? await Task.sleep(for: .seconds(3))
+                        .task(id: statusMessage) {
+                            // Keyed on the message so a replacement toast
+                            // restarts the timer instead of inheriting the
+                            // dying one (issue #181).
+                            try? await Task.sleep(for: .seconds(3))
+                            if !Task.isCancelled {
                                 withAnimation { self.statusMessage = nil }
                             }
                         }
@@ -110,13 +113,22 @@ struct PlaylistsScreen: View {
     private func runPlaylist(_ playlist: Playlist) async {
         do {
             let response = try await APIClient.shared.runPlaylist(id: playlist.id)
-            let message = "Playlist '\(playlist.name)': \(response.episodeCount) episodes updated"
+            // Use the server's message: it distinguishes weekend-only skips
+            // and partial updates, where a fabricated "0 episodes" read as
+            // the playlist having been emptied (issue #181).
             withAnimation {
-                statusMessage = "\(playlist.name): \(response.episodeCount) episodes"
+                statusMessage = response.message
+            }
+            let title = if response.skipped == true {
+                "Playlist Skipped"
+            } else if response.partial == true {
+                "Playlist Updated with Warnings"
+            } else {
+                "Playlist Updated"
             }
             NotificationService.shared.sendIfBackgrounded(
-                title: "Playlist Updated",
-                body: message,
+                title: title,
+                body: response.message,
                 identifier: "playlist-run-\(playlist.id)"
             )
         } catch {
@@ -130,13 +142,14 @@ struct PlaylistsScreen: View {
         isRunningAll = true
         do {
             let response = try await APIClient.shared.runAllPlaylists()
-            let successCount = response.results.filter(\.success).count
             withAnimation {
                 statusMessage = response.message
             }
+            // The server message already breaks down updated/failed/skipped;
+            // don't recount skipped playlists as plain successes here.
             NotificationService.shared.sendIfBackgrounded(
-                title: "All Playlists Updated",
-                body: "Updated \(successCount) playlists",
+                title: "Playlist Update Complete",
+                body: response.message,
                 identifier: "playlist-run-all"
             )
         } catch {

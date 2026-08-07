@@ -1,3 +1,4 @@
+import axios from 'axios';
 import apiClient from './client';
 import type { User } from '../types';
 
@@ -18,8 +19,14 @@ export const authApi = {
     try {
       const response = await apiClient.get<{ authenticated: boolean }>('/auth/status');
       return response.data.authenticated;
-    } catch {
-      return false;
+    } catch (error) {
+      // A confirmed 401 means "not authenticated"; anything else (network
+      // blip, 5xx) is transient — rethrow so React Query can retry instead
+      // of bouncing a valid session to the login page.
+      if (axios.isAxiosError(error) && error.response?.status === 401) {
+        return false;
+      }
+      throw error;
     }
   },
 

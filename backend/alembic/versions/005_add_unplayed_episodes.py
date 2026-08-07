@@ -26,4 +26,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_column('podcasts', 'unplayed_episodes')
+    # Guard the drop: 013's downgrade already removes this column on the way
+    # down, so an unconditional drop here fails and strands the database
+    # mid-downgrade (issue #176).
+    columns = {c['name'] for c in sa.inspect(op.get_bind()).get_columns('podcasts')}
+    if 'unplayed_episodes' in columns:
+        op.drop_column('podcasts', 'unplayed_episodes')

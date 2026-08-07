@@ -22,10 +22,12 @@ SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token"
 MAX_RETRIES = 3
 
 # Sliding-window soft throttle. We track the last 30 seconds of request
-# timestamps and back off briefly when we cross the threshold — keeps us
-# well under Spotify's actual 429 line without bursting.
+# timestamps and, once the window is full, wait for the oldest surplus
+# timestamp to age out before issuing the next request — keeps us well
+# under Spotify's actual 429 line without bursting.
 RATE_LIMIT_WINDOW_SECONDS = 30.0
 RATE_LIMIT_THRESHOLD = 150
+# Floor for the computed wait; the real duration comes from the window.
 SOFT_THROTTLE_SLEEP_SECONDS = 0.1
 
 # In ``cleanup_mode``, we abort the run if Spotify asks us to wait longer
@@ -111,18 +113,31 @@ class SpotifyService:
     async def _throttle_if_needed(self) -> None:
         """Soft-throttle before issuing a request if the sliding window is hot.
 
-        Drops timestamps older than ``RATE_LIMIT_WINDOW_SECONDS`` from the
-        front of the deque, then — if we still hold more than
-        ``RATE_LIMIT_THRESHOLD`` — sleeps briefly to let the window
-        slide. Cheap to call on every request.
+        Drops timestamps that have aged out of ``RATE_LIMIT_WINDOW_SECONDS``,
+        then — if the window still holds at least ``RATE_LIMIT_THRESHOLD``
+        entries — sleeps until the oldest surplus entry has aged out, so the
+        window genuinely has room for the request about to be issued.
+
+        No loop is needed: :meth:`_issue_request` runs this before *every*
+        request, so one slot is freed per request and a sustained burst is
+        paced by the window itself. The previous fixed 0.1s nap simply let
+        bursts sail past the threshold (issue #182).
         """
         now = time.monotonic()
         cutoff = now - RATE_LIMIT_WINDOW_SECONDS
-        while self._request_timestamps and self._request_timestamps[0] < cutoff:
+        while self._request_timestamps and self._request_timestamps[0] <= cutoff:
             self._request_timestamps.popleft()
 
-        if len(self._request_timestamps) >= RATE_LIMIT_THRESHOLD:
-            await asyncio.sleep(SOFT_THROTTLE_SLEEP_SECONDS)
+        if len(self._request_timestamps) < RATE_LIMIT_THRESHOLD:
+            return
+
+        # Timestamps are appended in issue order, so index ``overflow`` is
+        # the newest entry that must age out before the window drops below
+        # the threshold. Waiting until it crosses ``cutoff`` evicts exactly
+        # ``overflow + 1`` entries on the next pass.
+        overflow = len(self._request_timestamps) - RATE_LIMIT_THRESHOLD
+        wait = self._request_timestamps[overflow] - cutoff
+        await asyncio.sleep(max(wait, SOFT_THROTTLE_SLEEP_SECONDS))
 
     @property
     def _headers(self) -> dict[str, str]:
@@ -199,7 +214,12 @@ class SpotifyService:
         for attempt in range(MAX_RETRIES - 1):
             if response.status_code != 429:
                 break
-            raw_retry_after = int(response.headers.get("Retry-After", "5"))
+            try:
+                raw_retry_after = int(response.headers.get("Retry-After", "5"))
+            except ValueError:
+                # Retry-After may legally be an HTTP-date; we don't parse
+                # dates, so fall back to a short default (issue #182).
+                raw_retry_after = 5
 
             if cleanup_mode and raw_retry_after > CLEANUP_MODE_RETRY_AFTER_LIMIT:
                 # The daily rebuild has priority; surface this so the
@@ -411,6 +431,12 @@ class SpotifyService:
             uris: List of Spotify URIs (e.g., spotify:episode:xxx).
             on_unauthorized: Optional callback to recover from 401 by
                 refreshing the bearer token and retrying once (issue #89).
+
+        Note:
+            Over 100 URIs this is a PUT followed by POST appends, and
+            Spotify offers no transactional replace — a failed append
+            batch leaves the playlist truncated to the URIs written so
+            far (issue #182). The next scheduled rebuild repairs it.
         """
         async with self._get_client_contextmanager() as client:
             # Spotify limits to 100 items per request

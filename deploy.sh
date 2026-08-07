@@ -2,19 +2,46 @@
 set -euo pipefail
 
 # Deployment script for Podcast Manager
-# Usage: ./deploy.sh [backend|frontend|all]
+# Usage: [REGISTRY=registry.example.com/you] ./deploy.sh [backend|frontend|all]
+#
+# Without REGISTRY the images are built locally as :latest and the services
+# are bounced with --force — which only works on a single-node swarm, since
+# other nodes would keep running whatever stale image they already have
+# (issue #169). For a multi-node swarm, set REGISTRY to a prefix every node
+# can pull from; the script then tags/pushes both images and repoints the
+# services at the pushed reference (resolved to a digest on update).
 
 COMPONENT="${1:-all}"
 BACKEND_SERVICE="podcast-manager_backend"
 FRONTEND_SERVICE="podcast-manager_frontend"
+REGISTRY="${REGISTRY:-}"
 
 case "$COMPONENT" in
     backend|frontend|all) ;;
     *)
-        echo "Usage: $0 [backend|frontend|all]"
+        echo "Usage: [REGISTRY=...] $0 [backend|frontend|all]"
         exit 1
         ;;
 esac
+
+# A locally-built image only exists on this node; refuse a registry-less
+# deploy on a multi-node swarm rather than silently deploying stale images.
+if [[ -z "$REGISTRY" ]]; then
+    # `docker node ls` only answers on a swarm manager. Anywhere else it exits
+    # non-zero, which under `set -e -o pipefail` would abort the assignment and
+    # kill the script with no message — so absorb the failure and treat it as
+    # "no multi-node hazard to check"; the service update below fails loudly on
+    # its own if this host really can't talk to the swarm.
+    NODE_COUNT=$(docker node ls --quiet 2>/dev/null | wc -l | tr -d ' ') || NODE_COUNT=0
+    if (( NODE_COUNT > 1 )); then
+        echo "ERROR: this swarm has ${NODE_COUNT} nodes but REGISTRY is not set." >&2
+        echo "A locally-built :latest only exists on this node, so tasks scheduled" >&2
+        echo "elsewhere would run (and roll back to) a stale image. Set REGISTRY to" >&2
+        echo "a registry every node can reach, e.g.:" >&2
+        echo "    REGISTRY=registry.example.com/you $0 $COMPONENT" >&2
+        exit 1
+    fi
+fi
 
 echo "Deploying: $COMPONENT"
 
@@ -41,6 +68,36 @@ wait_for_service() {
     return 1
 }
 
+# Build one component's image; with REGISTRY, also tag and push it so every
+# swarm node can pull the exact build being deployed.
+build_image() {
+    local component="$1"
+    local image="podcast-manager-${component}:latest"
+    echo "Building ${component}..."
+    docker build -t "$image" "./${component}"
+    if [[ -n "$REGISTRY" ]]; then
+        echo "Pushing ${REGISTRY}/${image}..."
+        docker tag "$image" "${REGISTRY}/${image}"
+        docker push "${REGISTRY}/${image}"
+    fi
+}
+
+# Update the swarm service. With REGISTRY the service is repointed at the
+# pushed reference — Swarm resolves it to a digest, so every node pulls this
+# exact build (and rollback targets the previous digest). Without it, --force
+# restarts the service on the locally-built :latest.
+update_service() {
+    local component="$1"
+    local service="$2"
+    echo "Updating ${service}..."
+    if [[ -n "$REGISTRY" ]]; then
+        docker service update --force --with-registry-auth \
+            --image "${REGISTRY}/podcast-manager-${component}:latest" "$service"
+    else
+        docker service update --force "$service"
+    fi
+}
+
 # Migrations run in the container's entrypoint (backend/entrypoint.sh) before
 # uvicorn starts, so a task that reaches Running has already migrated — and
 # the compose path gets the same treatment (issue #149). A failing migration
@@ -48,27 +105,20 @@ wait_for_service() {
 
 case "$COMPONENT" in
     backend)
-        echo "Building backend..."
-        docker build -t podcast-manager-backend:latest ./backend
-        echo "Updating backend service..."
-        docker service update --force "$BACKEND_SERVICE"
+        build_image backend
+        update_service backend "$BACKEND_SERVICE"
         wait_for_service "$BACKEND_SERVICE"
         ;;
     frontend)
-        echo "Building frontend..."
-        docker build -t podcast-manager-frontend:latest ./frontend
-        echo "Updating frontend service..."
-        docker service update --force "$FRONTEND_SERVICE"
+        build_image frontend
+        update_service frontend "$FRONTEND_SERVICE"
         wait_for_service "$FRONTEND_SERVICE"
         ;;
     all)
-        echo "Building backend..."
-        docker build -t podcast-manager-backend:latest ./backend
-        echo "Building frontend..."
-        docker build -t podcast-manager-frontend:latest ./frontend
-        echo "Updating services..."
-        docker service update --force "$BACKEND_SERVICE"
-        docker service update --force "$FRONTEND_SERVICE"
+        build_image backend
+        build_image frontend
+        update_service backend "$BACKEND_SERVICE"
+        update_service frontend "$FRONTEND_SERVICE"
         wait_for_service "$BACKEND_SERVICE"
         wait_for_service "$FRONTEND_SERVICE"
         ;;

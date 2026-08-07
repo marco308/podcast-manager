@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import {
+  App,
   Typography,
   Card,
   Descriptions,
   Button,
   Space,
   Divider,
-  message,
   Tag,
   Segmented,
   TimePicker,
@@ -29,19 +29,16 @@ const { Title, Text, Paragraph } = Typography;
 const APP_VERSION = '1.0.0';
 
 export function Settings() {
+  const { message } = App.useApp();
   const { user, logout } = useAuth();
   const { themePreference, setThemePreference } = useTheme();
   const { data: jobsData, isLoading: jobsLoading } = useJobs();
   const updateSchedule = useUpdateJobSchedule();
   const [editingTime, setEditingTime] = useState<dayjs.Dayjs | null>(null);
 
-  const handleLogout = async () => {
-    try {
-      await logout();
-      message.success('Logged out successfully');
-    } catch {
-      message.error('Failed to logout');
-    }
+  const handleLogout = () => {
+    // logout() swallows its own errors and always redirects to /login
+    void logout();
   };
 
   const handleScheduleSave = () => {

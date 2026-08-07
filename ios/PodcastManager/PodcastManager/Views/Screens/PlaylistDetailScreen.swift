@@ -50,9 +50,12 @@ struct PlaylistDetailScreen: View {
                     .clipShape(Capsule())
                     .padding(.bottom, 8)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .onAppear {
-                        Task {
-                            try? await Task.sleep(for: .seconds(3))
+                    .task(id: statusMessage) {
+                        // Keyed on the message so a replacement toast
+                        // restarts the timer instead of inheriting the
+                        // dying one (issue #181).
+                        try? await Task.sleep(for: .seconds(3))
+                        if !Task.isCancelled {
                             withAnimation { self.statusMessage = nil }
                         }
                     }

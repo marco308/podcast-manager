@@ -49,7 +49,7 @@ apiClient.interceptors.request.use((config) => {
 // Response interceptor for error handling
 apiClient.interceptors.response.use(
   (response) => response,
-  (error: AxiosError<ApiError>) => {
+  async (error: AxiosError<ApiError>) => {
     // Handle 401 Unauthorized - redirect to login
     if (error.response?.status === 401) {
       clearCsrfToken();
@@ -67,7 +67,18 @@ apiClient.interceptors.response.use(
     ) {
       // Clear cached token and read fresh from cookie
       csrfToken = null;
-      const freshToken = getCsrfTokenFromCookie();
+      let freshToken = getCsrfTokenFromCookie();
+      if (!freshToken) {
+        // Cookie is gone (expired or cleared) — recover via the backend's
+        // fallback endpoint, which returns the token for the current session.
+        // Without this a lost cookie would permanently 403 all mutations.
+        try {
+          const { data } = await apiClient.get<{ csrf_token: string }>('/auth/csrf-token');
+          freshToken = data.csrf_token;
+        } catch {
+          // Recovery failed (e.g. session gone too) — fall through and reject
+        }
+      }
       if (freshToken && error.config) {
         csrfToken = freshToken;
         error.config.headers['X-CSRF-Token'] = freshToken;

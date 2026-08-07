@@ -60,9 +60,12 @@ struct PodcastsScreen: View {
                         .clipShape(Capsule())
                         .padding(.bottom, 8)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
-                        .onAppear {
-                            Task {
-                                try? await Task.sleep(for: .seconds(3))
+                        .task(id: syncResult) {
+                            // Keyed on the message so a replacement toast
+                            // restarts the timer instead of inheriting the
+                            // dying one (issue #181).
+                            try? await Task.sleep(for: .seconds(3))
+                            if !Task.isCancelled {
                                 withAnimation { self.syncResult = nil }
                             }
                         }
@@ -80,7 +83,13 @@ struct PodcastsScreen: View {
         .listStyle(.plain)
         .searchable(text: $searchText, prompt: "Search podcasts")
         .navigationDestination(for: Podcast.self) { podcast in
-            PodcastDetailScreen(podcast: podcast)
+            PodcastDetailScreen(podcast: podcast) { updated in
+                // Reflect detail-screen edits (e.g. the Sequential toggle)
+                // in the list behind (issue #184).
+                if let index = podcasts.firstIndex(where: { $0.id == updated.id }) {
+                    podcasts[index] = updated
+                }
+            }
         }
     }
 
@@ -106,8 +115,7 @@ struct PodcastsScreen: View {
 
     private func loadPodcasts() async {
         do {
-            let response = try await APIClient.shared.fetchPodcasts()
-            podcasts = response.items
+            podcasts = try await APIClient.shared.fetchAllPodcasts()
             error = nil
         } catch {
             self.error = error.localizedDescription

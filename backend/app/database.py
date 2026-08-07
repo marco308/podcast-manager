@@ -3,6 +3,7 @@
 import logging
 from collections.abc import AsyncGenerator
 
+from fastapi import HTTPException
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
@@ -50,11 +51,23 @@ class Base(DeclarativeBase):
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    """Dependency to get database session."""
+    """Dependency to get database session.
+
+    Note: since FastAPI 0.106 this teardown (including the commit below) runs
+    *after* the response has been sent, so a client acting immediately on a
+    2xx could race the commit. Mutating handlers therefore commit explicitly
+    before returning; the post-yield commit stays as a backstop for writes
+    made in dependencies (e.g. session last-accessed updates on GETs).
+    """
     async with async_session_maker() as session:
         try:
             yield session
             await session.commit()
+        except HTTPException:
+            # Deliberate responses (404s and friends) — roll back quietly,
+            # not as an ERROR with a stack trace (issue #182).
+            await session.rollback()
+            raise
         except Exception as e:
             logger.exception(f"Database transaction failed: {e}")
             await session.rollback()

@@ -103,8 +103,8 @@ struct AddPodcastsSheet: View {
 
     private func loadAvailablePodcasts() async {
         do {
-            let response = try await APIClient.shared.fetchPodcasts(limit: 100)
-            availablePodcasts = response.items.filter { !existingPodcastIds.contains($0.id) }
+            let allPodcasts = try await APIClient.shared.fetchAllPodcasts()
+            availablePodcasts = allPodcasts.filter { !existingPodcastIds.contains($0.id) }
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -115,9 +115,12 @@ struct AddPodcastsSheet: View {
     private func addSelected() async {
         isAdding = true
         do {
+            // Send ids in the displayed (name-sorted) list order, not Set
+            // hash order, so playlist positions match what the user saw.
+            let orderedIds = availablePodcasts.map(\.id).filter(selectedIds.contains)
             _ = try await APIClient.shared.addPodcastsToPlaylist(
                 playlistId: playlistId,
-                podcastIds: Array(selectedIds)
+                podcastIds: orderedIds
             )
             await onAdded()
             dismiss()

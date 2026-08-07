@@ -273,6 +273,10 @@ async def test_manual_run_takes_same_lock():
         return r
 
     fake_db.execute = AsyncMock(side_effect=_exec)
+    # The handler commits explicitly before returning (issue #182: get_db's
+    # post-yield commit runs *after* the response is sent), so the fake
+    # session needs an awaitable commit.
+    fake_db.commit = AsyncMock()
 
     # PlaylistBuilder.update_all_playlists must wait on the lock — we
     # tag the order it actually fires in.
@@ -334,6 +338,9 @@ async def test_manual_run_returns_409_when_lock_is_held_too_long():
         return r
 
     fake_db.execute = AsyncMock(side_effect=_exec)
+    # Not reached on the 409 path (the lock acquire raises first), but keeps
+    # this fake in step with the handler's explicit commit.
+    fake_db.commit = AsyncMock()
 
     ran = False
 
