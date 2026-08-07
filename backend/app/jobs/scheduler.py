@@ -17,7 +17,6 @@ from app.models.playlist import Playlist
 from app.models.settings import AppSetting
 from app.models.sync_log import SyncLog, SyncStatus
 from app.models.user import User
-from app.services.encryption import get_encryption_service
 from app.services.playlist_builder import PlaylistBuilder
 from app.services.spotify import CleanupBudgetExceeded, SpotifyService
 from app.services.token_manager import TokenManager
@@ -31,6 +30,23 @@ CLEANUP_RECENCY_WINDOW = timedelta(minutes=60)
 # Keeps a misbehaving run from burning through the user's rate-limit
 # budget and starving the daily rebuild.
 CLEANUP_API_CALL_BUDGET = 200
+
+# AppSetting key for the cleanup rotation cursor (issue #182): when a run
+# exhausts its budget, the next run starts at the first deferred playlist
+# instead of re-cleaning the same head of the list every time.
+CLEANUP_ROTATION_KEY = "cleanup_rotation_offset"
+
+# Token refresh cadence (issue #166). INVARIANT: the refresh threshold MUST
+# exceed the job interval. A token with less life left than one interval
+# would be skipped by this run and expire before the next one fires, leaving
+# the stored access token dead in between — which is exactly what the old
+# 900s threshold against a 45-minute interval did (~30 dead minutes in every
+# 90). Deriving the threshold from the interval keeps the two from drifting
+# apart: 45-minute interval + 5-minute margin → refresh anything with under
+# 50 minutes of life remaining.
+TOKEN_REFRESH_INTERVAL_MINUTES = 45
+TOKEN_REFRESH_MARGIN_MINUTES = 5
+TOKEN_REFRESH_THRESHOLD_SECONDS = (TOKEN_REFRESH_INTERVAL_MINUTES + TOKEN_REFRESH_MARGIN_MINUTES) * 60
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -47,6 +63,16 @@ def _record_run(job_id: str) -> None:
     _last_run_times[job_id] = datetime.now(UTC)
 
 
+async def _upsert_app_setting(db, key: str, value: str) -> None:
+    """Insert or update a single ``app_settings`` row. The caller commits."""
+    result = await db.execute(select(AppSetting).where(AppSetting.key == key))
+    setting = result.scalar_one_or_none()
+    if setting:
+        setting.value = value
+    else:
+        db.add(AppSetting(key=key, value=value))
+
+
 async def cleanup_expired_sessions() -> None:
     """Wrapper around session cleanup that records run time."""
     _record_run("session_cleanup")
@@ -56,48 +82,29 @@ async def cleanup_expired_sessions() -> None:
 async def refresh_all_tokens() -> None:
     """Refresh Spotify tokens for all users before they expire.
 
-    Uses short-lived DB sessions — one per user — to avoid holding write locks
-    during Spotify API calls.
+    Delegates the refresh to :class:`TokenManager` so it happens under the
+    per-user lock, with the refresh token re-read inside it — a snapshot
+    taken outside the lock can race a concurrent TokenManager refresh and
+    persist a superseded (rotated) refresh token, which Spotify then
+    rejects with ``invalid_grant`` (issue #167).
     """
     _record_run("token_refresh")
     logger.info("Starting token refresh job")
 
-    encryption = get_encryption_service()
-
-    # Phase 1: Read users needing refresh with a short-lived session
-    users_to_refresh: list[tuple[int, str, str]] = []  # [(user_id, display_name, encrypted_refresh_token)]
+    # Read user IDs with a short-lived session. Freshness is re-checked
+    # inside get_token, so no token state is snapshotted here.
+    user_ids: list[int] = []
     async with async_session_maker() as db:
         try:
-            result = await db.execute(select(User))
-            users = result.scalars().all()
-
-            for user in users:
-                # token_expires_at is a UTCDateTime, so it always reads back
-                # timezone-aware — no naive fix-up needed (issue #156).
-                if (user.token_expires_at - datetime.now(UTC)).total_seconds() < 900:
-                    users_to_refresh.append((user.id, user.display_name, user.refresh_token))
+            result = await db.execute(select(User.id))
+            user_ids = [row[0] for row in result.all()]
         except Exception as e:
             logger.error(f"Token refresh job failed reading DB: {e}")
             return
 
-    # Phase 2: Refresh each user's token with Spotify API, then write back
-    for user_id, display_name, encrypted_refresh_token in users_to_refresh:
+    for user_id in user_ids:
         try:
-            refresh_token = encryption.decrypt(encrypted_refresh_token)
-            spotify = SpotifyService()
-            token_data = await spotify.refresh_access_token(refresh_token)
-
-            # Short-lived session to write updated tokens
-            async with async_session_maker() as db:
-                result = await db.execute(select(User).where(User.id == user_id))
-                user = result.scalar_one_or_none()
-                if user:
-                    user.access_token = encryption.encrypt(token_data["access_token"])
-                    user.refresh_token = encryption.encrypt(token_data["refresh_token"])
-                    user.token_expires_at = token_data["expires_at"]
-                    await db.commit()
-                    logger.info(f"Refreshed token for user {display_name}")
-
+            await TokenManager(user_id).get_token(min_remaining_seconds=TOKEN_REFRESH_THRESHOLD_SECONDS)
         except Exception as e:
             logger.error(f"Failed to refresh token for user {user_id}: {e}")
 
@@ -115,8 +122,8 @@ async def update_all_playlists() -> None:
 
     # Create sync log with a short-lived session
     sync_log_id: int | None = None
-    async with async_session_maker() as db:
-        try:
+    try:
+        async with async_session_maker() as db:
             sync_log = SyncLog(
                 job_type="playlist_update",
                 status=SyncStatus.RUNNING,
@@ -125,18 +132,29 @@ async def update_all_playlists() -> None:
             db.add(sync_log)
             await db.commit()
             sync_log_id = sync_log.id
-        except Exception as e:
-            logger.error(f"Playlist update job failed creating sync log: {e}")
+    except Exception as e:
+        logger.error(f"Playlist update job failed creating sync log: {e}")
 
     # Read user IDs with a short-lived session
     user_ids: list[int] = []
-    async with async_session_maker() as db:
-        try:
+    read_error: str | None = None
+    try:
+        async with async_session_maker() as db:
             result = await db.execute(select(User.id))
             user_ids = [row[0] for row in result.all()]
-        except Exception as e:
-            logger.error(f"Playlist update job failed reading users: {e}")
-            return
+    except Exception as e:
+        logger.error(f"Playlist update job failed reading users: {e}")
+        read_error = str(e)
+
+    if read_error is not None:
+        # Don't leave the RUNNING row created above orphaned (issue #174).
+        await _finalise_playlist_update_log(
+            sync_log_id,
+            status=SyncStatus.FAILED,
+            details=f"Failed reading users: {read_error}",
+            failure_code="unknown",
+        )
+        return
 
     total_playlists = 0
     total_episodes = 0
@@ -145,81 +163,108 @@ async def update_all_playlists() -> None:
     errors: list[str] = []
     error_objects: list[BaseException] = []
 
-    # Serialise against cleanup and any concurrent manual run (issue #89, PR3).
-    if locks.playlist_write_lock.locked():
-        logger.info("Waiting on playlist_write_lock — another job is holding it")
-    async with locks.playlist_write_lock:
-        # Process each user with its own session
-        for user_id in user_ids:
-            async with async_session_maker() as db:
-                try:
-                    result = await db.execute(select(User).where(User.id == user_id))
-                    user = result.scalar_one_or_none()
+    try:
+        # Serialise against cleanup and any concurrent manual run (issue #89, PR3).
+        if locks.playlist_write_lock.locked():
+            logger.info("Waiting on playlist_write_lock — another job is holding it")
+        async with locks.playlist_write_lock:
+            # Process each user with its own session
+            for user_id in user_ids:
+                async with async_session_maker() as db:
+                    try:
+                        result = await db.execute(select(User).where(User.id == user_id))
+                        user = result.scalar_one_or_none()
 
-                    if not user:
-                        continue
-
-                    token_manager = TokenManager(user.id)
-                    builder = PlaylistBuilder(db, user, token_manager=token_manager)
-                    results = await builder.update_all_playlists()
-
-                    for res in results:
-                        if res.skipped:
-                            # Weekend-only playlist on a non-qualifying day —
-                            # deliberately untouched, so don't count it as an
-                            # attempted rebuild (issue #150).
-                            playlists_skipped += 1
+                        if not user:
                             continue
-                        total_playlists += 1
-                        if res.success:
-                            total_episodes += res.episode_count
-                        else:
-                            playlists_failed += 1
-                            errors.append(f"{res.playlist_name}: {res.error}")
 
-                    await db.commit()
+                        token_manager = TokenManager(user.id)
+                        builder = PlaylistBuilder(db, user, token_manager=token_manager)
+                        results = await builder.update_all_playlists()
 
-                except Exception as e:
-                    logger.error(f"Failed to update playlists for user {user_id}: {e}")
-                    errors.append(f"User {user_id}: {str(e)}")
-                    error_objects.append(e)
-                    await db.rollback()
+                        for res in results:
+                            if res.skipped:
+                                # Weekend-only playlist on a non-qualifying day —
+                                # deliberately untouched, so don't count it as an
+                                # attempted rebuild (issue #150).
+                                playlists_skipped += 1
+                                continue
+                            total_playlists += 1
+                            if res.success:
+                                total_episodes += res.episode_count
+                            else:
+                                playlists_failed += 1
+                                errors.append(f"{res.playlist_name}: {res.error}")
 
-    # Update sync log with a short-lived session
-    if sync_log_id:
-        async with async_session_maker() as db:
-            try:
-                result = await db.execute(select(SyncLog).where(SyncLog.id == sync_log_id))
-                sync_log = result.scalar_one_or_none()
-                if sync_log:
-                    sync_log.status = SyncStatus.SUCCESS if not errors else SyncStatus.FAILED
-                    sync_log.completed_at = datetime.now(UTC)
-                    sync_log.details = (
-                        f"Updated {total_playlists} playlists with {total_episodes} episodes. Errors: {len(errors)}"
-                    )
-                    if playlists_skipped:
-                        sync_log.details += f" Skipped (weekend-only): {playlists_skipped}."
-                    if errors:
-                        sync_log.details += f"\n{chr(10).join(errors[:10])}"
+                        await db.commit()
 
-                    # Failure classification (issue #89, PR1).
-                    sync_log.playlists_attempted = total_playlists
-                    sync_log.playlists_failed = playlists_failed
-                    sync_log.failure_code = _classify_failure(
-                        playlists_attempted=total_playlists,
-                        playlists_failed=playlists_failed,
-                        error_messages=errors,
-                        exceptions=error_objects,
-                    )
-                    # api_calls_used left None — budget tracking lands in PR2.
-                    await db.commit()
-            except Exception as e:
-                logger.error(f"Failed to update sync log: {e}")
+                    except Exception as e:
+                        logger.error(f"Failed to update playlists for user {user_id}: {e}")
+                        errors.append(f"User {user_id}: {str(e)}")
+                        error_objects.append(e)
+                        await db.rollback()
+    except Exception as e:
+        # The per-user try above is the intended last line of defence; if
+        # something still escapes it, the RUNNING SyncLog row must not be
+        # orphaned (issue #174).
+        logger.error(f"Playlist update job failed unexpectedly: {e}")
+        errors.append(str(e))
+        error_objects.append(e)
+
+    details = f"Updated {total_playlists} playlists with {total_episodes} episodes. Errors: {len(errors)}"
+    if playlists_skipped:
+        details += f" Skipped (weekend-only): {playlists_skipped}."
+    if errors:
+        details += f"\n{chr(10).join(errors[:10])}"
+
+    await _finalise_playlist_update_log(
+        sync_log_id,
+        status=SyncStatus.SUCCESS if not errors else SyncStatus.FAILED,
+        details=details,
+        # Failure classification (issue #89, PR1).
+        failure_code=_classify_failure(
+            playlists_attempted=total_playlists,
+            playlists_failed=playlists_failed,
+            error_messages=errors,
+            exceptions=error_objects,
+        ),
+        playlists_attempted=total_playlists,
+        playlists_failed=playlists_failed,
+    )
 
     logger.info(
         f"Playlist update job completed: {total_playlists} playlists, {total_episodes} episodes, "
         f"{len(errors)} errors, {playlists_skipped} skipped"
     )
+
+
+async def _finalise_playlist_update_log(
+    sync_log_id: int | None,
+    *,
+    status: SyncStatus,
+    details: str,
+    failure_code: str | None,
+    playlists_attempted: int = 0,
+    playlists_failed: int = 0,
+) -> None:
+    """Update the playlist-update SyncLog row with the final outcome."""
+    if sync_log_id is None:
+        return
+    async with async_session_maker() as db:
+        try:
+            result = await db.execute(select(SyncLog).where(SyncLog.id == sync_log_id))
+            sync_log = result.scalar_one_or_none()
+            if sync_log:
+                sync_log.status = status
+                sync_log.completed_at = datetime.now(UTC)
+                sync_log.details = details
+                sync_log.failure_code = failure_code
+                sync_log.playlists_attempted = playlists_attempted
+                sync_log.playlists_failed = playlists_failed
+                # api_calls_used left None — budget tracking lands in PR2.
+                await db.commit()
+        except Exception as e:
+            logger.error(f"Failed to update sync log: {e}")
 
 
 async def init_scheduler() -> None:
@@ -253,10 +298,11 @@ async def init_scheduler() -> None:
         replace_existing=True,
     )
 
-    # Token refresh every 45 minutes
+    # Token refresh — the threshold in refresh_all_tokens must stay above
+    # this interval (issue #166), see TOKEN_REFRESH_THRESHOLD_SECONDS.
     scheduler.add_job(
         refresh_all_tokens,
-        IntervalTrigger(minutes=45),
+        IntervalTrigger(minutes=TOKEN_REFRESH_INTERVAL_MINUTES),
         id="token_refresh",
         name="Spotify Token Refresh",
         replace_existing=True,
@@ -318,8 +364,10 @@ async def get_job_status() -> list[dict]:
                 # UTCDateTime guarantees an aware value, so isoformat() already
                 # carries the offset — no manual "Z" suffix (issue #156).
                 playlist_last_run = last_sync.started_at.isoformat()
-    except Exception:
-        pass
+    except Exception as e:
+        # Non-fatal — the job list is still useful without last_run — but
+        # don't hide the read failure entirely (issue #182).
+        logger.warning(f"Failed to read last playlist_update run from SyncLog: {e}")
 
     result = []
     for job in jobs:
@@ -376,21 +424,18 @@ async def reschedule_playlist_update(hour: int, minute: int) -> str | None:
         Exception: propagated from APScheduler or the settings write.
     """
     try:
+        # Persist first, reschedule after: applying the trigger before the
+        # write meant a failed write left the live schedule diverging from
+        # the persisted one until the next restart (issue #182).
+        async with async_session_maker() as db:
+            for key, value in [("playlist_update_hour", str(hour)), ("playlist_update_minute", str(minute))]:
+                await _upsert_app_setting(db, key, value)
+            await db.commit()
+
         scheduler.reschedule_job(
             "daily_playlist_update",
             trigger=CronTrigger(hour=hour, minute=minute),
         )
-
-        # Persist to database
-        async with async_session_maker() as db:
-            for key, value in [("playlist_update_hour", str(hour)), ("playlist_update_minute", str(minute))]:
-                result = await db.execute(select(AppSetting).where(AppSetting.key == key))
-                setting = result.scalar_one_or_none()
-                if setting:
-                    setting.value = value
-                else:
-                    db.add(AppSetting(key=key, value=value))
-            await db.commit()
 
         # Get updated next run time
         job = scheduler.get_job("daily_playlist_update")
@@ -401,89 +446,6 @@ async def reschedule_playlist_update(hour: int, minute: int) -> str | None:
     except Exception as e:
         logger.error(f"Failed to reschedule daily playlist update: {e}")
         raise
-
-
-async def trigger_playlist_update_for_user(user_id: int) -> dict:
-    """Manually trigger playlist update for a specific user.
-
-    Args:
-        user_id: The user ID to update playlists for.
-
-    Returns:
-        Dictionary with update results.
-    """
-    async with async_session_maker() as db:
-        try:
-            result = await db.execute(select(User).where(User.id == user_id))
-            user = result.scalar_one_or_none()
-
-            if not user:
-                return {"success": False, "error": "User not found"}
-
-            builder = PlaylistBuilder(db, user, token_manager=TokenManager(user.id))
-            results = await builder.update_all_playlists()
-            await db.commit()
-
-            return {
-                "success": True,
-                "results": [
-                    {
-                        "playlist_id": r.playlist_id,
-                        "playlist_name": r.playlist_name,
-                        "success": r.success,
-                        "episode_count": r.episode_count,
-                        "error": r.error,
-                    }
-                    for r in results
-                ],
-            }
-
-        except Exception as e:
-            logger.error(f"Manual playlist update failed: {e}")
-            await db.rollback()
-            return {"success": False, "error": str(e)}
-
-
-async def trigger_single_playlist_update(user_id: int, playlist_id: int) -> dict:
-    """Manually trigger update for a single playlist.
-
-    Args:
-        user_id: The user ID.
-        playlist_id: The playlist ID to update.
-
-    Returns:
-        Dictionary with update result.
-    """
-    async with async_session_maker() as db:
-        try:
-            user_result = await db.execute(select(User).where(User.id == user_id))
-            user = user_result.scalar_one_or_none()
-
-            if not user:
-                return {"success": False, "error": "User not found"}
-
-            playlist_result = await db.execute(select(Playlist).where(Playlist.id == playlist_id))
-            playlist = playlist_result.scalar_one_or_none()
-
-            if not playlist:
-                return {"success": False, "error": "Playlist not found"}
-
-            builder = PlaylistBuilder(db, user, token_manager=TokenManager(user.id))
-            result = await builder.update_playlist(playlist)
-            await db.commit()
-
-            return {
-                "success": result.success,
-                "playlist_id": result.playlist_id,
-                "playlist_name": result.playlist_name,
-                "episode_count": result.episode_count,
-                "error": result.error,
-            }
-
-        except Exception as e:
-            logger.error(f"Single playlist update failed: {e}")
-            await db.rollback()
-            return {"success": False, "error": str(e)}
 
 
 def _classify_failure(
@@ -569,9 +531,17 @@ async def remove_played_episodes_from_playlists() -> None:
     fetch — that fan-out is what was burning the rate limit.
 
     Each cleanup run gets a budget of :data:`CLEANUP_API_CALL_BUDGET`
-    Spotify calls. If Spotify replies with a long Retry-After the
-    SpotifyService raises ``CleanupBudgetExceeded`` and we finalise the
-    run with a SyncLog row rather than blocking the daily rebuild.
+    Spotify calls, enforced both between playlists and between pagination
+    pages of a single playlist — a playlist whose paging runs the budget
+    dry is deferred whole rather than half-cleaned (issue #182). If
+    Spotify replies with a long Retry-After the SpotifyService raises
+    ``CleanupBudgetExceeded`` and we finalise the run with a SyncLog row
+    rather than blocking the daily rebuild.
+
+    Any run that doesn't reach every playlist persists a rotation cursor
+    (:data:`CLEANUP_ROTATION_KEY`) so the next one starts on the first
+    playlist it missed instead of re-cleaning the same head of the list
+    and starving the tail (issue #182).
     """
     _record_run("remove_played_episodes")
     logger.info("Starting remove played episodes job")
@@ -581,8 +551,9 @@ async def remove_played_episodes_from_playlists() -> None:
     # nothing for cleanup to do, and skipping early means we don't
     # contend for the write lock against a still-running rebuild on a
     # tight schedule.
-    async with async_session_maker() as db:
-        try:
+    recent = None
+    try:
+        async with async_session_maker() as db:
             cutoff = datetime.now(UTC) - CLEANUP_RECENCY_WINDOW
             recent_result = await db.execute(
                 select(SyncLog)
@@ -595,9 +566,9 @@ async def remove_played_episodes_from_playlists() -> None:
                 .limit(1)
             )
             recent = recent_result.scalar_one_or_none()
-        except Exception as e:
-            logger.error(f"Cleanup recency check failed (continuing anyway): {e}")
-            recent = None
+    except Exception as e:
+        logger.error(f"Cleanup recency check failed (continuing anyway): {e}")
+        recent = None
 
     if recent is not None:
         logger.info(f"Skipping cleanup — successful playlist_update at {recent.completed_at} (<60min ago)")
@@ -605,8 +576,8 @@ async def remove_played_episodes_from_playlists() -> None:
 
     # Create the SyncLog row up front so partial failures still leave a trace.
     sync_log_id: int | None = None
-    async with async_session_maker() as db:
-        try:
+    try:
+        async with async_session_maker() as db:
             sync_log = SyncLog(
                 job_type="cleanup",
                 status=SyncStatus.RUNNING,
@@ -615,13 +586,22 @@ async def remove_played_episodes_from_playlists() -> None:
             db.add(sync_log)
             await db.commit()
             sync_log_id = sync_log.id
-        except Exception as e:
-            logger.error(f"Cleanup job failed creating sync log: {e}")
+    except Exception as e:
+        logger.error(f"Cleanup job failed creating sync log: {e}")
 
-    # Phase 1: Read users and playlists with a short-lived session
+    # Phase 1: Read users, playlists and the rotation cursor with a
+    # short-lived session
+    rotation_offset = 0
     user_playlists: list[tuple[int, list[tuple[int, str, str]]]] = []  # [(user_id, [(playlist_id, name, spotify_id)])]
-    async with async_session_maker() as db:
-        try:
+    read_error: str | None = None
+    try:
+        async with async_session_maker() as db:
+            offset_result = await db.execute(select(AppSetting).where(AppSetting.key == CLEANUP_ROTATION_KEY))
+            offset_setting = offset_result.scalar_one_or_none()
+            if offset_setting:
+                with contextlib.suppress(ValueError, TypeError):
+                    rotation_offset = int(offset_setting.value)
+
             result = await db.execute(select(User))
             users = result.scalars().all()
 
@@ -633,22 +613,37 @@ async def remove_played_episodes_from_playlists() -> None:
 
                 playlist_info = [(p.id, p.name, p.spotify_playlist_id) for p in playlists if p.spotify_playlist_id]
                 if playlist_info:
+                    if rotation_offset:
+                        # Start where the previous incomplete run stopped
+                        # (issue #182).
+                        k = rotation_offset % len(playlist_info)
+                        playlist_info = playlist_info[k:] + playlist_info[:k]
                     user_playlists.append((user.id, playlist_info))
-        except Exception as e:
-            logger.error(f"Remove played episodes job failed reading DB: {e}")
-            await _finalise_cleanup_log(
-                sync_log_id,
-                status=SyncStatus.FAILED,
-                details=f"Failed reading users/playlists: {e}",
-                failure_code="unknown",
-                playlists_attempted=0,
-                playlists_failed=0,
-                api_calls_used=0,
-            )
-            return
+    except Exception as e:
+        logger.error(f"Remove played episodes job failed reading DB: {e}")
+        read_error = str(e)
+
+    if read_error is not None:
+        await _finalise_cleanup_log(
+            sync_log_id,
+            status=SyncStatus.FAILED,
+            details=f"Failed reading users/playlists: {read_error}",
+            failure_code="unknown",
+            playlists_attempted=0,
+            playlists_failed=0,
+            api_calls_used=0,
+        )
+        return
 
     # Phase 2: Process each playlist
     playlists_attempted = 0
+    # Rotation bookkeeping, deliberately distinct from playlists_attempted:
+    # a playlist cut off mid-pagination doesn't count as *attempted* (its
+    # read was incomplete — issue #161) but it does count as *consumed*, so
+    # the cursor steps over it. Otherwise one pathological playlist that
+    # can never fit in a single budget would pin the cursor at its index
+    # and starve everything behind it forever (issue #182).
+    playlists_consumed = 0
     playlists_failed = 0
     total_removed = 0
     api_calls_used = 0
@@ -656,115 +651,159 @@ async def remove_played_episodes_from_playlists() -> None:
     error_objects: list[BaseException] = []
     aborted_for_rate_limit = False
 
-    # Serialise against rebuild and any concurrent manual run (issue #89, PR3).
-    if locks.playlist_write_lock.locked():
-        logger.info("Waiting on playlist_write_lock — another job is holding it")
-    async with locks.playlist_write_lock:
-        for user_id, playlists in user_playlists:
-            if aborted_for_rate_limit:
-                break
-            token_manager = TokenManager(user_id)
-            try:
-                access_token = await token_manager.get_token(min_remaining_seconds=300)
-            except RuntimeError:
-                logger.warning(f"User {user_id} not found, skipping")
-                continue
+    try:
+        # Serialise against rebuild and any concurrent manual run (issue #89, PR3).
+        if locks.playlist_write_lock.locked():
+            logger.info("Waiting on playlist_write_lock — another job is holding it")
+        async with locks.playlist_write_lock:
+            for user_id, playlists in user_playlists:
+                if aborted_for_rate_limit:
+                    break
+                token_manager = TokenManager(user_id)
+                try:
+                    access_token = await token_manager.get_token(min_remaining_seconds=300)
+                except RuntimeError:
+                    logger.warning(f"User {user_id} not found, skipping")
+                    continue
+                except Exception as e:
+                    # TokenDecryptionError / network failures must not escape
+                    # past the SyncLog finalisation below (issue #174).
+                    logger.error(f"Failed to get token for user {user_id}: {e}")
+                    errors.append(f"User {user_id}: {str(e)}")
+                    error_objects.append(e)
+                    continue
 
-            spotify_client = SpotifyService(access_token=access_token)
-            spotify_client.reset_api_counter()
+                spotify_client = SpotifyService(access_token=access_token)
+                spotify_client.reset_api_counter()
 
-            try:
-                for _playlist_id, playlist_name, spotify_playlist_id in playlists:
-                    # Per-run API budget — give up early if we've already
-                    # spent the allowance, the next run picks up where we left off.
-                    # Checked before counting the playlist as attempted, so a
-                    # deferred playlist isn't reported as one we tried (issue #161).
-                    if spotify_client.api_calls_used >= CLEANUP_API_CALL_BUDGET:
-                        logger.warning(
-                            f"Cleanup API budget ({CLEANUP_API_CALL_BUDGET}) exhausted; "
-                            f"deferring remaining playlists to next run"
-                        )
-                        break
-
-                    playlists_attempted += 1
-
-                    try:
-                        # Walk playlist-items pages, filtering inline.
-                        offset = 0
-                        limit = 50
-                        played_uris: list[str] = []
-
-                        while True:
-                            tracks_data = await spotify_client.get_playlist_tracks(
-                                spotify_playlist_id,
-                                limit=limit,
-                                offset=offset,
-                                cleanup_mode=True,
-                            )
-                            items = tracks_data.get("items", [])
-                            if not items:
+                try:
+                    # Reuse one httpx client for the whole user (issue #182) —
+                    # per-call clients were opening a fresh connection for
+                    # every pagination request.
+                    async with spotify_client:
+                        for _playlist_id, playlist_name, spotify_playlist_id in playlists:
+                            # Per-run API budget — give up early if we've already
+                            # spent the allowance; the rotation cursor persisted
+                            # below starts the next run at the first deferred
+                            # playlist. Checked before counting the playlist as
+                            # attempted, so a deferred playlist isn't reported
+                            # as one we tried (issue #161).
+                            if spotify_client.api_calls_used >= CLEANUP_API_CALL_BUDGET:
+                                logger.warning(
+                                    f"Cleanup API budget ({CLEANUP_API_CALL_BUDGET}) exhausted; "
+                                    f"deferring remaining playlists to next run"
+                                )
                                 break
 
-                            played_uris.extend(_played_uris_from_items(items))
+                            playlists_attempted += 1
+                            playlists_consumed += 1
 
-                            offset += limit
-                            if not tracks_data.get("next"):
-                                break
+                            try:
+                                # Walk playlist-items pages, filtering inline.
+                                offset = 0
+                                limit = 50
+                                played_uris: list[str] = []
+                                collection_deferred = False
 
-                        if played_uris:
-                            logger.info(
-                                f"Playlist {playlist_name} ({spotify_playlist_id}) - "
-                                f"found {len(played_uris)} fully-played episodes"
-                            )
-                            for i in range(0, len(played_uris), 50):
-                                batch = played_uris[i : i + 50]
-                                try:
-                                    # Refresh at the write boundary (PR1 wiring).
-                                    spotify_client._access_token = await token_manager.get_token(
-                                        min_remaining_seconds=300
-                                    )
-                                    await spotify_client.remove_tracks_from_playlist(
+                                while True:
+                                    # The budget can also run dry mid-pagination on
+                                    # a large playlist (issue #182): stop collecting
+                                    # and skip this playlist's deletions — it is
+                                    # deferred whole to the next run.
+                                    if spotify_client.api_calls_used >= CLEANUP_API_CALL_BUDGET:
+                                        collection_deferred = True
+                                        break
+
+                                    tracks_data = await spotify_client.get_playlist_tracks(
                                         spotify_playlist_id,
-                                        batch,
-                                        on_unauthorized=token_manager.force_refresh,
+                                        limit=limit,
+                                        offset=offset,
                                         cleanup_mode=True,
                                     )
-                                    total_removed += len(batch)
+                                    items = tracks_data.get("items", [])
+                                    if not items:
+                                        break
+
+                                    played_uris.extend(_played_uris_from_items(items))
+
+                                    offset += limit
+                                    if not tracks_data.get("next"):
+                                        break
+
+                                if collection_deferred:
+                                    # Deferred, not attempted (issue #161).
+                                    # playlists_consumed keeps the increment so
+                                    # the cursor steps past it next run.
+                                    playlists_attempted -= 1
+                                    logger.warning(
+                                        f"Cleanup API budget ({CLEANUP_API_CALL_BUDGET}) exhausted "
+                                        f"mid-pagination in playlist {playlist_name}; deferring to next run"
+                                    )
+                                    break
+
+                                if played_uris:
                                     logger.info(
-                                        f"Removed {len(batch)} played episodes from "
-                                        f"playlist {playlist_name} (user {user_id})"
+                                        f"Playlist {playlist_name} ({spotify_playlist_id}) - "
+                                        f"found {len(played_uris)} fully-played episodes"
                                     )
-                                except CleanupBudgetExceeded:
-                                    raise
-                                except Exception as e:
-                                    logger.error(
-                                        f"Failed to remove batch from playlist {playlist_name} "
-                                        f"(user {user_id}): {e} - batch: {batch}"
-                                    )
-                                    playlists_failed += 1
-                                    errors.append(f"Playlist {playlist_name}: {str(e)}")
-                                    error_objects.append(e)
-                                    break  # stop further batches for this playlist
+                                    for i in range(0, len(played_uris), 50):
+                                        batch = played_uris[i : i + 50]
+                                        try:
+                                            # Refresh at the write boundary (PR1 wiring).
+                                            spotify_client._access_token = await token_manager.get_token(
+                                                min_remaining_seconds=300
+                                            )
+                                            await spotify_client.remove_tracks_from_playlist(
+                                                spotify_playlist_id,
+                                                batch,
+                                                on_unauthorized=token_manager.force_refresh,
+                                                cleanup_mode=True,
+                                            )
+                                            total_removed += len(batch)
+                                            logger.info(
+                                                f"Removed {len(batch)} played episodes from "
+                                                f"playlist {playlist_name} (user {user_id})"
+                                            )
+                                        except CleanupBudgetExceeded:
+                                            raise
+                                        except Exception as e:
+                                            logger.error(
+                                                f"Failed to remove batch from playlist {playlist_name} "
+                                                f"(user {user_id}): {e} - batch: {batch}"
+                                            )
+                                            playlists_failed += 1
+                                            errors.append(f"Playlist {playlist_name}: {str(e)}")
+                                            error_objects.append(e)
+                                            break  # stop further batches for this playlist
 
-                    except CleanupBudgetExceeded:
-                        raise
-                    except Exception as e:
-                        logger.error(f"Failed to clean playlist {playlist_name} (user {user_id}): {e}")
-                        playlists_failed += 1
-                        errors.append(f"Playlist {playlist_name}: {str(e)}")
-                        error_objects.append(e)
+                            except CleanupBudgetExceeded:
+                                raise
+                            except Exception as e:
+                                logger.error(f"Failed to clean playlist {playlist_name} (user {user_id}): {e}")
+                                playlists_failed += 1
+                                errors.append(f"Playlist {playlist_name}: {str(e)}")
+                                error_objects.append(e)
 
-            except CleanupBudgetExceeded:
-                logger.warning("cleanup aborted: Spotify rate-limit Retry-After > 60s")
-                aborted_for_rate_limit = True
-            except Exception as e:
-                logger.error(f"Failed to clean playlists for user {user_id}: {e}")
-                errors.append(f"User {user_id}: {str(e)}")
-                error_objects.append(e)
-            finally:
-                api_calls_used += spotify_client.api_calls_used
+                except CleanupBudgetExceeded:
+                    logger.warning("cleanup aborted: Spotify rate-limit Retry-After > 60s")
+                    aborted_for_rate_limit = True
+                except Exception as e:
+                    logger.error(f"Failed to clean playlists for user {user_id}: {e}")
+                    errors.append(f"User {user_id}: {str(e)}")
+                    error_objects.append(e)
+                finally:
+                    api_calls_used += spotify_client.api_calls_used
+    except Exception as e:
+        # The per-user try above is the intended last line of defence; if
+        # something still escapes it, the RUNNING SyncLog row must not be
+        # orphaned (issue #174).
+        logger.error(f"Cleanup job failed unexpectedly: {e}")
+        errors.append(str(e))
+        error_objects.append(e)
 
-    # Finalise the SyncLog row.
+    # Finalise the SyncLog row. This happens before the rotation-cursor
+    # write below: closing out the RUNNING row is the obligation (issue
+    # #174), the cursor is best-effort bookkeeping.
     if aborted_for_rate_limit:
         status = SyncStatus.FAILED
         failure_code = "rate_limit"
@@ -797,10 +836,42 @@ async def remove_played_episodes_from_playlists() -> None:
         api_calls_used=api_calls_used,
     )
 
+    # Rotation cursor (issue #182). A run that didn't get through every
+    # available playlist — budget exhausted, rate-limit abort, or an
+    # unexpected error — advances the cursor by what it did consume, so
+    # the next run starts on the first playlist this one never reached
+    # rather than re-cleaning the same head of the list forever and
+    # starving the tail. A run that covered everything resets the cursor.
+    # Single-user by construction (see CLAUDE.md), so one cursor over the
+    # concatenated per-user lists is exact.
+    total_available = sum(len(pls) for _, pls in user_playlists)
+    if total_available and playlists_consumed < total_available:
+        new_offset = (rotation_offset + playlists_consumed) % total_available
+    else:
+        new_offset = 0
+    if new_offset != rotation_offset:
+        await _persist_cleanup_rotation_offset(new_offset)
+
     logger.info(
         f"Remove played episodes job completed: removed {total_removed} episodes, "
         f"{len(errors)} errors, {api_calls_used} API calls used"
     )
+
+
+async def _persist_cleanup_rotation_offset(offset: int) -> None:
+    """Store the cleanup rotation cursor (issue #182).
+
+    Best-effort: losing the cursor costs one repeated head-of-list pass,
+    not correctness — and a write failure here must never stop the caller
+    from finalising its RUNNING SyncLog row (issue #174), so everything is
+    swallowed and logged.
+    """
+    try:
+        async with async_session_maker() as db:
+            await _upsert_app_setting(db, CLEANUP_ROTATION_KEY, str(offset))
+            await db.commit()
+    except Exception as e:
+        logger.error(f"Failed to persist cleanup rotation cursor: {e}")
 
 
 async def _finalise_cleanup_log(
