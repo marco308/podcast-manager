@@ -2,6 +2,10 @@ import SwiftUI
 
 struct PodcastDetailScreen: View {
     @State var podcast: Podcast
+    /// Called with the updated podcast after a successful edit, so the
+    /// presenting list can reflect the change (issue #184).
+    var onUpdate: ((Podcast) -> Void)? = nil
+
     @State private var playlists: [Playlist] = []
     @State private var isUpdating = false
     @State private var error: String?
@@ -218,6 +222,7 @@ struct PodcastDetailScreen: View {
                 isSequential: newValue
             )
             podcast = updated
+            onUpdate?(updated)
         } catch {
             self.error = error.localizedDescription
         }

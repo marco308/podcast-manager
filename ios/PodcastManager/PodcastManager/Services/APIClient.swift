@@ -6,6 +6,10 @@ actor APIClient {
     private let session: URLSession
     private let decoder: JSONDecoder
 
+    /// Called whenever any request comes back 401, so auth state can be
+    /// cleared centrally instead of every screen handling it (issue #171).
+    private var onUnauthorized: (@Sendable () -> Void)?
+
     init() {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
@@ -13,6 +17,11 @@ actor APIClient {
 
         self.decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
+    }
+
+    /// Register the handler invoked on any 401 response.
+    func setUnauthorizedHandler(_ handler: @escaping @Sendable () -> Void) {
+        onUnauthorized = handler
     }
 
     // MARK: - Auth
@@ -42,12 +51,31 @@ actor APIClient {
 
     // MARK: - Podcasts
 
-    func fetchPodcasts(limit: Int = 50, offset: Int = 0, unassigned: Bool = false) async throws -> PodcastListResponse {
-        var path = "/api/podcasts?limit=\(limit)&offset=\(offset)"
-        if unassigned {
-            path += "&unassigned=true"
+    func fetchPodcasts(limit: Int = 50, offset: Int = 0) async throws -> PodcastListResponse {
+        try await get("/api/podcasts?limit=\(limit)&offset=\(offset)")
+    }
+
+    /// Fetch every podcast, paging past the backend's 100-item cap.
+    ///
+    /// A single page silently dropped everything beyond the first 50/100
+    /// shows (issue #170). Loops until we've collected `total` items,
+    /// bailing out early if the server returns a short or empty page so a
+    /// stale `total` can't spin us forever.
+    func fetchAllPodcasts() async throws -> [Podcast] {
+        let pageSize = 100  // backend maximum (le=100)
+        var items: [Podcast] = []
+        var offset = 0
+
+        while true {
+            let page = try await fetchPodcasts(limit: pageSize, offset: offset)
+            items.append(contentsOf: page.items)
+            if items.count >= page.total || page.items.count < pageSize {
+                break
+            }
+            offset += pageSize
         }
-        return try await get(path)
+
+        return items
     }
 
     func syncPodcasts() async throws -> SyncResponse {
@@ -169,10 +197,14 @@ actor APIClient {
         }
 
         if httpResponse.statusCode == 401 {
+            onUnauthorized?()
             throw APIError.unauthorized
         }
 
         guard 200..<300 ~= httpResponse.statusCode else {
+            if httpResponse.statusCode == 429 {
+                throw APIError.httpError(429, "Rate limited — try again in a few minutes")
+            }
             let detail = try? decoder.decode(ErrorResponse.self, from: data)
             throw APIError.httpError(httpResponse.statusCode, detail?.message ?? "Unknown error")
         }
@@ -214,7 +246,8 @@ enum APIError: LocalizedError {
 /// `detail` is a plain string for `HTTPException`, but an **array** of
 /// `{loc, msg, type}` objects for 422 validation errors. Decoding it as a
 /// bare `String` meant every validation error decoded to nil and surfaced as
-/// "Unknown error" (issue #163).
+/// "Unknown error" (issue #163). slowapi rate-limit responses use an
+/// `{"error": ...}` envelope instead, so that key is the fallback.
 private struct ErrorResponse: Decodable {
     let message: String
 
@@ -230,11 +263,16 @@ private struct ErrorResponse: Decodable {
             return
         }
 
-        let errors = try container.decode([ValidationError].self, forKey: .detail)
-        message = errors.map(\.msg).joined(separator: "; ")
+        if let errors = try? container.decode([ValidationError].self, forKey: .detail) {
+            message = errors.map(\.msg).joined(separator: "; ")
+            return
+        }
+
+        message = try container.decode(String.self, forKey: .error)
     }
 
     private enum CodingKeys: String, CodingKey {
         case detail
+        case error
     }
 }

@@ -22,6 +22,10 @@ struct PlaylistRunResponse: Codable {
     let message: String
     let playlistId: Int
     let episodeCount: Int
+    /// Weekend-only playlist left untouched on a non-qualifying day.
+    let skipped: Bool?
+    /// Playlist was written, but from incomplete data.
+    let partial: Bool?
 }
 
 struct MessageResponse: Codable {
@@ -39,6 +43,8 @@ struct PlaylistRunResult: Codable, Identifiable {
     let success: Bool
     let episodeCount: Int?
     let error: String?
+    let skipped: Bool?
+    let partial: Bool?
 
     var id: Int { playlistId }
 }

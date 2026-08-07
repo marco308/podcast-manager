@@ -16,6 +16,26 @@ class AuthService {
 
     init() {
         isAuthenticated = KeychainService.get(.sessionId) != nil
+
+        // Centralised 401 handling: sessions die routinely (24h server
+        // expiry; every web login rotates the phone's session away), and
+        // before this only fetchUser noticed — every other screen showed
+        // "Session expired" with a useless Retry (issue #171). Any 401 now
+        // clears local credentials, so ContentView routes back to the
+        // login screen automatically.
+        Task {
+            await APIClient.shared.setUnauthorizedHandler { [weak self] in
+                Task { @MainActor in
+                    self?.handleUnauthorized()
+                }
+            }
+        }
+    }
+
+    /// The server rejected our session; drop local credentials so the UI
+    /// returns to the login screen.
+    private func handleUnauthorized() {
+        clearLocalSession()
     }
 
     func login() {
@@ -35,6 +55,7 @@ class AuthService {
                 guard let self else { return }
                 self.authSession = nil
                 self.contextProvider = nil
+                defer { self.isLoading = false }
 
                 if let error {
                     if (error as NSError).code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
@@ -93,7 +114,14 @@ class AuthService {
         self.authSession = session
 
         session.presentationContextProvider = provider
-        session.start()
+        isLoading = true
+        if !session.start() {
+            // Completion handler will never fire; don't strand the button.
+            isLoading = false
+            authSession = nil
+            contextProvider = nil
+            self.error = "Unable to start the sign-in session"
+        }
     }
 
     func fetchUser() async {

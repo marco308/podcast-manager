@@ -4,11 +4,11 @@ struct SettingsScreen: View {
     @Environment(AuthService.self) private var authService
     @State private var jobs: [Job] = []
     @State private var jobsLoading = false
-    @State private var updateHour = 4
-    @State private var updateMinute = 0
+    @State private var jobsError: String?
     @State private var scheduleDate = Calendar.current.date(from: DateComponents(hour: 4, minute: 0))!
     @State private var isSavingSchedule = false
     @State private var showScheduleSaved = false
+    @State private var scheduleError: String?
 
     var body: some View {
         NavigationStack {
@@ -39,6 +39,17 @@ struct SettingsScreen: View {
                             ProgressView()
                             Spacer()
                         }
+                    } else if jobs.isEmpty, let jobsError {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label(jobsError, systemImage: "exclamationmark.triangle")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Button("Retry") {
+                                Task { await loadJobs() }
+                            }
+                            .font(.caption.weight(.semibold))
+                        }
+                        .padding(.vertical, 4)
                     } else {
                         ForEach(jobs) { job in
                             VStack(alignment: .leading, spacing: 6) {
@@ -106,6 +117,9 @@ struct SettingsScreen: View {
                                         } else if showScheduleSaved {
                                             Image(systemName: "checkmark.circle.fill")
                                                 .foregroundStyle(.green)
+                                        } else if scheduleError != nil {
+                                            Image(systemName: "exclamationmark.circle.fill")
+                                                .foregroundStyle(.red)
                                         }
 
                                         Button("Save") {
@@ -114,6 +128,12 @@ struct SettingsScreen: View {
                                         .buttonStyle(.borderedProminent)
                                         .controlSize(.small)
                                         .disabled(isSavingSchedule)
+                                    }
+
+                                    if let scheduleError {
+                                        Text(scheduleError)
+                                            .font(.caption)
+                                            .foregroundStyle(.red)
                                     }
                                 }
                             }
@@ -160,15 +180,14 @@ struct SettingsScreen: View {
         do {
             let response = try await APIClient.shared.fetchJobsStatus()
             jobs = response.jobs
+            jobsError = nil
             // Set initial schedule from configurable job
             if let configurable = response.jobs.first(where: { $0.isConfigurable }),
                let schedule = configurable.schedule {
-                updateHour = schedule.hour
-                updateMinute = schedule.minute
                 scheduleDate = Calendar.current.date(from: DateComponents(hour: schedule.hour, minute: schedule.minute)) ?? scheduleDate
             }
         } catch {
-            print("Failed to load jobs: \(error)")
+            jobsError = "Couldn't load jobs: \(error.localizedDescription)"
         }
     }
 
@@ -178,6 +197,7 @@ struct SettingsScreen: View {
 
         isSavingSchedule = true
         defer { isSavingSchedule = false }
+        scheduleError = nil
 
         do {
             _ = try await APIClient.shared.updateJobSchedule(hour: hour, minute: minute)
@@ -186,7 +206,7 @@ struct SettingsScreen: View {
             try? await Task.sleep(for: .seconds(2))
             showScheduleSaved = false
         } catch {
-            print("Failed to save schedule: \(error)")
+            scheduleError = "Couldn't save schedule: \(error.localizedDescription)"
         }
     }
 
