@@ -49,11 +49,17 @@ def downgrade() -> None:
             server_default='none'
         ))
 
-    # Migrate back: take first category or default to 'none'
+    # Migrate back: take first category or default to 'none'.
+    # A single-element list has no comma, so INSTR(...) = 0 and the SUBSTR
+    # branch becomes SUBSTR(x, 2, -2) — a negative length, which SQLite reads
+    # backwards from the start and returns '[' rather than the category
+    # (issue #176). Strip the brackets/quotes instead.
     op.execute("""
         UPDATE podcasts
         SET category = CASE
             WHEN categories = '[]' OR categories IS NULL THEN 'none'
+            WHEN INSTR(categories, ',') = 0 THEN REPLACE(REPLACE(REPLACE(
+                categories, '[', ''), ']', ''), '"', '')
             ELSE REPLACE(REPLACE(
                 SUBSTR(categories, 2, INSTR(categories, ',') - 2),
                 '"', ''), ']', '')

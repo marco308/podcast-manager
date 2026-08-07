@@ -19,9 +19,24 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements*.txt
       - run: pip install -r requirements-dev.txt
-      - run: ruff check app
-      - run: ruff format --check app
+      # ruff also covers scripts/ (tests/ still has pre-existing violations
+      # and is excluded until it is cleaned up — see issue #178).
+      - run: ruff check app scripts
+      - run: ruff format --check app scripts
       - run: pytest tests
+      # Prove the migration chain builds the schema the models declare on a
+      # fresh database, matches them exactly (drift check), and can unwind
+      # cleanly (issues #176/#178). Dummy env vars per tests/conftest.py.
+      - name: Migration chain and drift check
+        env:
+          SPOTIFY_CLIENT_ID: test-client-id
+          SPOTIFY_CLIENT_SECRET: test-client-secret
+          ENCRYPTION_KEY: QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=
+          DATABASE_URL: sqlite+aiosqlite:///${{ runner.temp }}/ci_migration_check.db
+        run: |
+          alembic upgrade head
+          python -m scripts.check_migration_drift
+          alembic downgrade base
 
   frontend:
     runs-on: ubuntu-latest
@@ -39,3 +54,17 @@ jobs:
       - run: npm run lint
       - run: npm run format:check
       - run: npm run build
+
+  # Prove both images still build (no push) — the Dockerfiles are otherwise
+  # only exercised at deploy time (issue #178).
+  docker-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t podcast-manager-backend:ci ./backend
+
+  docker-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t podcast-manager-frontend:ci ./frontend

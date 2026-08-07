@@ -32,7 +32,9 @@ services:
     volumes:
       - podcast_data:/app/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      # healthcheck.sh probes https when TLS certs are mounted, http otherwise
+      # — matching whichever scheme entrypoint.sh serves (issue #177).
+      test: ["CMD", "/app/healthcheck.sh"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -55,7 +57,10 @@ services:
       restart_policy:
         condition: any
         delay: 5s
+        # Without a window, max_attempts is a lifetime cap that never resets;
+        # the window makes it "3 attempts per 120s" (issue #177).
         max_attempts: 3
+        window: 120s
       update_config:
         parallelism: 1
         delay: 10s
@@ -67,7 +72,8 @@ services:
       - traefik-public
       - podcast-internal
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1/health"]
+      # nginx listens on 8080 in-container so it can run as a non-root user.
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -84,7 +90,7 @@ services:
         - "traefik.http.routers.podcastmanager-frontend.rule=Host(`podcastmanager.example.com`)"
         - "traefik.http.routers.podcastmanager-frontend.entrypoints=websecure"
         - "traefik.http.routers.podcastmanager-frontend.tls.certresolver=letsencrypt"
-        - "traefik.http.services.podcastmanager-frontend.loadbalancer.server.port=80"
+        - "traefik.http.services.podcastmanager-frontend.loadbalancer.server.port=8080"
         # HTTP to HTTPS redirect
         - "traefik.http.routers.podcastmanager-frontend-http.rule=Host(`podcastmanager.example.com`)"
         - "traefik.http.routers.podcastmanager-frontend-http.entrypoints=web"
@@ -94,7 +100,10 @@ services:
       restart_policy:
         condition: any
         delay: 5s
+        # Without a window, max_attempts is a lifetime cap that never resets;
+        # the window makes it "3 attempts per 120s" (issue #177).
         max_attempts: 3
+        window: 120s
       update_config:
         parallelism: 1
         delay: 10s

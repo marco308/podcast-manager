@@ -17,7 +17,9 @@ services:
       - podcast_data:/app/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      # healthcheck.sh probes https when TLS certs are mounted, http otherwise
+      # — matching whichever scheme entrypoint.sh serves (issue #177).
+      test: ["CMD", "/app/healthcheck.sh"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -27,9 +29,11 @@ services:
     build: ./frontend
     ports:
       # The app (and its /api proxy) on host port 8080; change to taste.
-      - "8080:80"
+      # nginx listens on 8080 in-container so it can run as a non-root user.
+      - "8080:8080"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
