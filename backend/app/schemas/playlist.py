@@ -2,9 +2,17 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.playlist import EpisodeMode, PlaylistOrderingMode
+
+# Spotify playlist IDs are 22 chars of base62 — 64 leaves slack without
+# accepting arbitrary-length input.
+SPOTIFY_ID_MAX_LENGTH = 64
+# The name column is String(255); reject anything longer at the edge.
+NAME_MAX_LENGTH = 255
+# Sanity cap on bulk assignment/reorder payloads.
+PODCAST_IDS_MAX_LENGTH = 500
 
 
 class PlaylistBase(BaseModel):
@@ -20,7 +28,8 @@ class PlaylistBase(BaseModel):
 class PlaylistCreate(PlaylistBase):
     """Schema for creating a playlist."""
 
-    spotify_playlist_id: str | None = None
+    name: str = Field(min_length=1, max_length=NAME_MAX_LENGTH)
+    spotify_playlist_id: str | None = Field(None, max_length=SPOTIFY_ID_MAX_LENGTH)
 
 
 class PlaylistResponse(PlaylistBase):
@@ -38,8 +47,8 @@ class PlaylistResponse(PlaylistBase):
 class PlaylistUpdate(BaseModel):
     """Schema for updating playlist configuration."""
 
-    name: str | None = None
-    spotify_playlist_id: str | None = None
+    name: str | None = Field(None, min_length=1, max_length=NAME_MAX_LENGTH)
+    spotify_playlist_id: str | None = Field(None, max_length=SPOTIFY_ID_MAX_LENGTH)
     is_enabled: bool | None = None
     episode_mode: EpisodeMode | None = None
     is_weekend_only: bool | None = None
@@ -56,7 +65,7 @@ class PlaylistListResponse(BaseModel):
 class PlaylistPodcastAdd(BaseModel):
     """Schema for adding podcasts to a playlist."""
 
-    podcast_ids: list[int]
+    podcast_ids: list[int] = Field(max_length=PODCAST_IDS_MAX_LENGTH)
 
 
 class PlaylistPodcastResponse(BaseModel):
@@ -86,4 +95,4 @@ class PlaylistPodcastListResponse(BaseModel):
 class PlaylistPodcastReorder(BaseModel):
     """Schema for reordering podcasts within a playlist."""
 
-    podcast_ids: list[int]
+    podcast_ids: list[int] = Field(max_length=PODCAST_IDS_MAX_LENGTH)
