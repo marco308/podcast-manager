@@ -6,4 +6,4 @@ ruff>=0.16.1,<0.17
 
 # Tests
 pytest>=8.3,<10
-pytest-asyncio>=1.0,<2.0
+pytest-asyncio>=1.4.0,<2.0
