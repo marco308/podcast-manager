@@ -18,10 +18,13 @@ The `.xcodeproj` is generated, not committed. After cloning:
 brew install xcodegen   # if needed
 cd ios/PodcastManager
 cp Local.yml.example Local.yml   # then set DEVELOPMENT_TEAM (+ optional SERVER_URL_DEFAULT)
+cp ExportOptions.plist.example ExportOptions.plist   # then set teamID (TestFlight/App Store only)
 xcodegen generate
 ```
 
 `Local.yml` is a gitignored optional include of `project.yml` — signing team and the baked-in default server URL live there, never in committed files. Simulator builds work without a team ID.
+
+`ExportOptions.plist` is likewise gitignored and holds your `teamID` for `xcodebuild -exportArchive`; you only need it when archiving for TestFlight or the App Store.
 
 ## Commands
 
@@ -121,4 +124,5 @@ PodcastManager/
 
 - Bundle ID defaults to `com.marcuslab.podcastmanager` — forks should change `bundleIdPrefix` and `PRODUCT_BUNDLE_IDENTIFIER` in `project.yml` (the Keychain service name follows the bundle ID automatically)
 - `DEVELOPMENT_TEAM` comes from the gitignored `Local.yml` (copy `Local.yml.example`); required for device/TestFlight builds only
+- `teamID` for `-exportArchive` comes from the gitignored `ExportOptions.plist` (copy `ExportOptions.plist.example`); required for TestFlight/App Store export only
 - Code signing: Automatic
