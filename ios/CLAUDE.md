@@ -103,10 +103,26 @@ PodcastManager/
 - Login screen has the URL field; `APIClient` throws `.serverNotConfigured` when unset
 
 **API Client:**
-- Actor-based singleton (`APIClient.shared`)
+- Actor-based singleton (`APIClient.shared`); `init(session:)` accepts an injected `URLSession` so tests can stub the network with a `URLProtocol` (see `PodcastManagerTests/APIClientCsrfRetryTests.swift`)
 - Session cookie set manually via `Cookie` header (not URLSession cookie jar)
 - CSRF token sent on all non-GET requests
+- A 403 whose `detail` mentions CSRF triggers a one-shot recovery: `GET /api/auth/csrf-token`, store the result in the Keychain, retry the original request once. Mirrors the web client's interceptor; a non-CSRF 403, or a second CSRF 403, surfaces as `APIError.httpError`
+- Any 401 fires the handler registered by `AuthService`, which clears the Keychain and routes back to the login screen
 - Decoder uses `convertFromSnakeCase` key strategy
+
+**API scope (intentionally read-mostly):**
+
+The app is a day-to-day companion, not a second admin UI. It covers browsing and syncing podcasts, toggling `is_sequential`, adding/removing podcasts in an existing playlist, running playlists, and viewing/changing the job schedule. Everything that shapes a playlist is deliberately web-only:
+
+| Backend endpoint not wrapped by `APIClient` | Why |
+|---|---|
+| `POST /api/playlists` (create) | One-off setup; the web form already validates modes/ordering |
+| `PATCH /api/playlists/{id}` (rename, mode, ordering, enabled, weekend-only) | Same |
+| `DELETE /api/playlists/{id}` | Destructive and rare; keep it behind the web confirm dialog |
+| `PUT /api/playlists/{id}/podcasts/reorder` | Depends on the dnd-kit drag UI; a list-reorder UX on iOS is real work for a rarely-used feature |
+| `DELETE /api/podcasts/{spotify_id}` (unfollow) | Unfollowing is a Spotify-side action; do it in the Spotify app or the web UI |
+
+If one of these is ever wanted on iOS, it is a plain addition to `APIClient` (the backend needs no change) plus the corresponding screen. Update this table when that happens.
 
 **Podcast Model:**
 - Custom `init(from:)` decoder with defaults for missing fields

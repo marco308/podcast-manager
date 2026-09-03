@@ -16,3 +16,9 @@ struct MobileExchangeResponse: Codable {
     let sessionId: String
     let csrfToken: String
 }
+
+/// Response body of `GET /api/auth/csrf-token`: the CSRF token bound to the
+/// current session, used to recover from a 403 CSRF rejection.
+struct CsrfTokenResponse: Codable {
+    let csrfToken: String
+}

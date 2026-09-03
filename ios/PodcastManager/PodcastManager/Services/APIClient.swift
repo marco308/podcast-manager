@@ -10,10 +10,16 @@ actor APIClient {
     /// cleared centrally instead of every screen handling it (issue #171).
     private var onUnauthorized: (@Sendable () -> Void)?
 
-    init() {
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 30
-        self.session = URLSession(configuration: config)
+    /// `session` is injectable so tests can stub the network with a
+    /// `URLProtocol`; production uses the default configuration.
+    init(session: URLSession? = nil) {
+        if let session {
+            self.session = session
+        } else {
+            let config = URLSessionConfiguration.default
+            config.timeoutIntervalForRequest = 30
+            self.session = URLSession(configuration: config)
+        }
 
         self.decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -47,6 +53,18 @@ actor APIClient {
     /// user signed out (issue #148).
     func logout() async throws {
         let _: MessageResponse = try await post("/api/auth/logout")
+    }
+
+    /// Ask the server for the CSRF token bound to the current session and
+    /// persist it. Used to recover from a 403 CSRF rejection without
+    /// forcing a re-login (the web client does the same via
+    /// `/api/auth/csrf-token`).
+    private func refreshCsrfToken() async throws -> String {
+        let response: CsrfTokenResponse = try await get("/api/auth/csrf-token")
+        // A failed Keychain write is already logged by `save`; the fresh
+        // token is still usable for this retry, so don't fail here.
+        KeychainService.save(response.csrfToken, for: .csrfToken)
+        return response.csrfToken
     }
 
     // MARK: - Podcasts
@@ -189,7 +207,7 @@ actor APIClient {
         return request
     }
 
-    private func execute<T: Decodable>(_ request: URLRequest) async throws -> T {
+    private func execute<T: Decodable>(_ request: URLRequest, isCsrfRetry: Bool = false) async throws -> T {
         let (data, response) = try await session.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -206,7 +224,26 @@ actor APIClient {
                 throw APIError.httpError(429, "Rate limited — try again in a few minutes")
             }
             let detail = try? decoder.decode(ErrorResponse.self, from: data)
-            throw APIError.httpError(httpResponse.statusCode, detail?.message ?? "Unknown error")
+            let message = detail?.message ?? "Unknown error"
+
+            // A 403 whose detail mentions CSRF means the session is alive but
+            // our stored token doesn't match it (lost or stale Keychain
+            // entry, header stripped in transit). Mirror the web client:
+            // fetch the session's current token and retry exactly once
+            // (issue #163). GETs never carry a token, so only mutations
+            // qualify, and the recovery GET itself can't loop back here.
+            if httpResponse.statusCode == 403,
+               !isCsrfRetry,
+               request.httpMethod != "GET",
+               message.localizedCaseInsensitiveContains("csrf"),
+               let freshToken = try? await refreshCsrfToken()
+            {
+                var retry = request
+                retry.setValue(freshToken, forHTTPHeaderField: "X-CSRF-Token")
+                return try await execute(retry, isCsrfRetry: true)
+            }
+
+            throw APIError.httpError(httpResponse.statusCode, message)
         }
 
         return try decoder.decode(T.self, from: data)
