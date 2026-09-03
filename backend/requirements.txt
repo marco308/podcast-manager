@@ -21,7 +21,7 @@ cryptography>=49.0.0
 slowapi>=0.1.10,<1.0.0
 
 # UK public holidays
-holidays>=0.100,<1.0.0
+holidays>=0.102,<1.0.0
 
 # Configuration and validation
 pydantic>=2.13.4,<3.0.0
