@@ -2,7 +2,7 @@
 -r requirements.txt
 
 # Lint / format (keep the minor pinned — the formatter's output must match CI)
-ruff>=0.16.1,<0.17
+ruff>=0.16.5,<0.17
 
 # Tests
 pytest>=9.1.1,<10
