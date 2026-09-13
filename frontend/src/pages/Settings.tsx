@@ -99,11 +99,15 @@ export function Settings() {
       title: 'Last Run',
       dataIndex: 'last_run',
       key: 'last_run',
-      render: (last_run: string | null) =>
+      render: (last_run: string | null, record) =>
         last_run ? (
-          <Tooltip title={dayjs(last_run).format('YYYY-MM-DD HH:mm:ss')}>
-            {dayjs(last_run).fromNow()}
-          </Tooltip>
+          <Space size={4}>
+            <Tooltip title={dayjs(last_run).format('YYYY-MM-DD HH:mm:ss')}>
+              {dayjs(last_run).fromNow()}
+            </Tooltip>
+            {record.last_run_status === 'failed' && <Tag color="red">failed</Tag>}
+            {record.last_run_status === 'running' && <Tag color="processing">running</Tag>}
+          </Space>
         ) : (
           '—'
         ),

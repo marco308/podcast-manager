@@ -267,10 +267,60 @@ async def _finalise_playlist_update_log(
             logger.error(f"Failed to update sync log: {e}")
 
 
+# failure_code written by the startup sweep below. Distinct from the codes
+# _classify_failure produces so the history can tell "the job broke" apart
+# from "the process went away underneath the job".
+INTERRUPTED_FAILURE_CODE = "interrupted"
+
+
+async def fail_orphaned_sync_logs() -> int:
+    """Close out SyncLog rows left ``RUNNING`` by a previous process.
+
+    Every job writes a ``RUNNING`` row before it starts and finalises it on
+    the way out (issue #174). That covers every exit path *inside* the
+    process — but not the process itself dying mid-run (deploy, OOM, host
+    reboot). Those rows stayed ``RUNNING`` forever, and because
+    ``get_job_status`` reports ``last_run`` from ``started_at`` regardless of
+    status, the UI showed the interrupted run as a recent, successful-looking
+    one (issue #161).
+
+    The jobs run in-process under APScheduler, so at scheduler start nothing
+    can legitimately be running: any ``RUNNING`` row is an orphan by
+    construction. No heartbeat or staleness window is needed — a startup
+    sweep is exact. Called from :func:`init_scheduler`; a failure here is
+    logged and never blocks startup.
+
+    Returns:
+        Number of rows marked ``FAILED``.
+    """
+    async with async_session_maker() as db:
+        result = await db.execute(select(SyncLog).where(SyncLog.status == SyncStatus.RUNNING))
+        orphans = list(result.scalars().all())
+        if not orphans:
+            return 0
+        now = datetime.now(UTC)
+        for row in orphans:
+            row.status = SyncStatus.FAILED
+            row.completed_at = now
+            row.failure_code = INTERRUPTED_FAILURE_CODE
+            row.details = "Interrupted: the process stopped before this run finished (marked failed at startup)."
+        await db.commit()
+    logger.warning(f"Marked {len(orphans)} interrupted SyncLog run(s) as failed at startup")
+    return len(orphans)
+
+
 async def init_scheduler() -> None:
     """Initialize and start the scheduler with configured jobs."""
     if scheduler.running:
         return
+
+    # Nothing can be running yet, so any RUNNING row is left over from a
+    # process that died mid-job. Close it out before the jobs (and the UI's
+    # last-run lookup) can see it.
+    try:
+        await fail_orphaned_sync_logs()
+    except Exception as e:
+        logger.error(f"Failed to sweep orphaned SyncLog rows at startup: {e}")
 
     # Read persisted schedule from DB
     update_hour = settings.PLAYLIST_UPDATE_HOUR
@@ -349,8 +399,11 @@ async def get_job_status() -> list[dict]:
     """Get status of all scheduled jobs with enhanced info."""
     jobs = scheduler.get_jobs()
 
-    # Get last playlist_update run from SyncLog
+    # Get last playlist_update run from SyncLog. The status travels with the
+    # timestamp so a failed or interrupted run isn't shown as if it worked
+    # (issue #161).
     playlist_last_run = None
+    playlist_last_run_status: str | None = None
     try:
         async with async_session_maker() as db:
             result = await db.execute(
@@ -364,6 +417,7 @@ async def get_job_status() -> list[dict]:
                 # UTCDateTime guarantees an aware value, so isoformat() already
                 # carries the offset — no manual "Z" suffix (issue #156).
                 playlist_last_run = last_sync.started_at.isoformat()
+                playlist_last_run_status = last_sync.status.value
     except Exception as e:
         # Non-fatal — the job list is still useful without last_run — but
         # don't hide the read failure entirely (issue #182).
@@ -376,6 +430,7 @@ async def get_job_status() -> list[dict]:
             "name": job.name,
             "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
             "last_run": None,
+            "last_run_status": None,
             "type": "unknown",
             "is_configurable": False,
         }
@@ -398,6 +453,7 @@ async def get_job_status() -> list[dict]:
             info["is_configurable"] = job.id == "daily_playlist_update"
             if job.id == "daily_playlist_update":
                 info["last_run"] = playlist_last_run
+                info["last_run_status"] = playlist_last_run_status
         elif isinstance(job.trigger, IntervalTrigger):
             info["type"] = "interval"
             # Get interval in minutes
