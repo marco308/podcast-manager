@@ -59,6 +59,20 @@ class TestParseReleaseDate:
         assert parse_release_date("2024-13") == date.min
         assert parse_release_date("2024-02-30") == date.min
 
+    def test_too_many_components_is_unparseable_not_truncated(self):
+        # Must not be read as 2024-03-15 by ignoring the tail.
+        assert parse_release_date("2024-03-15-extra") == date.min
+        assert parse_release_date("2024-03-15-") == date.min
+
+    def test_zero_padded_and_unpadded_components_agree(self):
+        assert parse_release_date("2024-03-05") == parse_release_date("2024-3-5") == date(2024, 3, 5)
+        assert parse_release_date("2024-03") == parse_release_date("2024-3") == date(2024, 3, 1)
+
+    def test_year_precision_ties_with_january_first(self):
+        # A year-only value rounds down to Jan 1 and compares *equal* to an
+        # explicit Jan 1 — sorted() is stable, so equal keys keep input order.
+        assert parse_release_date("2024") == parse_release_date("2024-01-01")
+
     def test_the_lexicographic_bug_is_gone(self):
         # Raw strings: "2024" < "2024-03" < "2024-02-10" is *false* ("2024-03" > "2024-02-10"),
         # but "2024" < "2024-02-10" is true even though a year-only date is
@@ -84,6 +98,15 @@ OLDEST_FIRST = ["day_prev_year", "year_only", "day_feb", "month_march", "day_mar
 
 
 class TestSortEpisodes:
+    def test_equal_keys_keep_input_order(self):
+        # Year-only and explicit Jan 1 tie; the sort must be stable so the
+        # result is deterministic rather than depending on string luck.
+        a = _episode("a", "2024-01-01")
+        b = _episode("b", "2024")
+        builder = PlaylistBuilder(MagicMock(), MagicMock())
+        assert _names(builder._sort_episodes([a, b], sequential=True)) == ["a", "b"]
+        assert _names(builder._sort_episodes([b, a], sequential=True)) == ["b", "a"]
+
     def test_sequential_is_oldest_first_across_precisions(self):
         result = PlaylistBuilder(MagicMock(), MagicMock())._sort_episodes(list(MIXED), sequential=True)
         assert _names(result) == OLDEST_FIRST

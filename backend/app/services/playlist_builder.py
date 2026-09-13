@@ -53,6 +53,10 @@ def parse_release_date(value: str | None) -> date:
     if not value:
         return date.min
     parts = value.split("-")
+    if len(parts) > 3:
+        # Anything beyond YYYY-MM-DD is not a Spotify precision; treat it as
+        # unparseable rather than silently truncating to the first three.
+        return date.min
     try:
         year = int(parts[0])
         month = int(parts[1]) if len(parts) > 1 else 1
