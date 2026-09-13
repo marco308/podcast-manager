@@ -4,7 +4,7 @@ uvicorn[standard]>=0.52.4,<0.53.0
 
 # Database
 sqlalchemy>=2.0.52,<3.0.0
-alembic>=1.18.5,<2.0.0
+alembic>=1.19.2,<2.0.0
 aiosqlite>=0.22.1,<1.0.0
 greenlet>=3.5.4,<4.0.0
 
