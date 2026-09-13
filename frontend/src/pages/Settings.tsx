@@ -18,7 +18,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { LogoutOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
-import { useAuth, useTheme, useJobs, useUpdateJobSchedule } from '../hooks';
+import { useAuth, useTheme, useJobs, useUpdateJobSchedule, useHealth } from '../hooks';
 import type { ThemePreference } from '../context';
 import type { Job } from '../types';
 
@@ -26,13 +26,12 @@ dayjs.extend(relativeTime);
 
 const { Title, Text, Paragraph } = Typography;
 
-const APP_VERSION = '1.0.0';
-
 export function Settings() {
   const { message } = App.useApp();
   const { user, logout } = useAuth();
   const { themePreference, setThemePreference } = useTheme();
   const { data: jobsData, isLoading: jobsLoading } = useJobs();
+  const { data: health } = useHealth();
   const updateSchedule = useUpdateJobSchedule();
   const [editingTime, setEditingTime] = useState<dayjs.Dayjs | null>(null);
 
@@ -220,9 +219,11 @@ export function Settings() {
             <Text strong style={{ fontSize: 16 }}>
               Podcast Manager
             </Text>
-            <Tag color="green" style={{ marginLeft: 8 }}>
-              v{APP_VERSION}
-            </Tag>
+            {health?.version && (
+              <Tag color="green" style={{ marginLeft: 8 }}>
+                v{health.version}
+              </Tag>
+            )}
           </div>
           <Paragraph style={{ marginBottom: 0 }}>
             A powerful Spotify podcast organizer that automatically creates and maintains smart

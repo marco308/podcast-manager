@@ -59,7 +59,7 @@ Once configured, the app runs four background jobs:
 | Job | Schedule | What it does |
 |-----|----------|-------------|
 | **Playlist update** | Daily (configurable, default 4 AM) | Rebuilds all enabled playlists with current unplayed episodes |
-| **Played episode cleanup** | Every 5 minutes | Removes fully-played episodes from all managed playlists |
+| **Played episode cleanup** | Every 30 minutes | Removes fully-played episodes from all managed playlists |
 | **Token refresh** | Every 45 minutes | Refreshes Spotify access tokens before they expire |
 | **Session cleanup** | Every hour | Removes expired user sessions |
 
@@ -85,7 +85,7 @@ The app has four main screens:
 
 - A Spotify account and a Spotify Developer application (see below)
 - Docker (for deployment) or Python 3.11+ and Node.js (for local dev).
-  3.11 is the supported floor (what `ruff`'s `target-version` targets); CI and the Docker image run 3.14.
+  3.11 is the supported floor (what `ruff`'s `target-version` targets) and CI tests it; the Docker image runs 3.14.
 
 ### Registering Your Spotify App (required)
 

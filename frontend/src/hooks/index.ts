@@ -22,3 +22,4 @@ export {
   playlistKeys,
 } from './usePlaylists';
 export { useJobs, useUpdateJobSchedule, jobKeys } from './useJobs';
+export { useHealth, healthKeys } from './useHealth';
