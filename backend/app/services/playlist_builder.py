@@ -3,7 +3,7 @@
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,6 +38,34 @@ class PlaylistBuildError(Exception):
     """
 
 
+def parse_release_date(value: str | None) -> date:
+    """Turn Spotify's mixed-precision ``release_date`` into a comparable date.
+
+    Spotify reports ``release_date_precision`` of ``year``, ``month`` or
+    ``day`` and formats the string accordingly: ``"2024"``, ``"2024-03"`` or
+    ``"2024-03-15"``. Comparing those as raw strings puts ``"2024"`` before
+    ``"2024-03"`` before any day in March — so an episode with only a year
+    sorted ahead of everything else that year, whichever direction the
+    playlist was ordered (issue #161). Missing components round down to the
+    first month/day; an empty or unparseable value sorts as the earliest
+    possible date so it lands at a predictable end of the list.
+    """
+    if not value:
+        return date.min
+    parts = value.split("-")
+    if len(parts) > 3:
+        # Anything beyond YYYY-MM-DD is not a Spotify precision; treat it as
+        # unparseable rather than silently truncating to the first three.
+        return date.min
+    try:
+        year = int(parts[0])
+        month = int(parts[1]) if len(parts) > 1 else 1
+        day = int(parts[2]) if len(parts) > 2 else 1
+        return date(year, month, day)
+    except (ValueError, IndexError):
+        return date.min
+
+
 @dataclass
 class Episode:
     """Simplified episode data for playlist building."""
@@ -50,6 +78,11 @@ class Episode:
     fully_played: bool
     show_id: str
     show_name: str
+
+    @property
+    def release_date_key(self) -> date:
+        """Sort key for ``release_date`` that is safe across precisions."""
+        return parse_release_date(self.release_date)
 
 
 @dataclass
@@ -225,7 +258,7 @@ class PlaylistBuilder:
         """
         return sorted(
             episodes,
-            key=lambda e: e.release_date,
+            key=lambda e: e.release_date_key,
             reverse=not sequential,  # sequential = oldest first, non-sequential = newest first
         )
 
@@ -258,7 +291,7 @@ class PlaylistBuilder:
         Returns:
             Ordered list of episodes.
         """
-        ordered = sorted(episodes, key=lambda e: (e.release_date, e.show_id), reverse=descending)
+        ordered = sorted(episodes, key=lambda e: (e.release_date_key, e.show_id), reverse=descending)
 
         sequential_shows = {p.spotify_id for p in podcasts if p.is_sequential}
         if not sequential_shows:
@@ -268,7 +301,7 @@ class PlaylistBuilder:
             slots = [i for i, episode in enumerate(ordered) if episode.show_id == show_id]
             if len(slots) < 2:
                 continue
-            chronological = sorted((ordered[i] for i in slots), key=lambda e: e.release_date)
+            chronological = sorted((ordered[i] for i in slots), key=lambda e: e.release_date_key)
             for slot, episode in zip(slots, chronological, strict=True):
                 ordered[slot] = episode
 
@@ -321,7 +354,7 @@ class PlaylistBuilder:
             for show_id in sorted(by_show, key=lambda s: (podcast_order_map.get(s, (float("inf"), False))[0], s)):
                 _position, is_sequential = podcast_order_map.get(show_id, (float("inf"), False))
                 # Sequential shows play oldest-first; everything else newest-first.
-                result.extend(sorted(by_show[show_id], key=lambda e: e.release_date, reverse=not is_sequential))
+                result.extend(sorted(by_show[show_id], key=lambda e: e.release_date_key, reverse=not is_sequential))
 
             return result
 
@@ -411,10 +444,10 @@ class PlaylistBuilder:
         if ordering == PlaylistOrderingMode.DEFAULT.value:
             if playlist.episode_mode == "latest_only":
                 # Default for latest_only: newest first
-                all_episodes.sort(key=lambda e: e.release_date, reverse=True)
+                all_episodes.sort(key=lambda e: e.release_date_key, reverse=True)
             else:
                 # Default for all_unplayed: oldest first
-                all_episodes.sort(key=lambda e: e.release_date)
+                all_episodes.sort(key=lambda e: e.release_date_key)
         else:
             all_episodes = self._apply_ordering(all_episodes, ordering, podcast_entries)
 

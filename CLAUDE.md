@@ -172,7 +172,7 @@ frontend/src/
 
 **Single-user by construction:** `auth.py` closes registration once one `User` row exists, so the deployment has exactly one user. Consequently `podcasts` is a **deliberately global table** — it has no `user_id`, and the podcast routes do not filter by owner. `playlists` *is* user-scoped (it predates the decision and the column is harmless), but nothing depends on that scoping for security. If multi-user is ever wanted, adding `Podcast.user_id` and filtering every podcast route is a prerequisite, not an optimisation (issue #154).
 
-**SyncLog:** history of `playlist_update` runs (status, details, timestamps). Consulted for "last run" in `get_job_status()`.
+**SyncLog:** history of `playlist_update` and `cleanup` runs (status, details, timestamps). Consulted for "last run" (and its status) in `get_job_status()`. Jobs write a `RUNNING` row first and finalise it last; rows still `RUNNING` when the scheduler starts can only be from a process that died mid-run, so `init_scheduler` marks them `FAILED` with `failure_code="interrupted"` (issue #161).
 
 **AppSetting:** key/value table used for runtime-mutable configuration (currently just the cron schedule).
 
