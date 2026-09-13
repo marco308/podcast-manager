@@ -4,3 +4,4 @@ export { authApi } from './auth';
 export { podcastsApi } from './podcasts';
 export { playlistsApi } from './playlists';
 export { jobsApi } from './jobs';
+export { healthApi } from './health';

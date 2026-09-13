@@ -8,7 +8,7 @@ Podcast Manager is a self-hosted web app that sits on top of Spotify and adds a 
 
 ## Repo Layout
 
-- `backend/` — FastAPI + async SQLAlchemy + APScheduler (Python 3.11+ supported; CI and the Docker image run 3.14)
+- `backend/` — FastAPI + async SQLAlchemy + APScheduler (Python 3.11+ supported and tested in CI; the Docker image runs 3.14)
 - `frontend/` — React 19 + TypeScript + Vite + Ant Design 6
 - `ios/` — Native SwiftUI companion app (see `ios/CLAUDE.md` for iOS-specific guidance)
 - `docker-compose.yml` — single-host deployment; `deploy.sh` + `docker-stack-traefik.example.yml` — Docker Swarm deployment behind Traefik (copy the example to the gitignored `docker-stack-traefik.yml` and fill in your domains)

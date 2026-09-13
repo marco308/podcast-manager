@@ -131,6 +131,13 @@ export interface UpdateScheduleResponse {
   next_run: string;
 }
 
+// GET /api/health
+export interface HealthResponse {
+  status: string;
+  app: string;
+  version: string;
+}
+
 // Result of a manual single-playlist run.
 // `skipped` is set when a weekend-only playlist was deliberately left
 // untouched; `partial` when it was written from incomplete data because some
