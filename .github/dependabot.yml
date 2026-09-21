@@ -1,14 +1,24 @@
 version: 2
 updates:
+  # Minor/patch bumps are grouped into one PR per ecosystem so the weekly run
+  # lands as a handful of PRs rather than one per package. Majors stay
+  # ungrouped (a group only matches the update-types it lists), so each one
+  # gets its own PR and a human review — the auto-merge job in ci.yml skips them.
   - package-ecosystem: "pip"
     directory: "/backend"
     schedule:
       interval: "weekly"
+    groups:
+      pip-minor-patch:
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: "npm"
     directory: "/frontend"
     schedule:
       interval: "weekly"
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
 
   # Track base image updates so OS/libc/openssl patches don't drift silently
   # between deploys. Dependabot will open PRs bumping FROM lines in each
@@ -28,3 +38,6 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      actions-minor-patch:
+        update-types: ["minor", "patch"]
