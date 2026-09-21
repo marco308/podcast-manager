@@ -117,11 +117,11 @@ jobs:
       contents: write
       pull-requests: write
       actions: write
-    # One merge at a time: each merge makes the other open Dependabot PRs
-    # stale, and serialising keeps lockfile conflicts to a clean failure.
-    concurrency:
-      group: dependabot-automerge
-      cancel-in-progress: false
+    # No concurrency group: GitHub keeps only one pending job per group and
+    # cancels the rest, which silently dropped merges when several Dependabot
+    # PRs finished CI together. Parallel merges are safe — a PR that conflicts
+    # after another lands just fails `gh pr merge`, and Dependabot rebases it
+    # (new head, new CI run, new merge attempt).
     steps:
       - id: meta
         uses: dependabot/fetch-metadata@v2
