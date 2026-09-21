@@ -15,7 +15,7 @@ httpx>=0.28.1,<1.0.0
 apscheduler>=3.11.3,<4.0.0
 
 # Security and encryption
-cryptography>=50.0.0
+cryptography>=50.0.1
 
 # Rate limiting (per-session budgets on expensive endpoints)
 slowapi>=0.1.10,<1.0.0
