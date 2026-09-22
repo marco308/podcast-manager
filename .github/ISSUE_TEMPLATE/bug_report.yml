@@ -1,0 +1,56 @@
+name: Bug report
+description: Something is broken or behaves unexpectedly
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please **do not** file security problems here — use the Security tab (see [SECURITY.md](../blob/main/SECURITY.md)).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to Playlists
+        2. Set ordering mode to ...
+        3. Click Update
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      multiple: true
+      options:
+        - Backend (API / background jobs)
+        - Frontend (web UI)
+        - iOS app
+        - Deployment (Docker / Swarm / Traefik)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Commit SHA or image tag you are running (`git rev-parse --short HEAD`, or the `:sha` tag from GHCR).
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Backend logs, browser console output, or the `sync_logs` details. Redact tokens, cookies, and your Spotify client secret.
+      render: text
+  - type: checkboxes
+    id: spotify
+    attributes:
+      label: Spotify setup
+      description: Most "it doesn't sync" reports come down to one of these.
+      options:
+        - label: My Spotify Developer app is in Development Mode and my account is on its user allowlist
+        - label: SPOTIFY_REDIRECT_URI matches the redirect URI registered in the Spotify dashboard exactly (including `127.0.0.1`, not `localhost`)

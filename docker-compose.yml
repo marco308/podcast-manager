@@ -1,0 +1,40 @@
+# Single-host deployment: backend + frontend, with nginx proxying /api to the
+# backend. Configure backend/.env first (see backend/.env.example).
+#
+# Spotify OAuth requires an HTTPS redirect URI, so put a TLS-terminating
+# reverse proxy (Caddy, nginx, Traefik, ...) in front of the frontend port and
+# set SPOTIFY_REDIRECT_URI / FRONTEND_URL in backend/.env to your public URLs.
+# For a Swarm + Traefik setup, see docker-stack-traefik.example.yml.
+
+services:
+  backend:
+    build: ./backend
+    env_file:
+      - ./backend/.env
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:///./data/podcast_manager.db
+    volumes:
+      - podcast_data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      # healthcheck.sh probes https when TLS certs are mounted, http otherwise
+      # — matching whichever scheme entrypoint.sh serves (issue #177).
+      test: ["CMD", "/app/healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  frontend:
+    build: ./frontend
+    ports:
+      # The app (and its /api proxy) on host port 8080; change to taste.
+      # nginx listens on 8080 in-container so it can run as a non-root user.
+      - "8080:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  podcast_data:

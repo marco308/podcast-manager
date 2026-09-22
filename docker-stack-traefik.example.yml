@@ -1,0 +1,110 @@
+# Example Docker Swarm stack for running behind an existing Traefik reverse proxy.
+#
+# Copy to docker-stack-traefik.yml (gitignored), then replace:
+#   - podcastmanager.example.com / api-podcastmanager.example.com with your domains
+#   - .example.com with your cookie domain (or drop COOKIE_DOMAIN for same-origin)
+#   - your-backend-node / your-frontend-node with your Swarm node hostnames
+#
+# For a single-host setup without Swarm/Traefik, use docker-compose.yml instead.
+version: '3.8'
+
+networks:
+  traefik-public:
+    external: true
+  podcast-internal:
+    driver: overlay
+
+volumes:
+  podcast_data:
+    driver: local
+
+services:
+  backend:
+    image: podcast-manager-backend:latest
+    networks:
+      - traefik-public
+      - podcast-internal
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:///./data/podcast_manager.db
+      - COOKIE_DOMAIN=.example.com
+    volumes:
+      - podcast_data:/app/data
+    healthcheck:
+      # healthcheck.sh probes https when TLS certs are mounted, http otherwise
+      # — matching whichever scheme entrypoint.sh serves (issue #177).
+      test: ["CMD", "/app/healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname == your-backend-node
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.podcastmanager-api.rule=Host(`api-podcastmanager.example.com`) && PathPrefix(`/api`)"
+        - "traefik.http.routers.podcastmanager-api.entrypoints=websecure"
+        - "traefik.http.routers.podcastmanager-api.tls.certresolver=letsencrypt"
+        - "traefik.http.routers.podcastmanager-api.priority=100"
+        - "traefik.http.services.podcastmanager-api.loadbalancer.server.port=8000"
+        - "traefik.http.services.podcastmanager-api.loadbalancer.healthcheck.path=/api/health"
+        - "traefik.http.services.podcastmanager-api.loadbalancer.healthcheck.interval=30s"
+      restart_policy:
+        condition: any
+        delay: 5s
+        # Without a window, max_attempts is a lifetime cap that never resets;
+        # the window makes it "3 attempts per 120s" (issue #177).
+        max_attempts: 3
+        window: 120s
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+
+  frontend:
+    image: podcast-manager-frontend:latest
+    networks:
+      - traefik-public
+      - podcast-internal
+    healthcheck:
+      # nginx listens on 8080 in-container so it can run as a non-root user.
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname == your-frontend-node
+      labels:
+        - "traefik.enable=true"
+        # HTTPS router
+        - "traefik.http.routers.podcastmanager-frontend.rule=Host(`podcastmanager.example.com`)"
+        - "traefik.http.routers.podcastmanager-frontend.entrypoints=websecure"
+        - "traefik.http.routers.podcastmanager-frontend.tls.certresolver=letsencrypt"
+        - "traefik.http.services.podcastmanager-frontend.loadbalancer.server.port=8080"
+        # HTTP to HTTPS redirect
+        - "traefik.http.routers.podcastmanager-frontend-http.rule=Host(`podcastmanager.example.com`)"
+        - "traefik.http.routers.podcastmanager-frontend-http.entrypoints=web"
+        - "traefik.http.routers.podcastmanager-frontend-http.middlewares=podcastmanager-redirect-to-https"
+        - "traefik.http.middlewares.podcastmanager-redirect-to-https.redirectscheme.scheme=https"
+        - "traefik.http.middlewares.podcastmanager-redirect-to-https.redirectscheme.permanent=true"
+      restart_policy:
+        condition: any
+        delay: 5s
+        # Without a window, max_attempts is a lifetime cap that never resets;
+        # the window makes it "3 attempts per 120s" (issue #177).
+        max_attempts: 3
+        window: 120s
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback

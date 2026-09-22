@@ -1,0 +1,28 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+src = ["app", "scripts"]
+exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "E501",  # line too long — handled by formatter
+    "B008",  # function-call-in-default-argument — false positive for FastAPI's Depends() and Query()
+    "E712",  # true-false-comparison — SQLAlchemy filter expressions require `== True`
+    "UP042", # replace-str-enum — (str, Enum) to StrEnum migration has subtle behavioral differences
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "scripts"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

@@ -1,0 +1,213 @@
+/* Base styles */
+:root {
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: light;
+  color: rgba(0, 0, 0, 0.88);
+  background-color: #f5f5f5;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  /* Theme variables - Light mode */
+  --bg-layout: #f5f5f5;
+  --bg-container: #ffffff;
+  --border-color: #f0f0f0;
+  --card-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --scrollbar-track: #f1f1f1;
+  --scrollbar-thumb: #c1c1c1;
+  --scrollbar-thumb-hover: #a1a1a1;
+}
+
+/* Dark mode variables */
+[data-theme='dark'] {
+  color-scheme: dark;
+  color: rgba(255, 255, 255, 0.88);
+  background-color: #141414;
+
+  --bg-layout: #141414;
+  --bg-container: #1f1f1f;
+  --border-color: #303030;
+  --card-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+  --scrollbar-track: #2a2a2a;
+  --scrollbar-thumb: #4a4a4a;
+  --scrollbar-thumb-hover: #5a5a5a;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+/* Responsive tweaks for mobile */
+@media (max-width: 768px) {
+  .app-header {
+    padding: 0 12px !important;
+  }
+
+  .header-username {
+    display: none;
+  }
+
+  /* Reduce content padding on small screens */
+  .ant-layout > .ant-layout {
+    padding: 12px !important;
+  }
+
+  /* Content area reduced padding */
+  .ant-layout-content {
+    padding: 12px !important;
+  }
+
+  .ant-card {
+    border-radius: 6px;
+  }
+
+  /* Page titles */
+  .ant-typography h4 {
+    font-size: 18px !important;
+  }
+
+  /* Modal full width on mobile */
+  .ant-modal {
+    max-width: calc(100vw - 32px) !important;
+    margin: 16px auto !important;
+  }
+
+  .ant-modal-content {
+    border-radius: 12px;
+  }
+
+  /* Buttons in header areas - stack on mobile */
+  .ant-space-wrap {
+    justify-content: flex-start;
+  }
+
+  /* Form items tighter spacing */
+  .ant-form-item {
+    margin-bottom: 16px;
+  }
+
+  /* Pagination simplified */
+  .ant-pagination-total-text {
+    display: none;
+  }
+
+  .ant-pagination-options {
+    display: none;
+  }
+}
+
+/* Extra small screens */
+@media (max-width: 480px) {
+  .app-header {
+    padding: 0 8px !important;
+  }
+
+  .ant-layout > .ant-layout {
+    padding: 8px !important;
+  }
+
+  .ant-layout-content {
+    padding: 8px !important;
+  }
+
+  /* Table even more compact */
+  .ant-table-thead > tr > th,
+  .ant-table-tbody > tr > td {
+    padding: 8px !important;
+  }
+
+  /* Cards tighter padding */
+  .ant-card-body {
+    padding: 12px !important;
+  }
+
+  /* Smaller tags */
+  .ant-tag {
+    font-size: 11px;
+    padding: 0 4px;
+    margin-inline-end: 4px;
+  }
+}
+
+/* Podcast table mobile tweaks */
+@media (max-width: 768px) {
+  .podcast-avatar {
+    width: 40px !important;
+    height: 40px !important;
+  }
+
+  .podcast-name {
+    font-size: 14px;
+  }
+
+  /* Make table controls and cells more compact */
+  .ant-table-thead > tr > th,
+  .ant-table-tbody > tr > td {
+    padding: 8px 12px;
+  }
+
+  /* Category select narrower on mobile */
+  .ant-select {
+    min-width: unset !important;
+  }
+}
+
+/* Touch-friendly improvements */
+@media (pointer: coarse) {
+  /* Larger touch targets for switches */
+  .ant-switch {
+    min-width: 44px;
+    min-height: 24px;
+  }
+
+  /* Larger touch targets for buttons */
+  .ant-btn-sm {
+    min-height: 32px;
+    min-width: 32px;
+  }
+
+  /* Better tap targets for list items */
+  .ant-list-item {
+    min-height: 48px;
+  }
+
+  /* Improve dropdown trigger area */
+  .ant-dropdown-trigger {
+    padding: 8px;
+  }
+}
+
+/* Let Ant Design components use their own focus styles */
+.ant-btn:focus-visible,
+.ant-input:focus-visible,
+.ant-select:focus-visible,
+.ant-switch:focus-visible {
+  outline: none;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}

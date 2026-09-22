@@ -1,0 +1,212 @@
+import SwiftUI
+
+struct PlaylistDetailScreen: View {
+    let playlist: Playlist
+
+    @State private var podcasts: [Podcast] = []
+    @State private var isLoading = true
+    @State private var error: String?
+    @State private var showingAddSheet = false
+    @State private var statusMessage: String?
+
+    var body: some View {
+        Group {
+            if isLoading {
+                ProgressView("Loading podcasts...")
+            } else if let error {
+                errorView(error)
+            } else {
+                contentView
+            }
+        }
+        .navigationTitle(playlist.name)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    showingAddSheet = true
+                } label: {
+                    Image(systemName: "plus")
+                }
+            }
+        }
+        .sheet(isPresented: $showingAddSheet) {
+            AddPodcastsSheet(playlistId: playlist.id, existingPodcastIds: Set(podcasts.map(\.id))) {
+                await loadPodcasts()
+            }
+        }
+        .task {
+            await loadPodcasts()
+        }
+        .refreshable {
+            await loadPodcasts()
+        }
+        .overlay(alignment: .bottom) {
+            if let statusMessage {
+                Text(statusMessage)
+                    .font(.footnote.bold())
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(.ultraThinMaterial)
+                    .clipShape(Capsule())
+                    .padding(.bottom, 8)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .task(id: statusMessage) {
+                        // Keyed on the message so a replacement toast
+                        // restarts the timer instead of inheriting the
+                        // dying one (issue #181).
+                        try? await Task.sleep(for: .seconds(3))
+                        if !Task.isCancelled {
+                            withAnimation { self.statusMessage = nil }
+                        }
+                    }
+            }
+        }
+    }
+
+    private var contentView: some View {
+        Group {
+            if podcasts.isEmpty {
+                ContentUnavailableView(
+                    "No Podcasts",
+                    systemImage: "mic.slash",
+                    description: Text("Tap + to add podcasts to this playlist")
+                )
+            } else {
+                List {
+                    settingsSection
+                    podcastsSection
+                }
+                .listStyle(.insetGrouped)
+            }
+        }
+    }
+
+    private var settingsSection: some View {
+        Section {
+            LabeledContent("Arrangement", value: playlist.arrangementLabel)
+            LabeledContent("Episodes per podcast", value: playlist.ruleSummary)
+            LabeledContent("Status", value: playlist.isEnabled ? "Enabled" : "Disabled")
+            if let url = playlist.spotifyURL {
+                // Universal link: opens the Spotify app when installed.
+                Link(destination: url) {
+                    Label("Open in Spotify", systemImage: "arrow.up.right.square")
+                }
+            } else {
+                LabeledContent("Spotify playlist", value: "Created on first run")
+            }
+        } header: {
+            Text("Playlist Settings")
+        } footer: {
+            // One rule, defined by the backend (issue #239): a disabled
+            // playlist is never written to on Spotify — not by the daily
+            // rebuild, not by cleanup, and not by a manual run either.
+            if !playlist.isEnabled {
+                Text(
+                    "Disabled playlists are never written to on Spotify: no daily rebuild, "
+                        + "no cleanup of played episodes, and Run is unavailable."
+                )
+            }
+        }
+    }
+
+    private var podcastsSection: some View {
+        Section("Podcasts (\(podcasts.count))") {
+            ForEach(podcasts) { podcast in
+                VStack(alignment: .leading, spacing: 4) {
+                    PodcastRow(podcast: podcast)
+                    if let rule = podcast.rule {
+                        ruleCaption(rule)
+                    }
+                }
+            }
+            .onDelete { indexSet in
+                Task { await removePodcasts(at: indexSet) }
+            }
+        }
+    }
+
+    /// One caption line: the resolved rule plus a badge saying why it differs
+    /// from the playlist default, if it does.
+    private func ruleCaption(_ rule: AssignmentRule) -> some View {
+        HStack(spacing: 6) {
+            Text(rule.summary)
+            if rule.isCustom {
+                ruleBadge("Custom", color: Color.accentColor)
+            } else if rule.pickFromSource == "sequential" {
+                ruleBadge("Sequential", color: .orange)
+            }
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .padding(.leading, 68) // align under the text column of PodcastRow (56pt art + 12pt gap)
+    }
+
+    private func ruleBadge(_ text: String, color: Color) -> some View {
+        Text(text)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(color.opacity(0.15))
+            .foregroundStyle(color)
+            .clipShape(Capsule())
+    }
+
+    private func errorView(_ message: String) -> some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.largeTitle)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 40)
+                Text("Error")
+                    .font(.headline)
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .textSelection(.enabled)
+                    .padding(.horizontal)
+                Button("Retry") {
+                    Task { await loadPodcasts() }
+                }
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func loadPodcasts() async {
+        do {
+            let response = try await APIClient.shared.fetchPlaylistPodcasts(playlistId: playlist.id)
+            podcasts = response.items
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+        isLoading = false
+    }
+
+    private func removePodcasts(at offsets: IndexSet) async {
+        let podcastsToRemove = offsets.map { podcasts[$0] }
+        var removedIds: Set<Int> = []
+        for podcast in podcastsToRemove {
+            do {
+                let response = try await APIClient.shared.removePodcastFromPlaylist(
+                    playlistId: playlist.id,
+                    podcastId: podcast.id
+                )
+                removedIds.insert(podcast.id)
+                withAnimation {
+                    statusMessage = response.message
+                }
+            } catch {
+                withAnimation {
+                    statusMessage = "Failed to remove: \(error.localizedDescription)"
+                }
+            }
+        }
+        if !removedIds.isEmpty {
+            withAnimation {
+                podcasts.removeAll { removedIds.contains($0.id) }
+            }
+        }
+    }
+}
