@@ -133,9 +133,9 @@ async def sync_all_libraries() -> None:
 
     Runs as the first step of :func:`update_all_playlists` (issue #240). Until
     this existed, nothing pulled ``GET /me/shows`` on a schedule: a new
-    subscription stayed invisible until someone pressed Sync, and a show
-    unfollowed on Spotify kept contributing episodes forever, because the
-    show-episodes endpoint still works for shows you no longer follow.
+    subscription stayed invisible until someone pressed Sync, and the
+    unsubscribe reconcile from issue #155 — including the grace-period
+    deletion — only ever advanced when a human happened to press the button.
 
     Failures are recorded in the job's own ``library_sync`` SyncLog row and
     never abort the rebuild that follows — a stale library is a much smaller

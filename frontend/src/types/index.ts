@@ -17,16 +17,17 @@ export interface Podcast {
   image_url: string | null;
   publisher: string | null;
   total_episodes: number;
-  unplayed_episodes: number;
+  // null = not counted yet; set by a playlist build that read the whole show
+  unplayed_episodes: number | null;
   is_sequential: boolean;
   // Hidden from the app but still followed on Spotify (issue #247)
   is_archived: boolean;
   playlist_ids: number[];
   last_synced_at: string | null;
-  // Set when the last sync no longer found the show in the Spotify library.
-  // The podcast and its assignments stay put, but it contributes no episodes
-  // to a build until it is followed again (issue #240).
-  unfollowed_at: string | null;
+  // First sync that found the show gone from the Spotify library (issue
+  // #155). While it is set the show contributes no episodes to a build, and
+  // the row is deleted once it has been missing for the grace period.
+  missing_since: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -70,7 +71,7 @@ export interface Playlist {
 
 export interface PlaylistCreate {
   name: string;
-  spotify_playlist_id?: string;
+  spotify_playlist_id?: string | null;
   is_enabled?: boolean;
   is_weekend_only?: boolean;
   default_episode_limit?: number;
@@ -81,7 +82,8 @@ export interface PlaylistCreate {
 
 export interface PlaylistUpdate {
   name?: string;
-  spotify_playlist_id?: string;
+  // Present and null unlinks the Spotify playlist; absent leaves it alone.
+  spotify_playlist_id?: string | null;
   is_enabled?: boolean;
   is_weekend_only?: boolean;
   default_episode_limit?: number;
@@ -119,10 +121,10 @@ export interface PlaylistPodcast {
   image_url: string | null;
   publisher: string | null;
   total_episodes: number;
-  unplayed_episodes: number;
+  unplayed_episodes: number | null;
   is_sequential: boolean;
-  // Unfollowed on Spotify: still assigned, skipped by the next build
-  unfollowed_at?: string | null;
+  // Gone from the Spotify library: still assigned, skipped by the next build
+  missing_since?: string | null;
   position: number | null;
   rule: AssignmentRule;
   override: AssignmentOverride;
@@ -133,13 +135,12 @@ export interface SyncResult {
   message: string;
   synced: number;
   new: number;
-  // Podcasts newly flagged as gone from / back in the Spotify library
-  unfollowed: number;
-  refollowed: number;
-  // True when the backend deliberately skipped the unfollow check because
-  // Spotify returned an empty library. The upserts still happened, so this
-  // isn't an error — but it isn't a clean sync either (issue #240).
-  unfollow_check_skipped: boolean;
+  // Gone from the Spotify library: counted down over a grace period, then removed
+  missing: number;
+  removed: number;
+  // True when the walk didn't look like a complete snapshot, so nothing was
+  // marked or retired. The upserts still happened (issue #240).
+  reconcile_skipped: boolean;
 }
 
 // Podcast list response
@@ -151,6 +152,21 @@ export interface PodcastListResponse {
 // Playlist list response
 export interface PlaylistListResponse {
   items: Playlist[];
+  total: number;
+}
+
+// A Spotify playlist the user owns, offered as a link target (issue #245).
+export interface SpotifyPlaylistOption {
+  id: string;
+  name: string;
+  image_url: string | null;
+  item_count: number;
+  // The managed playlist already linked to it, if any.
+  linked_playlist_id: number | null;
+}
+
+export interface SpotifyPlaylistOptionListResponse {
+  items: SpotifyPlaylistOption[];
   total: number;
 }
 
@@ -183,8 +199,8 @@ export interface Job {
   // startup, so an interrupted run never looks like a good one.
   last_run_status?: 'running' | 'success' | 'failed' | null;
   // SyncLog job types that failed on the last run. The daily job runs two
-  // steps under one row here, so this names which of them went wrong
-  // (issue #240).
+  // steps recorded under one line here, so this names which of them went
+  // wrong (issue #240).
   last_run_failed_steps?: string[];
   type: 'cron' | 'interval';
   is_configurable: boolean;

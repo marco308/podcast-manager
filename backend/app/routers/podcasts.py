@@ -22,7 +22,7 @@ from app.schemas.podcast import (
     PodcastUpdate,
 )
 from app.services.encryption import TokenDecryptionError, get_encryption_service
-from app.services.library_sync import sync_library
+from app.services.library_sync import UNSUBSCRIBE_GRACE, sync_library
 from app.services.spotify import SpotifyService
 
 logger = logging.getLogger(__name__)
@@ -102,7 +102,7 @@ def _build_podcast_response(podcast: Podcast, playlist_ids: list[int]) -> Podcas
         is_archived=podcast.is_archived,
         playlist_ids=playlist_ids,
         last_synced_at=podcast.last_synced_at,
-        unfollowed_at=podcast.unfollowed_at,
+        missing_since=podcast.missing_since,
         created_at=podcast.created_at,
         updated_at=podcast.updated_at,
     )
@@ -245,9 +245,9 @@ async def sync_podcasts(
 ) -> dict:
     """Sync subscribed podcasts from Spotify.
 
-    The walk and the unfollow reconciliation live in
-    :func:`app.services.library_sync.sync_library`, shared with the daily
-    job so a manual sync and an automatic one do exactly the same thing
+    The walk and the subscription reconcile live in
+    :func:`app.services.library_sync.sync_library`, shared with the daily job
+    so a manual sync and an automatic one do exactly the same thing
     (issue #240).
 
     Serialised against the daily job's sync through ``library_sync_lock``:
@@ -275,15 +275,21 @@ async def sync_podcasts(
     finally:
         locks.library_sync_lock.release()
 
+    message = "Sync completed"
+    if result.removed:
+        message += f", removed {result.removed} unsubscribed"
+    if result.missing:
+        message += f", {result.missing} no longer subscribed (removed after {UNSUBSCRIBE_GRACE.days} days)"
+
     return {
-        "message": "Sync completed",
+        "message": message,
         "synced": result.synced,
         "new": result.new,
-        "unfollowed": result.unfollowed,
-        "refollowed": result.refollowed,
-        # True when the unfollow reconciliation was deliberately skipped
-        # because Spotify returned an empty library (see _reconcile_unfollows).
-        # The upserts still happened, so this isn't an error — but it isn't a
-        # clean sync either, and the client shouldn't render it as one.
-        "unfollow_check_skipped": not result.reconciled,
+        "missing": result.missing,
+        "removed": result.removed,
+        # True when the walk didn't look like a snapshot, so nothing was
+        # marked or retired (see _reconcile_subscriptions). The upserts still
+        # happened, so this isn't an error — but it isn't a complete sync
+        # either, and the client shouldn't render it as one.
+        "reconcile_skipped": not result.reconciled,
     }

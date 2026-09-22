@@ -604,6 +604,65 @@ class SpotifyService:
             )
             return resp.json()
 
+    async def get_playlist(
+        self,
+        playlist_id: str,
+        *,
+        on_unauthorized: Callable[[], Awaitable[str]] | None = None,
+    ) -> dict[str, Any]:
+        """Get a playlist's identity and owner (not its items).
+
+        Used to check ownership before linking an existing Spotify playlist,
+        since every rebuild fully replaces its contents (issue #245).
+
+        Args:
+            playlist_id: Spotify playlist ID.
+            on_unauthorized: Optional callback to recover from 401 by
+                refreshing the bearer token and retrying once.
+
+        Returns:
+            Playlist data limited to ``id``, ``name`` and ``owner(id)``.
+        """
+        async with self._get_client_contextmanager() as client:
+            resp = await self._request_with_retry(
+                client,
+                "GET",
+                f"{SPOTIFY_API_BASE}/playlists/{playlist_id}",
+                headers=self._headers,
+                params={"fields": "id,name,owner(id)"},
+                on_unauthorized=on_unauthorized,
+            )
+            return resp.json()
+
+    async def get_user_playlists(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        *,
+        on_unauthorized: Callable[[], Awaitable[str]] | None = None,
+    ) -> dict[str, Any]:
+        """Get one page of the playlists the user owns or follows.
+
+        Args:
+            limit: Maximum number of playlists to return (max 50).
+            offset: Index of the first playlist to return.
+            on_unauthorized: Optional callback to recover from 401 by
+                refreshing the bearer token and retrying once.
+
+        Returns:
+            Paginated list of simplified playlist objects.
+        """
+        async with self._get_client_contextmanager() as client:
+            resp = await self._request_with_retry(
+                client,
+                "GET",
+                f"{SPOTIFY_API_BASE}/me/playlists",
+                headers=self._headers,
+                params={"limit": limit, "offset": offset},
+                on_unauthorized=on_unauthorized,
+            )
+            return resp.json()
+
     async def get_show_episodes_all(self, show_id: str, max_episodes: int = 200) -> list[dict[str, Any]]:
         """Get all episodes for a show with pagination.
 

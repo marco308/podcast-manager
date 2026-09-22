@@ -52,6 +52,27 @@ interface PodcastTableProps {
 
 type ViewMode = 'cards' | 'table';
 
+// The count is only known once a playlist build has read the whole show
+// (issue #155); until then say so rather than showing a made-up number.
+function UnplayedTag({ count, style }: { count: number | null; style?: CSSProperties }) {
+  if (count === null) {
+    return (
+      <Tag
+        color="default"
+        style={style}
+        title="Counted when a playlist build reads this podcast's full episode list"
+      >
+        unplayed: not counted
+      </Tag>
+    );
+  }
+  return (
+    <Tag color="blue" style={style}>
+      {count} unplayed
+    </Tag>
+  );
+}
+
 export function PodcastTable({ podcasts }: PodcastTableProps) {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
@@ -200,14 +221,14 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
     }
   };
 
-  // Flagged by the sync when the show left the Spotify library. The row and
-  // its assignments survive so re-following restores it, but it contributes
-  // no episodes until then — say so rather than letting a playlist quietly
-  // shrink (issue #240).
-  const unfollowedTag = (podcast: Podcast, style: CSSProperties = {}) =>
-    podcast.unfollowed_at ? (
+  // Marked by the sync when the show left the Spotify library (issue #155).
+  // It contributes no episodes from that moment, and the row is deleted after
+  // the grace period — say so rather than letting a playlist quietly shrink
+  // and a podcast later vanish (issue #240).
+  const missingTag = (podcast: Podcast, style: CSSProperties = {}) =>
+    podcast.missing_since ? (
       <Tooltip
-        title={`Not in your Spotify library since ${dayjs(podcast.unfollowed_at).format('D MMM YYYY')}. It contributes no episodes until you follow it again on Spotify.`}
+        title={`Not in your Spotify library since ${dayjs(podcast.missing_since).format('D MMM YYYY')}. It contributes no episodes to playlists, and will be removed from this app if it stays away. Follow it again on Spotify to restore it.`}
       >
         <Tag color="warning" style={style}>
           Not on Spotify
@@ -216,7 +237,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
     ) : null;
 
   const unfollowDescription = (podcast: Podcast) =>
-    podcast.unfollowed_at
+    podcast.missing_since
       ? `"${podcast.name}" is already gone from your Spotify library. Remove it from this app too?`
       : `Are you sure you want to unfollow "${podcast.name}"? This will remove it from Spotify and delete it from this app.`;
 
@@ -308,7 +329,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
                 Archived
               </Tag>
             )}
-            {unfollowedTag(record, { marginLeft: 8 })}
+            {missingTag(record, { marginLeft: 8 })}
           </div>
         </Space>
       ),
@@ -321,10 +342,10 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
       render: (_, record) => (
         <Space direction="vertical" size={2} style={{ width: '100%' }}>
           <Tag color="default">{record.total_episodes} total</Tag>
-          <Tag color="blue">{record.unplayed_episodes} unplayed</Tag>
+          <UnplayedTag count={record.unplayed_episodes} />
         </Space>
       ),
-      sorter: (a, b) => a.unplayed_episodes - b.unplayed_episodes,
+      sorter: (a, b) => (a.unplayed_episodes ?? -1) - (b.unplayed_episodes ?? -1),
     },
     {
       title: 'Playlists',
@@ -398,10 +419,10 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
             <span>{renderArchiveButton(record)}</span>
           </Tooltip>
           <Popconfirm
-            title={record.unfollowed_at ? 'Remove podcast' : 'Unfollow podcast'}
+            title={record.missing_since ? 'Remove podcast' : 'Unfollow podcast'}
             description={unfollowDescription(record)}
             onConfirm={() => handleUnfollow(record.id, record.name)}
-            okText={record.unfollowed_at ? 'Remove' : 'Unfollow'}
+            okText={record.missing_since ? 'Remove' : 'Unfollow'}
             cancelText="Cancel"
             okButtonProps={{ danger: true }}
           >
@@ -486,9 +507,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
                   <Tag color="default" style={{ margin: 0 }}>
                     {podcast.total_episodes} eps
                   </Tag>
-                  <Tag color="blue" style={{ margin: 0 }}>
-                    {podcast.unplayed_episodes} unplayed
-                  </Tag>
+                  <UnplayedTag count={podcast.unplayed_episodes} style={{ margin: 0 }} />
                   {podcast.is_sequential && (
                     <Tag color="orange" style={{ margin: 0 }}>
                       Seq
@@ -499,7 +518,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
                       Archived
                     </Tag>
                   )}
-                  {unfollowedTag(podcast, { margin: 0 })}
+                  {missingTag(podcast, { margin: 0 })}
                 </Space>
               </div>
               <RightOutlined style={{ color: '#999', fontSize: 12, flexShrink: 0 }} />
@@ -595,7 +614,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
                   {selectedPodcast.name}
                 </Text>
                 <Text type="secondary">{selectedPodcast.publisher}</Text>
-                {unfollowedTag(selectedPodcast, { marginTop: 4 })}
+                {missingTag(selectedPodcast, { marginTop: 4 })}
               </div>
             </Space>
 
@@ -657,10 +676,10 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
               <Space direction="vertical" style={{ width: '100%' }} size={8}>
                 {renderArchiveButton(selectedPodcast, true)}
                 <Popconfirm
-                  title={selectedPodcast.unfollowed_at ? 'Remove podcast' : 'Unfollow podcast'}
+                  title={selectedPodcast.missing_since ? 'Remove podcast' : 'Unfollow podcast'}
                   description={unfollowDescription(selectedPodcast)}
                   onConfirm={() => handleUnfollow(selectedPodcast.id, selectedPodcast.name)}
-                  okText={selectedPodcast.unfollowed_at ? 'Remove' : 'Unfollow'}
+                  okText={selectedPodcast.missing_since ? 'Remove' : 'Unfollow'}
                   cancelText="Cancel"
                   okButtonProps={{ danger: true }}
                 >
@@ -670,7 +689,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
                     loading={updatingId === selectedPodcast.id}
                     block
                   >
-                    {selectedPodcast.unfollowed_at ? 'Remove from App' : 'Unfollow on Spotify'}
+                    {selectedPodcast.missing_since ? 'Remove from App' : 'Unfollow on Spotify'}
                   </Button>
                 </Popconfirm>
               </Space>

@@ -187,10 +187,14 @@ class PlaylistBuilder:
     async def _get_playlist_podcasts(self, playlist_id: int) -> list[AssignmentEntry]:
         """Get podcasts assigned to a playlist with their assignment rows, by position.
 
-        Podcasts flagged ``unfollowed_at`` are left out: the show is gone from
-        the user's Spotify library, so it should stop contributing episodes.
-        The assignment row itself survives, so re-following restores the show
-        to the playlist untouched (issue #240).
+        Podcasts marked ``missing_since`` are left out: the show has left the
+        user's Spotify library, so it should stop contributing episodes now
+        rather than when the row is finally deleted. Marking starts a grace
+        period of several days before deletion (issue #155), and for all of it
+        the old build kept serving episodes from a show the user had
+        unsubscribed from (issue #240). The assignment row is untouched, so a
+        show that comes back inside the grace period returns to the playlist
+        exactly as it was.
 
         Returns:
             List of AssignmentEntry ordered by position (nulls last, then name).
@@ -198,7 +202,7 @@ class PlaylistBuilder:
         result = await self._db.execute(
             select(Podcast, PlaylistPodcast)
             .join(PlaylistPodcast, PlaylistPodcast.podcast_id == Podcast.id)
-            .where((PlaylistPodcast.playlist_id == playlist_id) & (Podcast.unfollowed_at.is_(None)))
+            .where((PlaylistPodcast.playlist_id == playlist_id) & (Podcast.missing_since.is_(None)))
             .order_by(
                 PlaylistPodcast.position.is_(None),  # nulls last
                 PlaylistPodcast.position,

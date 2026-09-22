@@ -32,6 +32,9 @@ class Settings(BaseSettings):
         "user-read-playback-position "
         "user-library-read "
         "user-library-modify "
+        # Reading private playlists is what lets the link picker list the
+        # ones the user owns, and the ownership check see them (issue #245).
+        "playlist-read-private "
         "playlist-modify-public "
         "playlist-modify-private"
     )

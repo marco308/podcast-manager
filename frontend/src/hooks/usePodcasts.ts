@@ -58,11 +58,11 @@ export function useSyncPodcasts() {
     onSuccess: () => {
       // Invalidate all podcast queries to refetch fresh data
       queryClient.invalidateQueries({ queryKey: podcastKeys.all });
-      // A sync never deletes a podcast: shows missing from the Spotify
-      // library are flagged `unfollowed_at` and stop contributing episodes,
-      // keeping their assignments in case they come back (issue #240). The
-      // flag changes what a build produces, so playlist views still need to
-      // refetch.
+      // A sync marks shows that have left the Spotify library, which stops
+      // them contributing episodes at once, and deletes them (with their
+      // assignments) once they have stayed away for the grace period
+      // (issues #155, #240). Either way playlist podcast_counts and
+      // memberships can change, so playlist views must refetch.
       queryClient.invalidateQueries({ queryKey: playlistKeys.all });
     },
   });

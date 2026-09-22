@@ -8,7 +8,9 @@ struct Podcast: Identifiable, Hashable {
     let imageUrl: String?
     let publisher: String?
     let totalEpisodes: Int
-    let unplayedEpisodes: Int
+    /// nil = not counted yet; the backend fills it in when a playlist build
+    /// reads the show's whole catalogue.
+    let unplayedEpisodes: Int?
     let isSequential: Bool
     var playlistIds: [Int]
     let position: Int?
@@ -50,7 +52,7 @@ extension Podcast: Codable {
         imageUrl = try c.decodeIfPresent(String.self, forKey: .imageUrl)
         publisher = try c.decodeIfPresent(String.self, forKey: .publisher)
         totalEpisodes = try c.decodeIfPresent(Int.self, forKey: .totalEpisodes) ?? 0
-        unplayedEpisodes = try c.decodeIfPresent(Int.self, forKey: .unplayedEpisodes) ?? 0
+        unplayedEpisodes = try c.decodeIfPresent(Int.self, forKey: .unplayedEpisodes)
         isSequential = try c.decodeIfPresent(Bool.self, forKey: .isSequential) ?? false
         playlistIds = try c.decodeIfPresent([Int].self, forKey: .playlistIds) ?? []
         position = try c.decodeIfPresent(Int.self, forKey: .position)
@@ -70,4 +72,8 @@ struct SyncResponse: Codable {
     let message: String
     let synced: Int
     let new: Int
+    /// Gone from the Spotify library, removed after a grace period.
+    /// Both absent on older backends.
+    let missing: Int?
+    let removed: Int?
 }

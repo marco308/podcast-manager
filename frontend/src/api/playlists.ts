@@ -9,12 +9,22 @@ import type {
   PlaylistPodcastListResponse,
   PlaylistRunResult,
   PlaylistRunAllResult,
+  SpotifyPlaylistOption,
+  SpotifyPlaylistOptionListResponse,
 } from '../types';
 
 export const playlistsApi = {
   // List all managed playlists
   async list(): Promise<Playlist[]> {
     const response = await apiClient.get<PlaylistListResponse>('/playlists');
+    return response.data.items;
+  },
+
+  // Spotify playlists the user owns, for linking an existing one
+  async listSpotifyPlaylists(): Promise<SpotifyPlaylistOption[]> {
+    const response = await apiClient.get<SpotifyPlaylistOptionListResponse>(
+      '/playlists/spotify-playlists'
+    );
     return response.data.items;
   },
 
