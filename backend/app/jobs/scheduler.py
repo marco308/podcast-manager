@@ -462,15 +462,19 @@ async def get_job_status() -> list[dict]:
 
         # UTCDateTime and _record_run both yield aware datetimes, so
         # isoformat() already carries the offset — no manual "Z" (issue #156).
-        # SyncLog wins for jobs that write it. A cleanup run skipped by the
-        # recency gate writes no row, so it shows the last run that did work.
-        synclog_run = synclog_last_runs.get(_SYNCLOG_JOB_TYPES.get(job.id, ""))
-        in_memory_run = _last_run_times.get(job.id)
-        if synclog_run:
-            info["last_run"] = synclog_run[0].isoformat()
-            info["last_run_status"] = synclog_run[1]
-        elif in_memory_run:
-            info["last_run"] = in_memory_run.isoformat()
+        # SyncLog is the only source for the jobs that write it: _record_run
+        # fires before the row exists (the cleanup recency gate returns before
+        # writing one at all), so falling back to the in-memory time would
+        # report a run that did no work and carry no status.
+        job_type = _SYNCLOG_JOB_TYPES.get(job.id)
+        if job_type is not None:
+            synclog_run = synclog_last_runs.get(job_type)
+            if synclog_run:
+                info["last_run"] = synclog_run[0].isoformat()
+                info["last_run_status"] = synclog_run[1]
+        else:
+            in_memory_run = _last_run_times.get(job.id)
+            info["last_run"] = in_memory_run.isoformat() if in_memory_run else None
 
         result.append(info)
 

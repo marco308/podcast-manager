@@ -160,7 +160,9 @@ export interface Job {
   name: string;
   next_run: string | null;
   last_run: string | null;
-  // Outcome of the run `last_run` refers to (cron jobs only). "failed"
+  // Outcome of the run `last_run` refers to. Only the jobs that write
+  // SyncLog rows (the daily playlist update and the cleanup) report it, so
+  // it is absent on the other interval jobs, cron or not. "failed"
   // covers runs interrupted by a restart, which the backend closes out at
   // startup, so an interrupted run never looks like a good one.
   last_run_status?: 'running' | 'success' | 'failed' | null;

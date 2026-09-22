@@ -107,3 +107,26 @@ async def test_cleanup_last_run_survives_a_restart(maker):
 
     assert datetime.fromisoformat(info["last_run"]) == started
     assert info["last_run_status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_cleanup_with_no_synclog_row_reports_no_last_run(maker):
+    """A run skipped by the recency gate records an in-memory time but writes
+    no SyncLog row; it did no work, so it must not be shown as the last run."""
+    job = MagicMock()
+    job.id = "remove_played_episodes"
+    job.name = "Remove Played Episodes"
+    job.next_run_time = None
+    job.trigger = IntervalTrigger(minutes=30)
+    fake_scheduler = MagicMock()
+    fake_scheduler.get_jobs.return_value = [job]
+
+    with (
+        patch.object(scheduler, "async_session_maker", maker),
+        patch.object(scheduler, "scheduler", fake_scheduler),
+        patch.object(scheduler, "_last_run_times", {"remove_played_episodes": datetime.now(UTC)}),
+    ):
+        [info] = await scheduler.get_job_status()
+
+    assert info["last_run"] is None
+    assert info["last_run_status"] is None
