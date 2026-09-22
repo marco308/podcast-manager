@@ -187,13 +187,18 @@ class PlaylistBuilder:
     async def _get_playlist_podcasts(self, playlist_id: int) -> list[AssignmentEntry]:
         """Get podcasts assigned to a playlist with their assignment rows, by position.
 
+        Podcasts flagged ``unfollowed_at`` are left out: the show is gone from
+        the user's Spotify library, so it should stop contributing episodes.
+        The assignment row itself survives, so re-following restores the show
+        to the playlist untouched (issue #240).
+
         Returns:
             List of AssignmentEntry ordered by position (nulls last, then name).
         """
         result = await self._db.execute(
             select(Podcast, PlaylistPodcast)
             .join(PlaylistPodcast, PlaylistPodcast.podcast_id == Podcast.id)
-            .where(PlaylistPodcast.playlist_id == playlist_id)
+            .where((PlaylistPodcast.playlist_id == playlist_id) & (Podcast.unfollowed_at.is_(None)))
             .order_by(
                 PlaylistPodcast.position.is_(None),  # nulls last
                 PlaylistPodcast.position,

@@ -118,6 +118,9 @@ class PlaylistPodcastResponse(BaseModel):
     total_episodes: int = 0
     unplayed_episodes: int = 0
     is_sequential: bool
+    # Unfollowed on Spotify: the assignment is still here but the show is
+    # skipped by the next build (issue #240).
+    unfollowed_at: datetime | None = None
     position: int | None = None
     rule: AssignmentRule
     override: AssignmentOverride

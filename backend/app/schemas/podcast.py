@@ -27,6 +27,10 @@ class PodcastResponse(PodcastBase):
     is_archived: bool = False
     playlist_ids: list[int] = []
     last_synced_at: datetime | None
+    # Set when the last sync no longer found the show in the user's Spotify
+    # library. The row and its assignments survive, but the show contributes
+    # no episodes to a build until it is followed again (issue #240).
+    unfollowed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

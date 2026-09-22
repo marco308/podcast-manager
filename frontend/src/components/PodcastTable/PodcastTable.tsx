@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
+import type { CSSProperties } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   App,
@@ -199,6 +200,26 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
     }
   };
 
+  // Flagged by the sync when the show left the Spotify library. The row and
+  // its assignments survive so re-following restores it, but it contributes
+  // no episodes until then — say so rather than letting a playlist quietly
+  // shrink (issue #240).
+  const unfollowedTag = (podcast: Podcast, style: CSSProperties = {}) =>
+    podcast.unfollowed_at ? (
+      <Tooltip
+        title={`Not in your Spotify library since ${dayjs(podcast.unfollowed_at).format('D MMM YYYY')}. It contributes no episodes until you follow it again on Spotify.`}
+      >
+        <Tag color="warning" style={style}>
+          Not on Spotify
+        </Tag>
+      </Tooltip>
+    ) : null;
+
+  const unfollowDescription = (podcast: Podcast) =>
+    podcast.unfollowed_at
+      ? `"${podcast.name}" is already gone from your Spotify library. Remove it from this app too?`
+      : `Are you sure you want to unfollow "${podcast.name}"? This will remove it from Spotify and delete it from this app.`;
+
   const archiveDescription = (podcast: Podcast) =>
     `Hide "${podcast.name}" from this app? It stays followed on Spotify` +
     (podcast.playlist_ids.length > 0
@@ -287,6 +308,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
                 Archived
               </Tag>
             )}
+            {unfollowedTag(record, { marginLeft: 8 })}
           </div>
         </Space>
       ),
@@ -376,10 +398,10 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
             <span>{renderArchiveButton(record)}</span>
           </Tooltip>
           <Popconfirm
-            title="Unfollow podcast"
-            description={`Are you sure you want to unfollow "${record.name}"? This will remove it from Spotify and delete it from this app.`}
+            title={record.unfollowed_at ? 'Remove podcast' : 'Unfollow podcast'}
+            description={unfollowDescription(record)}
             onConfirm={() => handleUnfollow(record.id, record.name)}
-            okText="Unfollow"
+            okText={record.unfollowed_at ? 'Remove' : 'Unfollow'}
             cancelText="Cancel"
             okButtonProps={{ danger: true }}
           >
@@ -477,6 +499,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
                       Archived
                     </Tag>
                   )}
+                  {unfollowedTag(podcast, { margin: 0 })}
                 </Space>
               </div>
               <RightOutlined style={{ color: '#999', fontSize: 12, flexShrink: 0 }} />
@@ -572,6 +595,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
                   {selectedPodcast.name}
                 </Text>
                 <Text type="secondary">{selectedPodcast.publisher}</Text>
+                {unfollowedTag(selectedPodcast, { marginTop: 4 })}
               </div>
             </Space>
 
@@ -633,10 +657,10 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
               <Space direction="vertical" style={{ width: '100%' }} size={8}>
                 {renderArchiveButton(selectedPodcast, true)}
                 <Popconfirm
-                  title="Unfollow podcast"
-                  description={`Are you sure you want to unfollow "${selectedPodcast.name}"? This will remove it from Spotify and delete it from this app.`}
+                  title={selectedPodcast.unfollowed_at ? 'Remove podcast' : 'Unfollow podcast'}
+                  description={unfollowDescription(selectedPodcast)}
                   onConfirm={() => handleUnfollow(selectedPodcast.id, selectedPodcast.name)}
-                  okText="Unfollow"
+                  okText={selectedPodcast.unfollowed_at ? 'Remove' : 'Unfollow'}
                   cancelText="Cancel"
                   okButtonProps={{ danger: true }}
                 >
@@ -646,7 +670,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
                     loading={updatingId === selectedPodcast.id}
                     block
                   >
-                    Unfollow on Spotify
+                    {selectedPodcast.unfollowed_at ? 'Remove from App' : 'Unfollow on Spotify'}
                   </Button>
                 </Popconfirm>
               </Space>

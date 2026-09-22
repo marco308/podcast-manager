@@ -86,6 +86,15 @@ function PodcastsSection({ playlist, onEdit }: { playlist: Playlist; onEdit: () 
                   </Tag>
                 </Tooltip>
               )}
+              {/* Still assigned, but the sync found it gone from the Spotify
+                  library, so the next build skips it (issue #240). */}
+              {row.unfollowed_at && (
+                <Tooltip title="Not in your Spotify library any more — this show contributes no episodes until you follow it again">
+                  <Tag color="warning" style={{ fontSize: 10, margin: 0 }}>
+                    NOT ON SPOTIFY
+                  </Tag>
+                </Tooltip>
+              )}
             </div>
             {row.publisher && (
               <Text type="secondary" style={{ fontSize: 12 }} ellipsis>

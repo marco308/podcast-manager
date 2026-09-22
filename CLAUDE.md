@@ -62,6 +62,7 @@ The iOS app does OAuth via `ASWebAuthenticationSession` and a `redirect_scheme=p
 
 Registered in `app/jobs/scheduler.py`, started from the FastAPI lifespan context:
 
+- `daily_playlist_update` runs `sync_all_libraries()` **first**, then rebuilds playlists (issue #240). The sync writes its own `library_sync` SyncLog row and its failures never abort the rebuild — a stale library beats a day with no playlist update. It runs outside `playlist_write_lock` because it only touches `podcasts`.
 - Last-run times come from the `SyncLog` table for jobs that write it (`daily_playlist_update` → `playlist_update`, `remove_played_episodes` → `cleanup`; mapped in `_SYNCLOG_JOB_TYPES`), so they survive a restart. The other interval jobs fall back to the in-memory `_last_run_times` dict in `scheduler.py`.
 - The cron schedule is mutable at runtime via `PUT /api/jobs/schedule`, persisted in the `app_settings` table (keys `playlist_update_hour`, `playlist_update_minute`) so restarts pick it up.
 
@@ -82,9 +83,14 @@ Registered in `app/jobs/scheduler.py`, started from the FastAPI lifespan context
 
 **Fetching is proportional to the rule** (`PlaylistBuilder._fetch_unplayed`): a `newest` rule walks pages from offset 0 and stops once it has enough unplayed; an `oldest` rule reads `total` from the first page and walks backwards from the tail; an unlimited rule reads up to `MAX_EPISODES_PER_SHOW`. `podcast.unplayed_episodes` is only written when the walk saw the whole catalogue.
 
-**Podcast attribute:**
+**Podcast attributes:**
 - `is_sequential`: story-based. A hint that resolves `pick_from` to `oldest` on every assignment unless the row overrides it.
 - `is_archived`: hidden from the app (`GET /podcasts` leaves it out unless `include_archived=true`, so dashboard counts and assignment selects never see it) but still followed on Spotify. Archiving drops the podcast's assignments; unfollowing (`DELETE /podcasts/{id}`) stays a separate, destructive action (issue #247).
+- `unfollowed_at`: set by the library sync when the show is no longer in `GET /me/shows`. Unlike archiving, the podcast stays *visible* (with a "Not on Spotify" tag) and keeps its assignments, but `PlaylistBuilder._get_playlist_podcasts` filters it out so it contributes no episodes. A later sync that sees the show again clears the stamp and the assignments are intact — that reversibility is the whole point of flagging rather than deleting (issue #240).
+
+**Library sync** (`services/library_sync.py::sync_library`, shared by `POST /podcasts/sync` and the daily job): walks every page of `GET /me/shows`, upserts each show, then stamps `unfollowed_at` on every local podcast the walk didn't see. Two guards:
+- A walk that raises part-way through reconciles nothing (the stamping only happens after the loop) and the caller rolls back, so a half-read never becomes a half-library.
+- An **empty** `/me/shows` response against a non-empty local library is treated as a glitch, not a mass unfollow: nothing is stamped and `LibrarySyncResult.reconciled` is False. Stamping there would take every playlist to nothing on the next build, and an empty response can't be told apart from a broken read.
 
 
 **Podcast routes are keyed by the integer `id`** (`/podcasts/{podcast_id}`), the same key as `/playlists/{id}/podcasts/{podcast_id}`. `_get_podcast_or_404` still resolves a non-numeric segment as a `spotify_id` so iOS builds predating the switch keep working; drop that fallback once they are gone (issue #248). `GET /podcasts` has no membership filters — both clients page the whole library and filter locally.
@@ -93,7 +99,7 @@ Registered in `app/jobs/scheduler.py`, started from the FastAPI lifespan context
 
 **Single-user by construction:** `auth.py` closes registration once one `User` row exists, so the deployment has exactly one user. Consequently `podcasts` is a **deliberately global table** — it has no `user_id`, and the podcast routes do not filter by owner. `playlists` *is* user-scoped (it predates the decision and the column is harmless), but nothing depends on that scoping for security. If multi-user is ever wanted, adding `Podcast.user_id` and filtering every podcast route is a prerequisite, not an optimisation (issue #154).
 
-**SyncLog:** history of `playlist_update` and `cleanup` runs (status, details, timestamps). Consulted for "last run" (and its status) in `get_job_status()`. Jobs write a `RUNNING` row first and finalise it last; rows still `RUNNING` when the scheduler starts can only be from a process that died mid-run, so `init_scheduler` marks them `FAILED` with `failure_code="interrupted"` (issue #161).
+**SyncLog:** history of `playlist_update`, `library_sync` and `cleanup` runs (status, details, timestamps). Consulted for "last run" (and its status) in `get_job_status()`. Jobs write a `RUNNING` row first and finalise it last; rows still `RUNNING` when the scheduler starts can only be from a process that died mid-run, so `init_scheduler` marks them `FAILED` with `failure_code="interrupted"` (issue #161).
 
 **AppSetting:** key/value table used for runtime-mutable configuration (currently just the cron schedule).
 

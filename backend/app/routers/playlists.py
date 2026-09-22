@@ -302,6 +302,7 @@ def _build_assignment_response(
         total_episodes=podcast.total_episodes,
         unplayed_episodes=podcast.unplayed_episodes,
         is_sequential=podcast.is_sequential,
+        unfollowed_at=podcast.unfollowed_at,
         position=assignment.position,
         rule=AssignmentRule(
             episode_limit=rule.episode_limit,

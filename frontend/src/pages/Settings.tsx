@@ -198,6 +198,13 @@ export function Settings() {
       </Card>
 
       <Card title="Scheduled Jobs" style={{ marginBottom: 24 }}>
+        <Paragraph style={{ marginBottom: 16 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            The daily run refreshes your Spotify library first — new subscriptions appear, and shows
+            you have unfollowed are flagged and stop contributing episodes — then rebuilds every
+            enabled playlist.
+          </Text>
+        </Paragraph>
         {jobsLoading ? (
           <div style={{ textAlign: 'center', padding: 24 }}>
             <Spin />

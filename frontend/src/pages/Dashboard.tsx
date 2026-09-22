@@ -12,6 +12,7 @@ import { usePodcasts, useSyncPodcasts, usePlaylists, useRunAllPlaylists } from '
 import { LoadingSpinner } from '../components';
 import { getErrorMessage } from '../api';
 import { ruleSummary, spotifyPlaylistUrl } from '../utils/playlistLabels';
+import { syncResultSummary } from '../utils/syncSummary';
 
 const { Title, Text } = Typography;
 const { useBreakpoint } = Grid;
@@ -27,8 +28,7 @@ export function Dashboard() {
 
   const handleSync = async () => {
     try {
-      const result = await syncPodcasts.mutateAsync();
-      message.success(result.message);
+      message.success(syncResultSummary(await syncPodcasts.mutateAsync()));
     } catch {
       message.error('Failed to sync podcasts');
     }

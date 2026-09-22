@@ -17,6 +17,7 @@ from app.models.playlist import Playlist
 from app.models.settings import AppSetting
 from app.models.sync_log import SyncLog, SyncStatus
 from app.models.user import User
+from app.services.library_sync import sync_library
 from app.services.playlist_builder import PlaylistBuilder
 from app.services.spotify import CleanupBudgetExceeded, SpotifyService
 from app.services.token_manager import TokenManager
@@ -120,6 +121,86 @@ async def refresh_all_tokens() -> None:
     logger.info("Token refresh job completed")
 
 
+LIBRARY_SYNC_JOB_TYPE = "library_sync"
+
+
+async def sync_all_libraries() -> None:
+    """Refresh every user's podcast library from Spotify.
+
+    Runs as the first step of :func:`update_all_playlists` (issue #240). Until
+    this existed, nothing pulled ``GET /me/shows`` on a schedule: a new
+    subscription stayed invisible until someone pressed Sync, and a show
+    unfollowed on Spotify kept contributing episodes forever, because the
+    show-episodes endpoint still works for shows you no longer follow.
+
+    Failures are recorded in the job's own ``library_sync`` SyncLog row and
+    never abort the rebuild that follows — a stale library is a much smaller
+    problem than a day with no playlist update.
+    """
+    logger.info("Starting library sync job")
+
+    sync_log_id: int | None = None
+    try:
+        async with async_session_maker() as db:
+            sync_log = SyncLog(
+                job_type=LIBRARY_SYNC_JOB_TYPE,
+                status=SyncStatus.RUNNING,
+                started_at=datetime.now(UTC),
+            )
+            db.add(sync_log)
+            await db.commit()
+            sync_log_id = sync_log.id
+    except Exception as e:
+        logger.error(f"Library sync job failed creating sync log: {e}")
+
+    user_ids: list[int] = []
+    try:
+        async with async_session_maker() as db:
+            result = await db.execute(select(User.id))
+            user_ids = [row[0] for row in result.all()]
+    except Exception as e:
+        logger.error(f"Library sync job failed reading users: {e}")
+        await _finalise_sync_log(
+            sync_log_id,
+            status=SyncStatus.FAILED,
+            details=f"Failed reading users: {e}",
+            failure_code="unknown",
+        )
+        return
+
+    summaries: list[str] = []
+    errors: list[str] = []
+
+    for user_id in user_ids:
+        async with async_session_maker() as db:
+            try:
+                access_token = await TokenManager(user_id).get_token(min_remaining_seconds=300)
+                spotify = SpotifyService(access_token=access_token)
+                result = await sync_library(db, spotify)
+                await db.commit()
+                summaries.append(f"User {user_id}: {result.summary}")
+            except Exception as e:
+                # A partial walk leaves uncommitted upserts and, by
+                # construction, no reconciliation — roll the lot back so the
+                # library is never half-updated from a half-read.
+                logger.error(f"Library sync failed for user {user_id}: {e}")
+                errors.append(f"User {user_id}: {e}")
+                await db.rollback()
+
+    details = "; ".join(summaries) if summaries else "No users synced."
+    if errors:
+        details += f"\nErrors: {chr(10).join(errors[:10])}"
+
+    await _finalise_sync_log(
+        sync_log_id,
+        status=SyncStatus.SUCCESS if not errors else SyncStatus.FAILED,
+        details=details,
+        failure_code="unknown" if errors else None,
+    )
+
+    logger.info(f"Library sync job completed: {details}")
+
+
 async def update_all_playlists() -> None:
     """Update all enabled playlists for all users.
 
@@ -128,6 +209,17 @@ async def update_all_playlists() -> None:
     """
     _record_run("daily_playlist_update")
     logger.info("Starting daily playlist update job")
+
+    # Pull the library first so the rebuild sees today's subscriptions and
+    # skips shows unfollowed on Spotify (issue #240). Deliberately outside
+    # the playlist write lock: it only touches the podcasts table, and the
+    # /me/shows walk shouldn't hold a lock the cleanup job is waiting on.
+    try:
+        await sync_all_libraries()
+    except Exception as e:
+        # sync_all_libraries handles its own failures; anything escaping it
+        # must still not stop the rebuild.
+        logger.error(f"Library sync step failed, continuing with the rebuild: {e}")
 
     # Create sync log with a short-lived session
     sync_log_id: int | None = None
@@ -157,7 +249,7 @@ async def update_all_playlists() -> None:
 
     if read_error is not None:
         # Don't leave the RUNNING row created above orphaned (issue #174).
-        await _finalise_playlist_update_log(
+        await _finalise_sync_log(
             sync_log_id,
             status=SyncStatus.FAILED,
             details=f"Failed reading users: {read_error}",
@@ -226,7 +318,7 @@ async def update_all_playlists() -> None:
     if errors:
         details += f"\n{chr(10).join(errors[:10])}"
 
-    await _finalise_playlist_update_log(
+    await _finalise_sync_log(
         sync_log_id,
         status=SyncStatus.SUCCESS if not errors else SyncStatus.FAILED,
         details=details,
@@ -247,7 +339,7 @@ async def update_all_playlists() -> None:
     )
 
 
-async def _finalise_playlist_update_log(
+async def _finalise_sync_log(
     sync_log_id: int | None,
     *,
     status: SyncStatus,
@@ -256,7 +348,11 @@ async def _finalise_playlist_update_log(
     playlists_attempted: int = 0,
     playlists_failed: int = 0,
 ) -> None:
-    """Update the playlist-update SyncLog row with the final outcome."""
+    """Write the final outcome onto a RUNNING SyncLog row.
+
+    Shared by the playlist-update and library-sync jobs; the playlist
+    counters stay at 0 for the latter, which has no playlists to count.
+    """
     if sync_log_id is None:
         return
     async with async_session_maker() as db:
@@ -348,12 +444,15 @@ async def init_scheduler() -> None:
     except Exception as e:
         logger.warning(f"Failed to read persisted schedule, using defaults: {e}")
 
-    # Daily playlist update job
+    # Daily library sync + playlist rebuild. The id stays
+    # ``daily_playlist_update`` — it is what the persisted schedule, the
+    # reschedule endpoint and the UI's "configurable" flag key off — but the
+    # name says what the run actually does now (issue #240).
     scheduler.add_job(
         update_all_playlists,
         CronTrigger(hour=update_hour, minute=update_minute),
         id="daily_playlist_update",
-        name="Daily Playlist Update",
+        name="Daily Library Sync & Playlist Update",
         replace_existing=True,
     )
 

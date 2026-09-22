@@ -20,6 +20,7 @@ from app.schemas.podcast import (
     PodcastUpdate,
 )
 from app.services.encryption import TokenDecryptionError, get_encryption_service
+from app.services.library_sync import sync_library
 from app.services.spotify import SpotifyService
 
 logger = logging.getLogger(__name__)
@@ -93,6 +94,7 @@ def _build_podcast_response(podcast: Podcast, playlist_ids: list[int]) -> Podcas
         is_archived=podcast.is_archived,
         playlist_ids=playlist_ids,
         last_synced_at=podcast.last_synced_at,
+        unfollowed_at=podcast.unfollowed_at,
         created_at=podcast.created_at,
         updated_at=podcast.updated_at,
     )
@@ -233,91 +235,24 @@ async def sync_podcasts(
     session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Sync subscribed podcasts from Spotify."""
+    """Sync subscribed podcasts from Spotify.
+
+    The walk and the unfollow reconciliation live in
+    :func:`app.services.library_sync.sync_library`, shared with the daily
+    job so a manual sync and an automatic one do exactly the same thing
+    (issue #240).
+    """
     user, access_token = await get_user_with_token(session.user_id, db)
 
     spotify = SpotifyService(access_token=access_token)
-
-    synced_count = 0
-    new_count = 0
-    offset = 0
-    limit = 50
-    # Spotify pagination can hand back the same show on two pages (the list
-    # shifts under us mid-sync). With autoflush off, the existence SELECT
-    # can't see the first pending insert, so a repeat would 500 the whole
-    # sync on the unique constraint — skip anything already seen (issue #182).
-    seen_spotify_ids: set[str] = set()
-
-    while True:
-        # Fetch shows from Spotify
-        shows_data = await spotify.get_user_shows(limit=limit, offset=offset)
-        items = shows_data.get("items", [])
-
-        if not items:
-            break
-
-        for item in items:
-            show = item.get("show", {})
-            spotify_id = show.get("id")
-
-            if not spotify_id or spotify_id in seen_spotify_ids:
-                continue
-            seen_spotify_ids.add(spotify_id)
-
-            # Check if podcast exists
-            result = await db.execute(select(Podcast).where(Podcast.spotify_id == spotify_id))
-            podcast = result.scalar_one_or_none()
-
-            # Spotify returns images largest-first; take the largest available.
-            images = show.get("images", [])
-            image_url = images[0]["url"] if images else None
-
-            # No per-show episode fetch here (issue #155). This used to call
-            # GET /shows/{id}/episodes for *every* subscribed show — one extra
-            # API call each, against the same rate-limit budget the cleanup
-            # job is careful with — and then extrapolate an unplayed count
-            # from the newest 50 episodes. Spotify returns episodes
-            # newest-first, so the sample was systematically the least-played
-            # and the estimate ran high, yet it was stored and displayed as a
-            # real number. unplayed_episodes is now maintained by the playlist
-            # build, which already fetches full episode lists with
-            # resume_point and can count exactly.
-            if podcast:
-                # Update existing podcast; leave unplayed_episodes alone.
-                podcast.name = show.get("name", podcast.name)
-                podcast.description = show.get("description")
-                podcast.image_url = image_url
-                podcast.publisher = show.get("publisher")
-                podcast.total_episodes = show.get("total_episodes", 0)
-                podcast.last_synced_at = datetime.now(UTC)
-            else:
-                # Create new podcast. unplayed_episodes starts at 0 and is
-                # filled in by the next playlist build.
-                podcast = Podcast(
-                    spotify_id=spotify_id,
-                    name=show.get("name", "Unknown"),
-                    description=show.get("description"),
-                    image_url=image_url,
-                    publisher=show.get("publisher"),
-                    total_episodes=show.get("total_episodes", 0),
-                    unplayed_episodes=0,
-                    last_synced_at=datetime.now(UTC),
-                )
-                db.add(podcast)
-                new_count += 1
-
-            synced_count += 1
-
-        offset += limit
-
-        # Check if there are more pages
-        if len(items) < limit:
-            break
+    result = await sync_library(db, spotify)
 
     await db.commit()  # persist before the response is sent (see get_db)
 
     return {
         "message": "Sync completed",
-        "synced": synced_count,
-        "new": new_count,
+        "synced": result.synced,
+        "new": result.new,
+        "unfollowed": result.unfollowed,
+        "refollowed": result.refollowed,
     }

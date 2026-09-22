@@ -23,6 +23,10 @@ export interface Podcast {
   is_archived: boolean;
   playlist_ids: number[];
   last_synced_at: string | null;
+  // Set when the last sync no longer found the show in the Spotify library.
+  // The podcast and its assignments stay put, but it contributes no episodes
+  // to a build until it is followed again (issue #240).
+  unfollowed_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -117,6 +121,8 @@ export interface PlaylistPodcast {
   total_episodes: number;
   unplayed_episodes: number;
   is_sequential: boolean;
+  // Unfollowed on Spotify: still assigned, skipped by the next build
+  unfollowed_at?: string | null;
   position: number | null;
   rule: AssignmentRule;
   override: AssignmentOverride;
@@ -127,6 +133,9 @@ export interface SyncResult {
   message: string;
   synced: number;
   new: number;
+  // Podcasts newly flagged as gone from / back in the Spotify library
+  unfollowed: number;
+  refollowed: number;
 }
 
 // Podcast list response

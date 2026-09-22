@@ -32,6 +32,12 @@ class Podcast(Base):
 
     # Sync tracking
     last_synced_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    # Set by the library sync when the show is no longer in GET /me/shows, i.e.
+    # it was unfollowed on Spotify itself. Flagged rather than deleted so one
+    # sync run that drops a page can't silently destroy assignments; the next
+    # sync that sees the show again clears it. A flagged podcast stops
+    # contributing episodes to playlist builds (issue #240).
+    unfollowed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, server_default=func.now(), nullable=False)
