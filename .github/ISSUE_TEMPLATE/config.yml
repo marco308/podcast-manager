@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/marco308/podcast-manager/security/advisories/new
+    about: Report security problems privately. Please do not open a public issue.
+  - name: Spotify Web API documentation
+    url: https://developer.spotify.com/documentation/web-api
+    about: Check here first for questions about Development Mode limits and endpoint availability.

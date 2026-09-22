@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in improving Podcast Manager. This is a small self-hosted project — issues and pull requests are welcome.
+Thanks for your interest in improving Podcast Manager. This is a small self-hosted project — issues and pull requests are welcome. Please follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Development setup
 
