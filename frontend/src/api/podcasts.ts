@@ -15,13 +15,21 @@ export const podcastsApi = {
   // response. The backend defaults to limit=50 and this used to send no
   // pagination params at all, silently capping the UI at 50 podcasts and
   // making the rest unassignable to playlists (issue #151).
-  async list(params?: { playlistId?: number; unassigned?: boolean }): Promise<Podcast[]> {
+  // Archived podcasts are left out unless includeArchived is set.
+  async list(params?: {
+    playlistId?: number;
+    unassigned?: boolean;
+    includeArchived?: boolean;
+  }): Promise<Podcast[]> {
     const queryParams: Record<string, string | number | boolean> = {};
     if (params?.playlistId !== undefined) {
       queryParams.playlist_id = params.playlistId;
     }
     if (params?.unassigned !== undefined) {
       queryParams.unassigned = params.unassigned;
+    }
+    if (params?.includeArchived) {
+      queryParams.include_archived = true;
     }
 
     const items: Podcast[] = [];
@@ -53,7 +61,7 @@ export const podcastsApi = {
     return response.data;
   },
 
-  // Update podcast metadata (is_sequential)
+  // Update podcast metadata (is_sequential, is_archived)
   async update(spotifyId: string, data: PodcastUpdate): Promise<Podcast> {
     const response = await apiClient.patch<Podcast>(`/podcasts/${spotifyId}`, data);
     return response.data;

@@ -26,6 +26,9 @@ class Podcast(Base):
 
     # Podcast attributes
     is_sequential: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Hidden from the app (lists, dashboard counts, assignment selects) but
+    # still followed on Spotify. Unfollowing is a separate action (issue #247).
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Sync tracking
     last_synced_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)

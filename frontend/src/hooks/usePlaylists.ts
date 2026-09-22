@@ -70,7 +70,8 @@ export function useDeletePlaylist() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (id: number) => playlistsApi.delete(id),
+    mutationFn: ({ id, removeFromSpotify }: { id: number; removeFromSpotify?: boolean }) =>
+      playlistsApi.delete(id, removeFromSpotify),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: playlistKeys.lists() });
       queryClient.invalidateQueries({ queryKey: podcastKeys.all });
