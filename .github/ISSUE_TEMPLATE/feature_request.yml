@@ -35,7 +35,7 @@ body:
     id: constraints
     attributes:
       label: Spotify API constraints
-      description: Spotify removed the batch "Get Several ..." endpoints for Development Mode apps, and Dev Mode caps apps at 25 allowlisted users. Features that need those won't be feasible.
+      description: Spotify removed the batch "Get Several ..." endpoints for Development Mode apps, and Dev Mode caps apps at 5 allowlisted users. Features that need those won't be feasible.
       options:
         - label: I have checked that this does not depend on a batch endpoint or on Extended Quota Mode
   - type: checkboxes

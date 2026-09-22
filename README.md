@@ -128,7 +128,7 @@ Every self-hosted instance needs its **own** Spotify Developer application — t
 
 ### Spotify Development Mode Constraints (read this first)
 
-- Dev Mode apps are capped at **25 users**, each manually allowlisted in the dashboard. Extended quota is effectively unavailable to hobby apps, so treat this as software for you and your household — not something to open to the public.
+- Dev Mode apps are capped at **5 users**, each manually allowlisted in the dashboard. Extended quota is effectively unavailable to hobby apps, so treat this as software for you and your household — not something to open to the public.
 - The app is built for Dev Mode's reduced API surface (Spotify removed the batch "Get Several X" endpoints for Dev Mode apps in early 2026; single-item fetches with low concurrency are used instead).
 - There are no admin/user roles in the app itself: anyone allowlisted in your Spotify dashboard can sign in to your instance.
 - Spotify OAuth rejects plain-HTTP and `localhost` redirect URIs — hence the HTTPS + `127.0.0.1` requirements below.
