@@ -67,7 +67,7 @@ export interface Playlist {
 
 export interface PlaylistCreate {
   name: string;
-  spotify_playlist_id?: string;
+  spotify_playlist_id?: string | null;
   is_enabled?: boolean;
   is_weekend_only?: boolean;
   default_episode_limit?: number;
@@ -78,7 +78,8 @@ export interface PlaylistCreate {
 
 export interface PlaylistUpdate {
   name?: string;
-  spotify_playlist_id?: string;
+  // Present and null unlinks the Spotify playlist; absent leaves it alone.
+  spotify_playlist_id?: string | null;
   is_enabled?: boolean;
   is_weekend_only?: boolean;
   default_episode_limit?: number;
@@ -142,6 +143,21 @@ export interface PodcastListResponse {
 // Playlist list response
 export interface PlaylistListResponse {
   items: Playlist[];
+  total: number;
+}
+
+// A Spotify playlist the user owns, offered as a link target (issue #245).
+export interface SpotifyPlaylistOption {
+  id: string;
+  name: string;
+  image_url: string | null;
+  item_count: number;
+  // The managed playlist already linked to it, if any.
+  linked_playlist_id: number | null;
+}
+
+export interface SpotifyPlaylistOptionListResponse {
+  items: SpotifyPlaylistOption[];
   total: number;
 }
 
