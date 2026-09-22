@@ -54,8 +54,13 @@ type ViewMode = 'cards' | 'table';
 
 // The count is only known once a playlist build has read the whole show
 // (issue #155); until then say so rather than showing a made-up number.
-function UnplayedTag({ count, style }: { count: number | null; style?: CSSProperties }) {
-  if (count === null) {
+// Limited rules never refresh it, so show its age too and grey it out once
+// it's old enough that it shouldn't be read as current (issue #241).
+const UNPLAYED_STALE_DAYS = 7;
+
+function UnplayedTag({ podcast, style }: { podcast: Podcast; style?: CSSProperties }) {
+  const { unplayed_episodes: count, unplayed_counted_at: countedAt } = podcast;
+  if (count === null || !countedAt) {
     return (
       <Tag
         color="default"
@@ -66,9 +71,15 @@ function UnplayedTag({ count, style }: { count: number | null; style?: CSSProper
       </Tag>
     );
   }
+  const counted = dayjs(countedAt);
+  const stale = dayjs().diff(counted, 'day') >= UNPLAYED_STALE_DAYS;
   return (
-    <Tag color="blue" style={style}>
-      {count} unplayed
+    <Tag
+      color={stale ? 'default' : 'blue'}
+      style={style}
+      title={`Counted ${counted.format('D MMM YYYY, HH:mm')} by a playlist build that read the full episode list`}
+    >
+      {count} unplayed · {counted.fromNow()}
     </Tag>
   );
 }
@@ -338,14 +349,13 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
       title: 'Episodes',
       key: 'episodes',
       align: 'center',
-      width: 120,
+      width: 170,
       render: (_, record) => (
         <Space direction="vertical" size={2} style={{ width: '100%' }}>
           <Tag color="default">{record.total_episodes} total</Tag>
-          <UnplayedTag count={record.unplayed_episodes} />
+          <UnplayedTag podcast={record} />
         </Space>
       ),
-      sorter: (a, b) => (a.unplayed_episodes ?? -1) - (b.unplayed_episodes ?? -1),
     },
     {
       title: 'Playlists',
@@ -507,7 +517,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
                   <Tag color="default" style={{ margin: 0 }}>
                     {podcast.total_episodes} eps
                   </Tag>
-                  <UnplayedTag count={podcast.unplayed_episodes} style={{ margin: 0 }} />
+                  <UnplayedTag podcast={podcast} style={{ margin: 0 }} />
                   {podcast.is_sequential && (
                     <Tag color="orange" style={{ margin: 0 }}>
                       Seq

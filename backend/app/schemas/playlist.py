@@ -139,6 +139,7 @@ class PlaylistPodcastResponse(BaseModel):
     publisher: str | None = None
     total_episodes: int = 0
     unplayed_episodes: int | None = None
+    unplayed_counted_at: datetime | None = None
     is_sequential: bool
     # Gone from the Spotify library: the assignment is still here but the
     # show is skipped by the next build (issues #155, #240).

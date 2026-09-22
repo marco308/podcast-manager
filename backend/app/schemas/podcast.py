@@ -15,6 +15,8 @@ class PodcastBase(BaseModel):
     publisher: str | None = None
     total_episodes: int = 0
     unplayed_episodes: int | None = None
+    # When unplayed_episodes was counted (issue #241); NULL = not counted.
+    unplayed_counted_at: datetime | None = None
 
 
 class PodcastResponse(PodcastBase):

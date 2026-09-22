@@ -32,10 +32,15 @@ struct PodcastRow: View {
                 }
 
                 HStack(spacing: 8) {
-                    if let unplayed = podcast.unplayedEpisodes {
-                        Label("\(unplayed)", systemImage: "play.circle")
-                            .font(.caption2)
-                            .foregroundStyle(Color.accentColor)
+                    if let unplayed = podcast.countedUnplayed {
+                        Label(
+                            "\(unplayed.count) · \(Podcast.unplayedAge(unplayed.countedAt))",
+                            systemImage: "play.circle"
+                        )
+                        .font(.caption2)
+                        .foregroundStyle(
+                            Podcast.isUnplayedStale(unplayed.countedAt) ? Color.secondary : Color.accentColor
+                        )
                     }
 
                     if podcast.isSequential {

@@ -47,6 +47,7 @@ def _podcast():
     podcast.spotify_id = "show"
     podcast.name = "Show"
     podcast.unplayed_episodes = 999
+    podcast.unplayed_counted_at = None
     return podcast
 
 
@@ -73,6 +74,7 @@ class TestWalkFromHead:
         result = await _builder(spotify)._fetch_unplayed(podcast, need=None, from_oldest=False)
         assert len(result) == 118
         assert podcast.unplayed_episodes == 118
+        assert podcast.unplayed_counted_at is not None  # issue #241
         assert spotify.calls == [(50, 0), (50, 50), (50, 100)]
 
     @pytest.mark.asyncio
@@ -82,6 +84,7 @@ class TestWalkFromHead:
         result = await _builder(spotify)._fetch_unplayed(podcast, need=None, from_oldest=False)
         assert len(result) == 500
         assert podcast.unplayed_episodes == 999
+        assert podcast.unplayed_counted_at is None
 
 
 class TestWalkFromTail:
@@ -128,6 +131,7 @@ class TestWalkFromTail:
         spotify = FakeSpotify(total=300)
         await _builder(spotify)._fetch_unplayed(podcast, need=1, from_oldest=True)
         assert podcast.unplayed_episodes == 999
+        assert podcast.unplayed_counted_at is None
 
     @pytest.mark.asyncio
     async def test_cap_applies_to_the_tail_and_excludes_the_head_when_incomplete(self):

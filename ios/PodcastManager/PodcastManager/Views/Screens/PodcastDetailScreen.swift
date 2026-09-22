@@ -92,12 +92,17 @@ struct PodcastDetailScreen: View {
                 color: .blue
             )
 
-            statCard(
-                title: "Unplayed",
-                value: podcast.unplayedEpisodes.map { "\($0)" } ?? "–",
-                icon: "play.circle",
-                color: Color.accentColor
-            )
+            // Show the count's age: limited rules never refresh it (issue #241).
+            if let unplayed = podcast.countedUnplayed {
+                statCard(
+                    title: "Unplayed · \(Podcast.unplayedAge(unplayed.countedAt))",
+                    value: "\(unplayed.count)",
+                    icon: "play.circle",
+                    color: Podcast.isUnplayedStale(unplayed.countedAt) ? .secondary : Color.accentColor
+                )
+            } else {
+                statCard(title: "Unplayed", value: "–", icon: "play.circle", color: .secondary)
+            }
 
             if podcast.isSequential {
                 statCard(

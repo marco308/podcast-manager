@@ -19,6 +19,9 @@ export interface Podcast {
   total_episodes: number;
   // null = not counted yet; set by a playlist build that read the whole show
   unplayed_episodes: number | null;
+  // When unplayed_episodes was counted. Limited rules never refresh it, so
+  // the count is only as fresh as this (issue #241).
+  unplayed_counted_at: string | null;
   is_sequential: boolean;
   // Hidden from the app but still followed on Spotify (issue #247)
   is_archived: boolean;
@@ -119,6 +122,7 @@ export interface PlaylistPodcast {
   publisher: string | null;
   total_episodes: number;
   unplayed_episodes: number | null;
+  unplayed_counted_at?: string | null;
   is_sequential: boolean;
   // Gone from the Spotify library: still assigned, skipped by the next build
   missing_since?: string | null;

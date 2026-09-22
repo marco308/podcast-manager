@@ -25,6 +25,10 @@ class Podcast(Base):
     # NULL = not counted yet. Only the playlist build writes it, and only after
     # reading the show's whole catalogue (issue #155).
     unplayed_episodes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # When unplayed_episodes was counted. Limited rules never refresh the
+    # count, so the UIs show its age rather than presenting it as current
+    # (issue #241). Set together with unplayed_episodes, NULL together too.
+    unplayed_counted_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
 
     # Podcast attributes
     is_sequential: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

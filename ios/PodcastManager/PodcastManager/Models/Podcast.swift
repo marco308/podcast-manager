@@ -11,6 +11,10 @@ struct Podcast: Identifiable, Hashable {
     /// nil = not counted yet; the backend fills it in when a playlist build
     /// reads the show's whole catalogue.
     let unplayedEpisodes: Int?
+    /// When `unplayedEpisodes` was counted. Limited rules never refresh the
+    /// count, so it is only as fresh as this (issue #241). Absent on older
+    /// backends, where the count is treated as not counted.
+    let unplayedCountedAt: String?
     let isSequential: Bool
     var playlistIds: [Int]
     let position: Int?
@@ -53,6 +57,7 @@ extension Podcast: Codable {
         publisher = try c.decodeIfPresent(String.self, forKey: .publisher)
         totalEpisodes = try c.decodeIfPresent(Int.self, forKey: .totalEpisodes) ?? 0
         unplayedEpisodes = try c.decodeIfPresent(Int.self, forKey: .unplayedEpisodes)
+        unplayedCountedAt = try c.decodeIfPresent(String.self, forKey: .unplayedCountedAt)
         isSequential = try c.decodeIfPresent(Bool.self, forKey: .isSequential) ?? false
         playlistIds = try c.decodeIfPresent([Int].self, forKey: .playlistIds) ?? []
         position = try c.decodeIfPresent(Int.self, forKey: .position)
@@ -60,6 +65,35 @@ extension Podcast: Codable {
         createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt)
         updatedAt = try c.decodeIfPresent(String.self, forKey: .updatedAt)
         rule = try c.decodeIfPresent(AssignmentRule.self, forKey: .rule)
+    }
+}
+
+extension Podcast {
+    /// A count older than this is shown greyed out rather than as current.
+    static let unplayedStaleAfter: TimeInterval = 7 * 24 * 60 * 60
+
+    /// The unplayed count, only when we also know when it was taken.
+    var countedUnplayed: (count: Int, countedAt: Date)? {
+        guard let count = unplayedEpisodes,
+              let raw = unplayedCountedAt,
+              // The backend sends microseconds, which ISO8601DateFormatter
+              // doesn't reliably parse; the count's age doesn't need them.
+              let date = ISO8601DateFormatter().date(
+                  from: raw.replacingOccurrences(of: #"\.\d+"#, with: "", options: .regularExpression)
+              )
+        else { return nil }
+        return (count, date)
+    }
+
+    /// "3 days ago" for the counted unplayed number.
+    static func unplayedAge(_ date: Date, relativeTo now: Date = Date()) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: date, relativeTo: now)
+    }
+
+    static func isUnplayedStale(_ date: Date, relativeTo now: Date = Date()) -> Bool {
+        now.timeIntervalSince(date) >= unplayedStaleAfter
     }
 }
 

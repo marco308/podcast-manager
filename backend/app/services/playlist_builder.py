@@ -351,9 +351,11 @@ class PlaylistBuilder:
 
         # Record the real count as a by-product, but only when the walk saw
         # the whole catalogue (issue #155). A limited rule reads a slice and
-        # must not overwrite the count with a partial number.
+        # must not overwrite the count with a partial number. The timestamp
+        # lets the UIs say how old the count is (issue #241).
         if complete:
             podcast.unplayed_episodes = len(unplayed)
+            podcast.unplayed_counted_at = datetime.now(UTC)
 
         return unplayed
 

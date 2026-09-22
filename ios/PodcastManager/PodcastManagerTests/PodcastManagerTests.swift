@@ -33,6 +33,25 @@ import Testing
     #expect(podcast.playlistIds == [1, 2])
 }
 
+@Test func unplayedCountNeedsItsTimestamp() async throws {
+    let decoder = JSONDecoder()
+    decoder.keyDecodingStrategy = .convertFromSnakeCase
+    func decode(_ extra: String) throws -> Podcast {
+        let json = #"{"id": 1, "spotify_id": "a", "name": "P", "unplayed_episodes": 5\#(extra)}"#
+        return try decoder.decode(Podcast.self, from: json.data(using: .utf8)!)
+    }
+
+    // Older backends send no timestamp: the count can't be dated, so it isn't shown.
+    #expect(try decode("").countedUnplayed == nil)
+
+    // Pydantic sends microseconds.
+    let counted = try #require(try decode(#", "unplayed_counted_at": "2026-09-22T10:00:00.123456Z""#).countedUnplayed)
+    #expect(counted.count == 5)
+    #expect(counted.countedAt == ISO8601DateFormatter().date(from: "2026-09-22T10:00:00Z"))
+    #expect(Podcast.isUnplayedStale(counted.countedAt, relativeTo: counted.countedAt.addingTimeInterval(6 * 86_400)) == false)
+    #expect(Podcast.isUnplayedStale(counted.countedAt, relativeTo: counted.countedAt.addingTimeInterval(8 * 86_400)))
+}
+
 @Test func playlistDecoding() async throws {
     let json = """
     {

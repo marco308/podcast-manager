@@ -98,6 +98,7 @@ def _build_podcast_response(podcast: Podcast, playlist_ids: list[int]) -> Podcas
         publisher=podcast.publisher,
         total_episodes=podcast.total_episodes,
         unplayed_episodes=podcast.unplayed_episodes,
+        unplayed_counted_at=podcast.unplayed_counted_at,
         is_sequential=podcast.is_sequential,
         is_archived=podcast.is_archived,
         playlist_ids=playlist_ids,
