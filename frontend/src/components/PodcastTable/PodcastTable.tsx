@@ -59,7 +59,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
   const { data: playlists } = usePlaylists();
   const addPodcastsToPlaylist = useAddPodcastsToPlaylist();
   const removePodcastFromPlaylist = useRemovePodcastFromPlaylist();
-  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [updatingId, setUpdatingId] = useState<number | null>(null);
   const [selectedPodcast, setSelectedPodcast] = useState<Podcast | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -123,7 +123,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
   };
 
   const handlePlaylistsChange = async (podcast: Podcast, newPlaylistIds: number[]) => {
-    setUpdatingId(podcast.spotify_id);
+    setUpdatingId(podcast.id);
     const previousIds = podcast.playlist_ids;
     setCachedPlaylistIds(podcast.id, newPlaylistIds);
     try {
@@ -165,15 +165,15 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
     }
   };
 
-  const handleSequentialChange = async (spotifyId: string, checked: boolean) => {
-    setUpdatingId(spotifyId);
+  const handleSequentialChange = async (podcastId: number, checked: boolean) => {
+    setUpdatingId(podcastId);
     try {
-      await updatePodcast.mutateAsync({ spotifyId, data: { is_sequential: checked } });
+      await updatePodcast.mutateAsync({ podcastId, data: { is_sequential: checked } });
       message.success(checked ? 'Marked as sequential' : 'Removed sequential flag');
     } catch {
       // Roll back the drawer's optimistic toggle to the pre-change value
       setSelectedPodcast((prev) =>
-        prev && prev.spotify_id === spotifyId ? { ...prev, is_sequential: !checked } : prev
+        prev && prev.id === podcastId ? { ...prev, is_sequential: !checked } : prev
       );
       message.error('Failed to update');
     } finally {
@@ -184,10 +184,10 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
   // Archive hides the podcast from the app but keeps it followed on Spotify.
   // The backend drops its playlist assignments when archiving.
   const handleArchiveChange = async (podcast: Podcast, archived: boolean) => {
-    setUpdatingId(podcast.spotify_id);
+    setUpdatingId(podcast.id);
     try {
       await updatePodcast.mutateAsync({
-        spotifyId: podcast.spotify_id,
+        podcastId: podcast.id,
         data: { is_archived: archived },
       });
       message.success(archived ? `Archived "${podcast.name}"` : `Restored "${podcast.name}"`);
@@ -211,7 +211,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
       <Button
         icon={<UndoOutlined />}
         onClick={() => handleArchiveChange(podcast, false)}
-        loading={updatingId === podcast.spotify_id}
+        loading={updatingId === podcast.id}
         size={block ? 'middle' : 'small'}
         block={block}
         aria-label="Restore podcast"
@@ -228,7 +228,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
       >
         <Button
           icon={<InboxOutlined />}
-          loading={updatingId === podcast.spotify_id}
+          loading={updatingId === podcast.id}
           size={block ? 'middle' : 'small'}
           block={block}
           aria-label="Archive podcast"
@@ -238,10 +238,10 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
       </Popconfirm>
     );
 
-  const handleUnfollow = async (spotifyId: string, podcastName: string) => {
-    setUpdatingId(spotifyId);
+  const handleUnfollow = async (podcastId: number, podcastName: string) => {
+    setUpdatingId(podcastId);
     try {
-      await unfollowPodcast.mutateAsync(spotifyId);
+      await unfollowPodcast.mutateAsync(podcastId);
       message.success(`Unfollowed "${podcastName}"`);
       closePodcastDrawer();
     } catch {
@@ -313,7 +313,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
           mode="multiple"
           value={record.playlist_ids}
           onChange={(value) => handlePlaylistsChange(record, value)}
-          loading={updatingId === record.spotify_id}
+          loading={updatingId === record.id}
           disabled={record.is_archived}
           style={{ width: 200 }}
           placeholder={record.is_archived ? 'Archived' : 'Unassigned'}
@@ -339,8 +339,8 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
       render: (_, record) => (
         <Switch
           checked={record.is_sequential}
-          onChange={(checked) => handleSequentialChange(record.spotify_id, checked)}
-          loading={updatingId === record.spotify_id}
+          onChange={(checked) => handleSequentialChange(record.id, checked)}
+          loading={updatingId === record.id}
           size="small"
         />
       ),
@@ -378,7 +378,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
           <Popconfirm
             title="Unfollow podcast"
             description={`Are you sure you want to unfollow "${record.name}"? This will remove it from Spotify and delete it from this app.`}
-            onConfirm={() => handleUnfollow(record.spotify_id, record.name)}
+            onConfirm={() => handleUnfollow(record.id, record.name)}
             okText="Unfollow"
             cancelText="Cancel"
             okButtonProps={{ danger: true }}
@@ -386,7 +386,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
             <Button
               danger
               icon={<UserDeleteOutlined />}
-              loading={updatingId === record.spotify_id}
+              loading={updatingId === record.id}
               size="small"
               aria-label="Unfollow podcast"
             />
@@ -408,7 +408,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {filteredPodcasts.map((podcast) => (
           <Card
-            key={podcast.spotify_id}
+            key={podcast.id}
             size="small"
             hoverable
             onClick={() => openPodcastDrawer(podcast)}
@@ -532,7 +532,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
           <Table
             dataSource={filteredPodcasts}
             columns={columns}
-            rowKey="spotify_id"
+            rowKey="id"
             pagination={{
               pageSize: pageSize,
               showSizeChanger: true,
@@ -586,7 +586,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
                     handlePlaylistsChange(selectedPodcast, value);
                     setSelectedPodcast((prev) => (prev ? { ...prev, playlist_ids: value } : prev));
                   }}
-                  loading={updatingId === selectedPodcast.spotify_id}
+                  loading={updatingId === selectedPodcast.id}
                   disabled={selectedPodcast.is_archived}
                   style={{ width: '100%' }}
                   placeholder={
@@ -605,12 +605,12 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
                 <Switch
                   checked={selectedPodcast.is_sequential}
                   onChange={(checked) => {
-                    handleSequentialChange(selectedPodcast.spotify_id, checked);
+                    handleSequentialChange(selectedPodcast.id, checked);
                     setSelectedPodcast((prev) =>
                       prev ? { ...prev, is_sequential: checked } : prev
                     );
                   }}
-                  loading={updatingId === selectedPodcast.spotify_id}
+                  loading={updatingId === selectedPodcast.id}
                 />
               </Form.Item>
 
@@ -635,7 +635,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
                 <Popconfirm
                   title="Unfollow podcast"
                   description={`Are you sure you want to unfollow "${selectedPodcast.name}"? This will remove it from Spotify and delete it from this app.`}
-                  onConfirm={() => handleUnfollow(selectedPodcast.spotify_id, selectedPodcast.name)}
+                  onConfirm={() => handleUnfollow(selectedPodcast.id, selectedPodcast.name)}
                   okText="Unfollow"
                   cancelText="Cancel"
                   okButtonProps={{ danger: true }}
@@ -643,7 +643,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
                   <Button
                     danger
                     icon={<UserDeleteOutlined />}
-                    loading={updatingId === selectedPodcast.spotify_id}
+                    loading={updatingId === selectedPodcast.id}
                     block
                   >
                     Unfollow on Spotify

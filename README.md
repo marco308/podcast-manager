@@ -63,6 +63,8 @@ Once configured, the app runs four background jobs:
 - **Auth:** Spotify OAuth2 with encrypted token storage (Fernet)
 - **Deployment:** Docker Swarm behind Traefik reverse proxy
 
+**Single-user by design.** Registration closes once the first Spotify account signs in, so each deployment serves one person. The `podcasts` table is therefore global (no `user_id`), while `playlists` carries a `user_id` column that predates that decision; nothing relies on it for isolation. Supporting several users would first need a `user_id` on podcasts and owner filtering on every podcast route.
+
 ## Screenshots
 
 **Dashboard** — quick stats (total podcasts, playlist assignment progress, playlist status) and one-click sync/update buttons

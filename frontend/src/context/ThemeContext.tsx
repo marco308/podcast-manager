@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
 
-export type ThemePreference = 'light' | 'dark' | 'system' | 'auto';
+export type ThemePreference = 'light' | 'dark' | 'system';
 
 interface ThemeContextType {
   isDarkMode: boolean;
@@ -12,16 +12,9 @@ interface ThemeContextType {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 const STORAGE_KEY = 'theme-preference';
-const DARK_START_HOUR = 19; // 7 PM
-const DARK_END_HOUR = 7; // 7 AM
 
 function getSystemPrefersDark(): boolean {
   return window.matchMedia('(prefers-color-scheme: dark)').matches;
-}
-
-function isNightTime(): boolean {
-  const hour = new Date().getHours();
-  return hour >= DARK_START_HOUR || hour < DARK_END_HOUR;
 }
 
 function computeIsDarkMode(preference: ThemePreference): boolean {
@@ -32,12 +25,6 @@ function computeIsDarkMode(preference: ThemePreference): boolean {
       return false;
     case 'system':
       return getSystemPrefersDark();
-    case 'auto':
-      // First check system preference, then fall back to time-based
-      if (window.matchMedia('(prefers-color-scheme: dark)').media !== 'not all') {
-        return getSystemPrefersDark();
-      }
-      return isNightTime();
     default:
       return false;
   }
@@ -45,9 +32,11 @@ function computeIsDarkMode(preference: ThemePreference): boolean {
 
 function getStoredPreference(): ThemePreference {
   const stored = localStorage.getItem(STORAGE_KEY);
-  if (stored === 'light' || stored === 'dark' || stored === 'system' || stored === 'auto') {
+  if (stored === 'light' || stored === 'dark' || stored === 'system') {
     return stored;
   }
+  // A stored 'auto' (the removed time-of-day mode, issue #248) falls through
+  // to 'system', which is what it resolved to in every browser anyway.
   return 'system'; // Default to system preference
 }
 
@@ -65,22 +54,13 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
 
   // Listen for system preference changes
   useEffect(() => {
-    if (themePreference !== 'system' && themePreference !== 'auto') return;
+    if (themePreference !== 'system') return;
 
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
     const handler = () => updateDarkMode();
 
     mediaQuery.addEventListener('change', handler);
     return () => mediaQuery.removeEventListener('change', handler);
-  }, [themePreference, updateDarkMode]);
-
-  // For 'auto' mode, check time periodically
-  useEffect(() => {
-    if (themePreference !== 'auto') return;
-
-    // Check every minute for time-based changes
-    const interval = setInterval(updateDarkMode, 60000);
-    return () => clearInterval(interval);
   }, [themePreference, updateDarkMode]);
 
   // Apply data-theme attribute to document

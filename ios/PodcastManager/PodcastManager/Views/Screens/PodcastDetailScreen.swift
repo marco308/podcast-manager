@@ -218,7 +218,7 @@ struct PodcastDetailScreen: View {
         isUpdating = true
         do {
             let updated = try await APIClient.shared.updatePodcast(
-                spotifyId: podcast.spotifyId,
+                id: podcast.id,
                 isSequential: newValue
             )
             podcast = updated
