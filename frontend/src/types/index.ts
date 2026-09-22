@@ -19,6 +19,8 @@ export interface Podcast {
   total_episodes: number;
   unplayed_episodes: number;
   is_sequential: boolean;
+  // Hidden from the app but still followed on Spotify (issue #247)
+  is_archived: boolean;
   playlist_ids: number[];
   last_synced_at: string | null;
   created_at: string;
@@ -27,6 +29,7 @@ export interface Podcast {
 
 export interface PodcastUpdate {
   is_sequential?: boolean;
+  is_archived?: boolean;
 }
 
 // Playlist types (see docs/design/assignment-rules.md)
@@ -63,7 +66,7 @@ export interface Playlist {
 
 export interface PlaylistCreate {
   name: string;
-  spotify_playlist_id?: string;
+  spotify_playlist_id?: string | null;
   is_enabled?: boolean;
   is_weekend_only?: boolean;
   default_episode_limit?: number;
@@ -74,7 +77,8 @@ export interface PlaylistCreate {
 
 export interface PlaylistUpdate {
   name?: string;
-  spotify_playlist_id?: string;
+  // Present and null unlinks the Spotify playlist; absent leaves it alone.
+  spotify_playlist_id?: string | null;
   is_enabled?: boolean;
   is_weekend_only?: boolean;
   default_episode_limit?: number;

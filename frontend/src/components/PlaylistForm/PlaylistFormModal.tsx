@@ -13,7 +13,6 @@ import {
   Typography,
 } from 'antd';
 import { ExportOutlined } from '@ant-design/icons';
-import { getErrorMessage } from '../../api';
 import {
   useAddPodcastsToPlaylist,
   useCreatePlaylist,
@@ -35,11 +34,16 @@ import type {
   PlaylistUpdate,
   Podcast,
 } from '../../types';
+import { isAxiosError } from 'axios';
+import { getErrorMessage } from '../../api';
 import { EPISODE_LIMIT_MAX } from '../../types';
 import { spotifyPlaylistUrl } from '../../utils/playlistLabels';
 import { PlaylistPodcastsEditor, type EditorRow } from './PlaylistPodcastsEditor';
 
 const { Text } = Typography;
+
+// Save failures whose server message is worth showing verbatim.
+const EXPLAINED_SAVE_ERRORS = [400, 409, 502];
 
 // The form keeps the episode limit as a mode plus an optional custom count so
 // the Select can offer "All / Latest only / Up to…" while the API sees a single
@@ -48,7 +52,7 @@ type EpisodeLimitMode = 'all' | 'latest' | 'custom';
 
 interface PlaylistFormValues {
   name: string;
-  spotify_playlist_id?: string;
+  spotify_playlist_id?: string | null;
   arrangement: Arrangement;
   date_direction: DateDirection;
   episode_limit_mode: EpisodeLimitMode;
@@ -194,7 +198,9 @@ export function PlaylistFormModal({ open, playlist, onClose, onSaved }: Playlist
 
     const shared = {
       name: values.name,
-      spotify_playlist_id: values.spotify_playlist_id,
+      // null, not undefined: the server reads a present-and-null as "unlink"
+      // and an absent field as "leave the link alone".
+      spotify_playlist_id: values.spotify_playlist_id ?? null,
       is_enabled: values.is_enabled,
       is_weekend_only: values.is_weekend_only,
       default_episode_limit: modeToLimit(values.episode_limit_mode, values.custom_episode_limit),
@@ -212,10 +218,17 @@ export function PlaylistFormModal({ open, playlist, onClose, onSaved }: Playlist
         const createData: PlaylistCreate = shared;
         saved = await createPlaylist.mutateAsync(createData);
       }
-    } catch (err) {
-      // The server refuses to link a Spotify playlist the user doesn't own
-      // or one already linked elsewhere; say which (issue #245).
-      message.error(`Failed to save playlist: ${getErrorMessage(err)}`);
+    } catch (err: unknown) {
+      // The server says what it refused: a rename Spotify rejected (502,
+      // nothing saved), or a Spotify link that isn't yours (400) or is
+      // already linked elsewhere (409, issue #245). Surface those; anything
+      // else stays generic.
+      const status = isAxiosError(err) ? err.response?.status : undefined;
+      message.error(
+        status !== undefined && EXPLAINED_SAVE_ERRORS.includes(status)
+          ? getErrorMessage(err)
+          : 'Failed to save playlist'
+      );
       return;
     }
 
@@ -311,6 +324,11 @@ export function PlaylistFormModal({ open, playlist, onClose, onSaved }: Playlist
           <Form.Item
             name="name"
             label="Name"
+            extra={
+              playlist?.spotify_playlist_id
+                ? 'Renaming here also renames the playlist on Spotify'
+                : undefined
+            }
             rules={[{ required: true, message: 'Please enter a name' }]}
           >
             <Input placeholder="e.g., Morning Podcasts" />
@@ -325,7 +343,8 @@ export function PlaylistFormModal({ open, playlist, onClose, onSaved }: Playlist
                   <a href={spotifyUrl} target="_blank" rel="noopener noreferrer">
                     this Spotify playlist <ExportOutlined />
                   </a>
-                  .
+                  . Clearing this leaves that playlist alone on Spotify and creates a new one on the
+                  next run.
                 </span>
               ) : (
                 'Leave empty and a new Spotify playlist is created on the first run, or pick one of your own playlists to take it over'
@@ -333,7 +352,7 @@ export function PlaylistFormModal({ open, playlist, onClose, onSaved }: Playlist
             }
           >
             <Select<string>
-              allowClear={!playlist?.spotify_playlist_id}
+              allowClear
               showSearch
               optionFilterProp="label"
               placeholder="Create a new Spotify playlist on the first run"

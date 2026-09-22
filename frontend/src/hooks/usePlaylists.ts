@@ -58,6 +58,8 @@ export function useCreatePlaylist() {
     mutationFn: (data: PlaylistCreate) => playlistsApi.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: playlistKeys.lists() });
+      // A new link changes which Spotify playlists the picker can offer.
+      queryClient.invalidateQueries({ queryKey: playlistKeys.spotify() });
     },
   });
 }
@@ -82,9 +84,13 @@ export function useDeletePlaylist() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (id: number) => playlistsApi.delete(id),
+    mutationFn: ({ id, removeFromSpotify }: { id: number; removeFromSpotify?: boolean }) =>
+      playlistsApi.delete(id, removeFromSpotify),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: playlistKeys.lists() });
+      // The deleted playlist's Spotify link (if any) is free again — and if
+      // the playlist was removed from Spotify too, it's gone from the picker.
+      queryClient.invalidateQueries({ queryKey: playlistKeys.spotify() });
       queryClient.invalidateQueries({ queryKey: podcastKeys.all });
     },
   });

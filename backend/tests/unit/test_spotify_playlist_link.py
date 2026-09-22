@@ -126,7 +126,8 @@ class TestLinkOwnership:
     async def test_update_with_unchanged_id_skips_spotify(self, db, spotify):
         db.add(Playlist(user_id=1, name="P", spotify_playlist_id=OWN_ID))
         await db.commit()
-        await update_playlist(1, PlaylistUpdate(name="Q", spotify_playlist_id=OWN_ID), session=SESSION, db=db)
+        # Not a rename: that path calls Spotify for its own reasons (issue #247).
+        await update_playlist(1, PlaylistUpdate(is_enabled=False, spotify_playlist_id=OWN_ID), session=SESSION, db=db)
         spotify.get_playlist.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -169,3 +170,35 @@ class TestListSpotifyPlaylists:
         ]
         assert result.items[0].image_url == "u"
         assert spotify.get_user_playlists.await_args_list[1].kwargs["offset"] == 50
+
+
+class TestUnlink:
+    @pytest.mark.asyncio
+    async def test_explicit_null_clears_the_link(self, db, spotify):
+        db.add(Playlist(user_id=1, name="P", spotify_playlist_id=OWN_ID))
+        await db.commit()
+        result = await update_playlist(1, PlaylistUpdate(spotify_playlist_id=None), session=SESSION, db=db)
+        assert result.spotify_playlist_id is None
+        spotify.get_playlist.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_absent_field_leaves_the_link_alone(self, db, spotify):
+        db.add(Playlist(user_id=1, name="P", spotify_playlist_id=OWN_ID))
+        await db.commit()
+        result = await update_playlist(1, PlaylistUpdate(is_enabled=False), session=SESSION, db=db)
+        assert result.spotify_playlist_id == OWN_ID
+
+
+class TestDuplicateLinkRace:
+    @pytest.mark.asyncio
+    async def test_constraint_turns_a_lost_race_into_409(self, db, spotify, monkeypatch):
+        """Both savers pass the pre-check; the unique constraint stops the second."""
+        db.add(Playlist(user_id=1, name="First", spotify_playlist_id=OWN_ID))
+        await db.commit()
+        # Simulate the concurrent saver: the clash SELECT sees nothing.
+        monkeypatch.setattr(playlists_module, "_check_spotify_playlist_link", AsyncMock())
+
+        with pytest.raises(HTTPException) as exc:
+            await create_playlist(PlaylistCreate(name="Second", spotify_playlist_id=OWN_ID), session=SESSION, db=db)
+
+        assert exc.value.status_code == 409

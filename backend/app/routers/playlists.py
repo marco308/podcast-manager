@@ -6,8 +6,9 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -36,7 +37,7 @@ from app.schemas.playlist import (
 )
 from app.services.assignment_rules import resolve_rule
 from app.services.encryption import TokenDecryptionError
-from app.services.playlist_builder import PlaylistBuilder
+from app.services.playlist_builder import PlaylistBuilder, spotify_playlist_description
 from app.services.spotify import SpotifyService
 from app.services.token_manager import TokenManager
 
@@ -77,6 +78,11 @@ async def _playlist_write_lock() -> AsyncIterator[None]:
         locks.playlist_write_lock.release()
 
 
+def _is_not_found(exc: Exception) -> bool:
+    """True for a Spotify 404 — the playlist is already gone on Spotify."""
+    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 404
+
+
 async def _get_podcast_count(db: AsyncSession, playlist_id: int) -> int:
     """Get the number of podcasts assigned to a playlist."""
     result = await db.execute(
@@ -115,6 +121,24 @@ async def _spotify_client(user_id: int) -> tuple[SpotifyService, TokenManager]:
             detail="Stored credentials could not be read. Please sign in again.",
         ) from None
     return SpotifyService(access_token=token), token_manager
+
+
+async def _commit_playlist(db: AsyncSession) -> None:
+    """Commit a playlist write, turning a duplicate link into a 409.
+
+    ``_check_spotify_playlist_link`` reads before it writes, so two concurrent
+    saves can both find no clash; the unique constraint is what actually
+    stops them, and this is where that shows up (issue #245).
+    """
+    try:
+        await db.commit()  # persist before the response is sent (see get_db)
+    except IntegrityError:
+        await db.rollback()
+        logger.info("Playlist save lost the race for a Spotify link")
+        raise HTTPException(
+            status_code=409,
+            detail="That Spotify playlist is already linked to another playlist.",
+        ) from None
 
 
 async def _get_user(db: AsyncSession, user_id: int) -> User:
@@ -299,7 +323,7 @@ async def create_playlist(
         date_direction=playlist_data.date_direction.value,
     )
     db.add(playlist)
-    await db.commit()  # persist before the response is sent (see get_db)
+    await _commit_playlist(db)
 
     return _build_playlist_response(playlist, 0)
 
@@ -337,13 +361,39 @@ async def update_playlist(
     if not playlist:
         raise HTTPException(status_code=404, detail="Playlist not found")
 
-    if update_data.name is not None:
+    # Present-and-null unlinks (the Spotify playlist is left in place and a
+    # new one is created on the next run); an absent field is left alone.
+    if "spotify_playlist_id" in update_data.model_fields_set:
+        new_link = update_data.spotify_playlist_id
+        if new_link != playlist.spotify_playlist_id:
+            if new_link is not None:
+                await _check_spotify_playlist_link(db, session.user_id, new_link, playlist_id=playlist.id)
+            playlist.spotify_playlist_id = new_link
+    if update_data.name is not None and update_data.name != playlist.name:
+        # The name is otherwise only used when the Spotify playlist is first
+        # created, so push a rename through (issue #247). Spotify first: if it
+        # fails nothing is saved and the user can retry, rather than the two
+        # names silently drifting apart. A 404 means the Spotify playlist is
+        # gone — there is nothing to rename, so the local rename goes ahead.
+        if playlist.spotify_playlist_id:
+            token_manager = TokenManager(session.user_id)
+            try:
+                spotify = SpotifyService(access_token=await token_manager.get_token())
+                await spotify.update_playlist_details(
+                    playlist.spotify_playlist_id,
+                    name=update_data.name,
+                    description=spotify_playlist_description(update_data.name),
+                    on_unauthorized=token_manager.force_refresh,
+                )
+            except Exception as e:
+                if not _is_not_found(e):
+                    logger.exception(f"Failed to rename Spotify playlist {playlist.spotify_playlist_id}: {e}")
+                    raise HTTPException(
+                        status_code=502,
+                        detail="Could not rename the playlist on Spotify, so nothing was saved. Please try again.",
+                    ) from None
+                logger.info(f"Spotify playlist {playlist.spotify_playlist_id} not found; renaming locally only")
         playlist.name = update_data.name
-    if update_data.spotify_playlist_id is not None and update_data.spotify_playlist_id != playlist.spotify_playlist_id:
-        await _check_spotify_playlist_link(
-            db, session.user_id, update_data.spotify_playlist_id, playlist_id=playlist.id
-        )
-        playlist.spotify_playlist_id = update_data.spotify_playlist_id
     if update_data.is_enabled is not None:
         playlist.is_enabled = update_data.is_enabled
     if update_data.is_weekend_only is not None:
@@ -357,7 +407,7 @@ async def update_playlist(
     if update_data.date_direction is not None:
         playlist.date_direction = update_data.date_direction.value
 
-    await db.commit()  # persist before the response is sent (see get_db)
+    await _commit_playlist(db)
 
     count = await _get_podcast_count(db, playlist.id)
     return _build_playlist_response(playlist, count)
@@ -366,10 +416,17 @@ async def update_playlist(
 @router.delete("/{playlist_id}")
 async def delete_playlist(
     playlist_id: int,
+    remove_from_spotify: bool = Query(False, description="Also delete (unfollow) the playlist on Spotify"),
     session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
-    """Delete a playlist mapping."""
+    """Delete a playlist mapping, optionally removing the Spotify playlist too.
+
+    Without ``remove_from_spotify`` the Spotify playlist is left in place (and
+    no longer updated). With it, the playlist is unfollowed on Spotify first —
+    that is how Spotify deletes a playlist you own — and only then removed
+    locally, so a Spotify failure leaves everything as it was (issue #247).
+    """
     result = await db.execute(
         select(Playlist).where((Playlist.id == playlist_id) & (Playlist.user_id == session.user_id))
     )
@@ -377,6 +434,30 @@ async def delete_playlist(
 
     if not playlist:
         raise HTTPException(status_code=404, detail="Playlist not found")
+
+    if remove_from_spotify and playlist.spotify_playlist_id:
+        # Hold the write lock so a rebuild can't be writing to the playlist
+        # (or, for a new one, creating it) while it is removed.
+        async with _playlist_write_lock():
+            token_manager = TokenManager(session.user_id)
+            try:
+                spotify = SpotifyService(access_token=await token_manager.get_token())
+                await spotify.unfollow_playlist(
+                    playlist.spotify_playlist_id,
+                    on_unauthorized=token_manager.force_refresh,
+                )
+            except Exception as e:
+                # Already gone on Spotify is the outcome we wanted.
+                if not _is_not_found(e):
+                    logger.exception(f"Failed to remove Spotify playlist {playlist.spotify_playlist_id}: {e}")
+                    raise HTTPException(
+                        status_code=502,
+                        detail="Could not remove the playlist from Spotify, so it was not deleted. Please try again.",
+                    ) from None
+
+            await db.delete(playlist)
+            await db.commit()  # persist before the response is sent (see get_db)
+        return {"message": "Playlist deleted from the app and Spotify"}
 
     await db.delete(playlist)
     await db.commit()  # persist before the response is sent (see get_db)
@@ -516,7 +597,11 @@ async def add_podcasts_to_playlist(
     # first pending add) and 500s on the unique constraint (issue #182).
     for podcast_id in dict.fromkeys(data.podcast_ids):
         # Verify podcast exists
-        podcast_result = await db.execute(select(Podcast).where(Podcast.id == podcast_id))
+        # Archived podcasts are hidden from the app, so they can't be assigned
+        # (issue #247) — skip them like an unknown ID.
+        podcast_result = await db.execute(
+            select(Podcast).where((Podcast.id == podcast_id) & (Podcast.is_archived.is_(False)))
+        )
         if not podcast_result.scalar_one_or_none():
             continue
 

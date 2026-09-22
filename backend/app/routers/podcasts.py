@@ -4,7 +4,7 @@ import logging
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -72,6 +72,7 @@ def _build_podcast_response(podcast: Podcast, playlist_ids: list[int]) -> Podcas
         total_episodes=podcast.total_episodes,
         unplayed_episodes=podcast.unplayed_episodes,
         is_sequential=podcast.is_sequential,
+        is_archived=podcast.is_archived,
         playlist_ids=playlist_ids,
         last_synced_at=podcast.last_synced_at,
         created_at=podcast.created_at,
@@ -83,6 +84,7 @@ def _build_podcast_response(podcast: Podcast, playlist_ids: list[int]) -> Podcas
 async def list_podcasts(
     playlist_id: int | None = Query(None, description="Filter by playlist membership"),
     unassigned: bool = Query(False, description="Only return podcasts not assigned to any playlist"),
+    include_archived: bool = Query(False, description="Also return archived podcasts"),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
     user_id: int = Depends(get_current_user_id),
@@ -94,8 +96,13 @@ async def list_podcasts(
     note in ``CLAUDE.md`` (issue #154). Authentication is still required
     (``get_current_user_id``); there is simply no per-user partition to
     enforce, because registration closes after the first user.
+
+    Archived podcasts are left out unless ``include_archived`` is set, so the
+    dashboard counts and the assignment selects never see them (issue #247).
     """
     query = select(Podcast)
+    if not include_archived:
+        query = query.where(Podcast.is_archived.is_(False))
 
     if playlist_id is not None:
         # Existence check only — a filter on an unknown playlist should 404
@@ -171,7 +178,13 @@ async def update_podcast(
     session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
 ) -> PodcastResponse:
-    """Update podcast metadata."""
+    """Update podcast metadata.
+
+    Archiving hides a podcast from the app while leaving it followed on
+    Spotify. It also removes the podcast from every playlist: an archived show
+    is invisible in the UI, so letting it keep contributing episodes would be
+    a rule nobody can see (issue #247).
+    """
     result = await db.execute(select(Podcast).where(Podcast.spotify_id == spotify_id))
     podcast = result.scalar_one_or_none()
 
@@ -180,6 +193,10 @@ async def update_podcast(
 
     if update_data.is_sequential is not None:
         podcast.is_sequential = update_data.is_sequential
+    if update_data.is_archived is not None:
+        podcast.is_archived = update_data.is_archived
+        if update_data.is_archived:
+            await db.execute(delete(PlaylistPodcast).where(PlaylistPodcast.podcast_id == podcast.id))
 
     podcast.updated_at = datetime.now(UTC)
 

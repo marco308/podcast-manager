@@ -1,4 +1,5 @@
-import { App, Typography, Button, Space, Alert } from 'antd';
+import { useState } from 'react';
+import { App, Typography, Button, Space, Alert, Switch } from 'antd';
 import { SyncOutlined } from '@ant-design/icons';
 import { usePodcasts, useSyncPodcasts } from '../hooks';
 import { PodcastTable, LoadingSpinner } from '../components';
@@ -7,7 +8,9 @@ const { Title, Text } = Typography;
 
 export function Podcasts() {
   const { message } = App.useApp();
-  const { data: podcasts, isLoading, error } = usePodcasts();
+  // Archived podcasts (hidden, still followed on Spotify) only show on request
+  const [showArchived, setShowArchived] = useState(false);
+  const { data: podcasts, isLoading, error } = usePodcasts({ includeArchived: showArchived });
   const syncPodcasts = useSyncPodcasts();
 
   const handleSync = async () => {
@@ -54,7 +57,11 @@ export function Podcasts() {
           </Title>
           <Text type="secondary">Manage your podcast subscriptions and playlist assignments</Text>
         </div>
-        <div>
+        <Space wrap>
+          <Space size={8}>
+            <Switch checked={showArchived} onChange={setShowArchived} size="small" />
+            <Text>Show archived</Text>
+          </Space>
           <Button
             type="primary"
             icon={<SyncOutlined spin={syncPodcasts.isPending} />}
@@ -63,7 +70,7 @@ export function Podcasts() {
           >
             Sync from Spotify
           </Button>
-        </div>
+        </Space>
       </div>
 
       {noPodcasts ? (
