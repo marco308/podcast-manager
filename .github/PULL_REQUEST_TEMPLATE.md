@@ -12,4 +12,4 @@
 - [ ] `npm run lint && npm run format:check && npm run build` pass (frontend)
 - [ ] New settings or env vars are documented in the README and `.env.example`
 - [ ] Schema changes come with an Alembic migration
-- [ ] I agree my contribution is licensed under AGPL-3.0 (see [CONTRIBUTING.md](../blob/main/CONTRIBUTING.md))
+- [ ] I agree my contribution is licensed under PolyForm Noncommercial 1.0.0 (see [CONTRIBUTING.md](../blob/main/CONTRIBUTING.md))

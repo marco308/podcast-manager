@@ -1,6 +1,6 @@
 # Podcast Manager
 
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+[![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm_Noncommercial_1.0.0-red.svg)](LICENSE)
 
 A self-hosted web app that brings structure and automation to your Spotify podcast listening. It connects to your Spotify account, pulls in your subscribed podcasts, and lets you assign them directly to managed playlists — then keeps those playlists updated automatically.
 
@@ -200,4 +200,4 @@ A native SwiftUI companion app lives in [`ios/`](ios/). It talks to the same bac
 
 ## License
 
-[GNU AGPL-3.0](LICENSE). You can use, modify, and self-host this freely — including for commercial purposes — but if you run a modified version as a network service, the AGPL requires you to offer its users the complete corresponding source. Contributions are accepted under the same license (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+[PolyForm Noncommercial 1.0.0](LICENSE). You're free to use, modify, and self-host this for personal and other non-commercial purposes. **Commercial use is not permitted** — if you want to use it commercially, get in touch to discuss a separate licence. Contributions are accepted under the same license (see [CONTRIBUTING.md](CONTRIBUTING.md)).

@@ -41,4 +41,4 @@ Keep PRs small and focused, and describe the behavior change (not just the diff)
 
 ## License of contributions
 
-Podcast Manager is licensed under the [GNU AGPL-3.0](LICENSE). By submitting a contribution, you agree that it is your own work (or you have the right to submit it) and that it is licensed under AGPL-3.0 like the rest of the project.
+Podcast Manager is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE). By submitting a contribution, you agree that it is your own work (or you have the right to submit it), that it is licensed under PolyForm Noncommercial 1.0.0 like the rest of the project, and that the project owner may also license your contribution under other terms (including commercial licences).
