@@ -9,6 +9,7 @@ Podcast Manager is a self-hosted web app that sits on top of Spotify and adds a 
 ## Repo Layout
 
 - `ios/` — Native SwiftUI companion app (see `ios/CLAUDE.md` for iOS-specific guidance)
+- `site/` — the non-technical project page (one static `index.html`), published to GitHub Pages by `.github/workflows/pages.yml`. The README covers the how; the site covers the what, in plain language. Keep feature claims on both in step with the app.
 - `nimbalyst-local/plans/` — scratch planning notes, not shipped code
 
 ## Commands

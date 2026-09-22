@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Podcast Manager</title>
+<meta name="description" content="Turn one crowded Spotify podcast feed into playlists that rebuild themselves every morning. Self-hosted, free for personal use.">
+<meta property="og:title" content="Podcast Manager">
+<meta property="og:description" content="Turn one crowded Spotify podcast feed into playlists that rebuild themselves every morning.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231B2340'/%3E%3Crect x='7' y='9' width='18' height='3' rx='1.5' fill='%23F2B705'/%3E%3Crect x='7' y='15' width='13' height='3' rx='1.5' fill='%23EEF1F6'/%3E%3Crect x='7' y='21' width='9' height='3' rx='1.5' fill='%23EEF1F6'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --paper: #EEF1F6;
+  --surface: #FFFFFF;
+  --ink: #1B2340;
+  --muted: #56607F;
+  --line: #CBD2E1;
+  --signal: #F2B705;
+  --signal-ink: #1B2340;
+  --focus: #2F6FEB;
+  --c-news: #D9533B;
+  --c-markets: #2F7FC1;
+  --c-world: #2A9D8F;
+  --c-serial: #7A5C99;
+  --c-long: #C07A1B;
+  --c-talk: #4F6B3A;
+  --shadow: 0 1px 0 rgba(27, 35, 64, 0.06), 0 8px 24px -12px rgba(27, 35, 64, 0.25);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #121831;
+    --surface: #1B2342;
+    --ink: #E8ECF5;
+    --muted: #A2ABC6;
+    --line: #2E3860;
+    --signal: #F5C433;
+    --signal-ink: #121831;
+    --focus: #8AB0FF;
+    --shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 10px 28px -14px rgba(0, 0, 0, 0.7);
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #121831;
+  --surface: #1B2342;
+  --ink: #E8ECF5;
+  --muted: #A2ABC6;
+  --line: #2E3860;
+  --signal: #F5C433;
+  --signal-ink: #121831;
+  --focus: #8AB0FF;
+  --shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 10px 28px -14px rgba(0, 0, 0, 0.7);
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Familjen Grotesk", system-ui, sans-serif;
+  font-size: 1.125rem;
+  line-height: 1.55;
+}
+a { color: inherit; text-underline-offset: 0.2em; text-decoration-thickness: 1px; }
+a:hover { text-decoration-thickness: 2px; }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; border-radius: 4px; }
+
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+@media (min-width: 720px) { .wrap { padding: 0 32px; } }
+
+/* Header */
+.top { display: flex; align-items: center; justify-content: space-between; padding: 20px 0; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.125rem; text-decoration: none; }
+.brand svg { width: 28px; height: 28px; }
+.top nav a { font-weight: 500; color: var(--muted); text-decoration: none; }
+.top nav a:hover { color: var(--ink); text-decoration: underline; }
+
+/* Hero */
+.hero { display: grid; gap: 40px; padding: 32px 0 72px; align-items: start; }
+@media (min-width: 960px) { .hero { grid-template-columns: 5fr 7fr; gap: 56px; padding-top: 56px; } }
+h1 {
+  font-size: clamp(2.6rem, 6.4vw, 4.6rem);
+  line-height: 0.98;
+  letter-spacing: -0.035em;
+  font-weight: 700;
+  margin: 0 0 24px;
+}
+h1 .line { display: block; }
+h1 .fixed { color: var(--muted); font-weight: 500; }
+.lede { font-size: 1.25rem; color: var(--muted); margin: 0 0 32px; max-width: 32em; }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 12px 20px; border-radius: 999px; font-weight: 600; text-decoration: none;
+  border: 2px solid var(--ink);
+}
+.btn-primary { background: var(--ink); color: var(--paper); }
+.btn-primary:hover { background: transparent; color: var(--ink); text-decoration: none; }
+.btn-quiet { background: transparent; }
+.btn-quiet:hover { background: var(--ink); color: var(--paper); text-decoration: none; }
+
+/* The feed demo */
+.demo { position: relative; }
+.demo-grid { display: grid; gap: 20px; align-items: start; }
+@media (min-width: 640px) { .demo-grid { grid-template-columns: 1fr 1fr; } }
+.pane {
+  background: var(--surface); border-radius: 18px; padding: 16px; box-shadow: var(--shadow);
+  min-height: 96px;
+}
+.pane h2, .pane h3 { font-size: 0.95rem; font-weight: 600; margin: 0 0 10px; line-height: 1.25; }
+.pane h2 small, .pane h3 small { display: block; color: var(--muted); font-weight: 400; font-size: 0.8rem; }
+.feed { transition: opacity 400ms ease; }
+.demo.sorted .feed { opacity: 0.55; }
+.lists { display: grid; gap: 16px; align-content: start; }
+.list-morning { border: 2px solid var(--signal); }
+.slot { min-height: 8px; }
+.ep {
+  display: grid; grid-template-columns: 36px 1fr auto; gap: 10px; align-items: center;
+  padding: 6px 4px; border-radius: 10px; background: var(--surface);
+}
+.ep + .ep { margin-top: 2px; }
+.cover {
+  width: 36px; height: 36px; border-radius: 7px; display: grid; place-items: center;
+  color: #fff; font-weight: 700; font-size: 0.8rem; letter-spacing: 0.02em;
+}
+.ep-title { font-size: 0.92rem; font-weight: 600; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ep-show { font-size: 0.8rem; color: var(--muted); line-height: 1.2; }
+.ep-meta { font-size: 0.78rem; color: var(--muted); white-space: nowrap; }
+.ep.played .ep-title { text-decoration: line-through; color: var(--muted); }
+.ep.gone { opacity: 0; transform: scale(0.96); transition: opacity 350ms ease, transform 350ms ease; }
+.ep-text { min-width: 0; }
+.empty-note { font-size: 0.85rem; color: var(--muted); margin: 6px 4px 0; }
+.demo-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
+.demo-foot p { margin: 0; font-size: 0.9rem; color: var(--muted); }
+.replay {
+  font: inherit; font-size: 0.9rem; font-weight: 600; color: var(--ink);
+  background: transparent; border: 2px solid var(--line); border-radius: 999px; padding: 6px 14px; cursor: pointer;
+}
+.replay:hover { border-color: var(--ink); }
+
+/* Sections */
+section { padding: 72px 0; border-top: 1px solid var(--line); }
+h2.section-title {
+  font-size: clamp(1.9rem, 4vw, 2.8rem); line-height: 1.05; letter-spacing: -0.025em; font-weight: 700;
+  margin: 0 0 16px; max-width: 18em;
+}
+.section-intro { color: var(--muted); max-width: 36em; margin: 0 0 40px; font-size: 1.2rem; }
+
+/* Steps — a real sequence, so numbered */
+.steps { list-style: none; padding: 0; margin: 0; display: grid; gap: 32px; counter-reset: step; }
+@media (min-width: 860px) { .steps { grid-template-columns: repeat(3, 1fr); } }
+.steps li { counter-increment: step; }
+.steps li::before {
+  content: counter(step);
+  display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%;
+  background: var(--signal); color: var(--signal-ink); font-weight: 700; font-size: 1.2rem; margin-bottom: 16px;
+}
+.steps h3 { margin: 0 0 8px; font-size: 1.3rem; letter-spacing: -0.01em; }
+.steps p { margin: 0; color: var(--muted); max-width: 30em; }
+
+/* Morning example */
+.example { display: grid; gap: 40px; align-items: start; }
+@media (min-width: 900px) { .example { grid-template-columns: 1fr 1fr; gap: 64px; } }
+.example-copy p { max-width: 32em; margin: 0 0 16px; }
+.example-copy p.muted { color: var(--muted); }
+.phone {
+  background: var(--surface); border-radius: 22px; padding: 20px; box-shadow: var(--shadow); max-width: 440px;
+}
+.phone header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; }
+.phone header strong { font-size: 1.3rem; }
+.phone header span { color: var(--muted); font-size: 0.9rem; }
+.why { font-size: 0.78rem; color: var(--muted); }
+.why-serial { color: var(--c-serial); font-weight: 600; }
+
+/* Features */
+.features { display: grid; gap: 40px 56px; }
+@media (min-width: 760px) { .features { grid-template-columns: 1fr 1fr; } }
+.feature h3 { font-size: 1.25rem; margin: 0 0 8px; letter-spacing: -0.01em; }
+.feature p { margin: 0; color: var(--muted); max-width: 30em; }
+
+/* Requirements */
+.needs { display: grid; gap: 40px; }
+@media (min-width: 900px) { .needs { grid-template-columns: 7fr 5fr; gap: 64px; } }
+.checklist { list-style: none; padding: 0; margin: 0; }
+.checklist li { padding: 16px 0; border-bottom: 1px solid var(--line); }
+.checklist li:first-child { border-top: 1px solid var(--line); }
+.checklist strong { display: block; font-size: 1.15rem; margin-bottom: 4px; }
+.checklist span { color: var(--muted); }
+.aside {
+  background: var(--ink); color: var(--paper); border-radius: 22px; padding: 28px;
+}
+.aside h3 { margin: 0 0 12px; font-size: 1.35rem; }
+.aside p { margin: 0 0 20px; opacity: 0.85; }
+.aside .btn { border-color: var(--paper); background: var(--paper); color: var(--ink); }
+.aside .btn:hover { background: transparent; color: var(--paper); }
+
+footer { border-top: 1px solid var(--line); padding: 40px 0 56px; color: var(--muted); font-size: 0.95rem; }
+footer p { margin: 0 0 8px; max-width: 60em; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="./">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#1B2340"/><rect x="7" y="9" width="18" height="3" rx="1.5" fill="#F2B705"/><rect x="7" y="15" width="13" height="3" rx="1.5" fill="#EEF1F6"/><rect x="7" y="21" width="9" height="3" rx="1.5" fill="#EEF1F6"/></svg>
+      Podcast Manager
+    </a>
+    <nav><a href="https://github.com/marco308/podcast-manager">GitHub</a></nav>
+  </header>
+
+  <main>
+    <div class="hero">
+      <div>
+        <h1>
+          <span class="line">Thirty shows.</span>
+          <span class="line">One feed.</span>
+          <span class="line fixed">Sorted before breakfast.</span>
+        </h1>
+        <p class="lede">Spotify drops every podcast you follow into one long pile. Podcast Manager splits it into playlists you design, like today’s news for the commute or the next chapter of your serial, and rebuilds them for you every day.</p>
+        <div class="actions">
+          <a class="btn btn-primary" href="#setup">What you need</a>
+          <a class="btn btn-quiet" href="https://github.com/marco308/podcast-manager">View on GitHub</a>
+        </div>
+      </div>
+
+      <div class="demo" id="demo" aria-label="Example: a podcast feed being sorted into playlists">
+        <div class="demo-grid">
+          <div class="pane feed">
+            <h2>Your podcast feed <small>everything, newest first</small></h2>
+            <div class="slot" data-slot="feed">
+              <div class="ep" data-to="morning" data-order="1"><div class="cover" style="background:var(--c-news)">DB</div><div class="ep-text"><div class="ep-title">Tuesday’s headlines</div><div class="ep-show">The Daily Brief</div></div><div class="ep-meta">Today</div></div>
+              <div class="ep" data-to="long" data-order="1"><div class="cover" style="background:var(--c-long)">SH</div><div class="ep-title-wrap ep-text"><div class="ep-title">The salt roads, part 1</div><div class="ep-show">Slow History</div></div><div class="ep-meta">Today</div></div>
+              <div class="ep" data-to="morning" data-order="2"><div class="cover" style="background:var(--c-markets)">MM</div><div class="ep-text"><div class="ep-title">Rates hold, for now</div><div class="ep-show">Morning Markets</div></div><div class="ep-meta">Today</div></div>
+              <div class="ep played" data-to="gone"><div class="cover" style="background:var(--c-talk)">KT</div><div class="ep-text"><div class="ep-title">Listener questions</div><div class="ep-show">Kitchen Table</div></div><div class="ep-meta">Played</div></div>
+              <div class="ep" data-to="morning" data-order="3"><div class="cover" style="background:var(--c-world)">W7</div><div class="ep-text"><div class="ep-title">Elections across the region</div><div class="ep-show">World at Seven</div></div><div class="ep-meta">Today</div></div>
+              <div class="ep" data-to="none"><div class="cover" style="background:var(--c-serial)">DW</div><div class="ep-text"><div class="ep-title">Episode 9: The verdict</div><div class="ep-show">Deep Water</div></div><div class="ep-meta">Yesterday</div></div>
+              <div class="ep" data-to="long" data-order="2"><div class="cover" style="background:var(--c-talk)">KT</div><div class="ep-text"><div class="ep-title">The perfect loaf</div><div class="ep-show">Kitchen Table</div></div><div class="ep-meta">Mon</div></div>
+              <div class="ep" data-to="morning" data-order="4"><div class="cover" style="background:var(--c-serial)">DW</div><div class="ep-text"><div class="ep-title">Episode 4: The boathouse</div><div class="ep-show">Deep Water</div></div><div class="ep-meta">Mar</div></div>
+            </div>
+          </div>
+          <div class="lists">
+            <div class="pane list-morning">
+              <h3>Morning <small>news, then the serial</small></h3>
+              <div class="slot" data-slot="morning"></div>
+            </div>
+            <div class="pane">
+              <h3>Long walks <small>one of each</small></h3>
+              <div class="slot" data-slot="long"></div>
+            </div>
+          </div>
+        </div>
+        <div class="demo-foot">
+          <p id="demo-caption">Played episodes drop out. The serial gives its next unheard episode, not its newest.</p>
+          <button class="replay" type="button" id="replay">Show the feed again</button>
+        </div>
+      </div>
+    </div>
+
+    <section aria-labelledby="how">
+      <h2 class="section-title" id="how">Set it up once, then just press play</h2>
+      <p class="section-intro">You make the playlists and choose which shows go in them. The app does the rest in your own Spotify account, so you listen in the Spotify app on your phone, car or speaker, the way you already do.</p>
+      <ol class="steps">
+        <li>
+          <h3>Make a playlist</h3>
+          <p>Give it a name like Morning or Long walks, and choose how it’s laid out: shows in the order you pick, or everything by release date.</p>
+        </li>
+        <li>
+          <h3>Add your shows</h3>
+          <p>Choose which podcasts go in, and how many episodes each one gives: the latest only, a few, or everything you haven’t heard.</p>
+        </li>
+        <li>
+          <h3>Listen in Spotify</h3>
+          <p>A matching playlist shows up in Spotify and is rebuilt each morning. Episodes you finish disappear from it through the day.</p>
+        </li>
+      </ol>
+    </section>
+
+    <section aria-labelledby="example">
+      <div class="example">
+        <div class="example-copy">
+          <h2 class="section-title" id="example">What a Tuesday morning looks like</h2>
+          <p>The Morning playlist is set to take just the latest episode of each show. So three news shows give you today’s three episodes, and yesterday’s news never piles up.</p>
+          <p>Deep Water is a story told in order, so it’s marked as a serial. Instead of the newest episode, it gives you the next one you haven’t heard. Finish Episode 4 on the train, and Episode 5 is waiting tomorrow.</p>
+          <p class="muted">The same show can follow different rules in different playlists. Your Long walks playlist could take every unheard episode of it instead.</p>
+        </div>
+        <div class="phone" aria-label="Example Morning playlist">
+          <header><strong>Morning</strong><span>Rebuilt at 4:00</span></header>
+          <div class="ep"><div class="cover" style="background:var(--c-news)">DB</div><div class="ep-text"><div class="ep-title">Tuesday’s headlines</div><div class="ep-show">The Daily Brief</div></div><div class="why">latest</div></div>
+          <div class="ep"><div class="cover" style="background:var(--c-markets)">MM</div><div class="ep-text"><div class="ep-title">Rates hold, for now</div><div class="ep-show">Morning Markets</div></div><div class="why">latest</div></div>
+          <div class="ep"><div class="cover" style="background:var(--c-world)">W7</div><div class="ep-text"><div class="ep-title">Elections across the region</div><div class="ep-show">World at Seven</div></div><div class="why">latest</div></div>
+          <div class="ep"><div class="cover" style="background:var(--c-serial)">DW</div><div class="ep-text"><div class="ep-title">Episode 4: The boathouse</div><div class="ep-show">Deep Water</div></div><div class="why why-serial">next in story</div></div>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="features">
+      <h2 class="section-title" id="features">Small rules that save a lot of scrolling</h2>
+      <p class="section-intro">Everything below happens on its own once your playlists are set up.</p>
+      <div class="features">
+        <div class="feature">
+          <h3>Serials stay in order</h3>
+          <p>Mark a story podcast as a serial and it always gives you the next episode you haven’t heard, even in a playlist sorted newest first.</p>
+        </div>
+        <div class="feature">
+          <h3>Finished episodes clear themselves</h3>
+          <p>Every half hour, episodes you’ve played to the end are taken out of your playlists, so the top of the list is always something new.</p>
+        </div>
+        <div class="feature">
+          <h3>Fresh every morning</h3>
+          <p>Each day, at a time you choose, the app checks which shows you follow and rebuilds every playlist from what you haven’t heard yet.</p>
+        </div>
+        <div class="feature">
+          <h3>One show, many playlists</h3>
+          <p>A show can sit in several playlists with a different rule in each: just the latest in one, the whole back catalogue in another.</p>
+        </div>
+        <div class="feature">
+          <h3>Unfollowing is handled gently</h3>
+          <p>Stop following a show in Spotify and it stops appearing in your playlists straight away. It’s only removed for good after a week, so if you follow it again, it goes back where it was.</p>
+        </div>
+        <div class="feature">
+          <h3>Tidy up without unfollowing</h3>
+          <p>Archive a show you still follow but don’t want to see in the app. You can also turn a playlist off, and it won’t be touched until you turn it back on.</p>
+        </div>
+        <div class="feature">
+          <h3>Use playlists you already have</h3>
+          <p>Point the app at a Spotify playlist you already own instead of making a new one. It will only let you choose playlists that belong to you.</p>
+        </div>
+        <div class="feature">
+          <h3>An iPhone app too</h3>
+          <p>A companion iPhone app lets you check your playlists, add or remove shows, mark serials and start a rebuild. Creating and fine-tuning playlists happens in the web app. It isn’t on the App Store, so it needs building with Xcode.</p>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="setup" id="setup">
+      <div class="needs">
+        <div>
+          <h2 class="section-title" id="setup-title">What you need</h2>
+          <p class="section-intro">Podcast Manager isn’t an app you download from a store. You run your own copy, and it looks after one Spotify account. Here’s what that involves.</p>
+          <ul class="checklist">
+            <li><strong>A Spotify account</strong><span>Free or Premium, the one you already listen with.</span></li>
+            <li><strong>A computer that stays on</strong><span>A home server, a NAS, a Raspberry Pi-class machine or a small cloud server that can run Docker.</span></li>
+            <li><strong>Your own Spotify developer app</strong><span>It’s free and takes a few minutes on Spotify’s developer site. It’s how the app gets permission to manage your playlists.</span></li>
+            <li><strong>A web address with HTTPS</strong><span>Spotify only lets you sign in through a secure address, so the app needs one.</span></li>
+          </ul>
+        </div>
+        <aside class="aside" aria-labelledby="helper">
+          <h3 id="helper">Not sure what any of that means?</h3>
+          <p>If you have a friend who runs a home server, this is an afternoon job for them. The setup guide on GitHub walks through each step.</p>
+          <a class="btn" href="https://github.com/marco308/podcast-manager#setup">Read the setup guide</a>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Podcast Manager is free for personal and other non-commercial use under the <a href="https://github.com/marco308/podcast-manager/blob/main/LICENSE">PolyForm Noncommercial licence</a>. The source is <a href="https://github.com/marco308/podcast-manager">on GitHub</a>.</p>
+    <p>Podcast Manager is an independent project. It isn’t made, endorsed or supported by Spotify. Spotify is a trademark of Spotify AB. The shows on this page are made up.</p>
+  </footer>
+</div>
+
+<script>
+(function () {
+  var demo = document.getElementById('demo');
+  var replay = document.getElementById('replay');
+  var feedSlot = demo.querySelector('[data-slot="feed"]');
+  var eps = Array.prototype.slice.call(feedSlot.children);
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var sorted = false;
+  var timer = null;
+
+  function slot(name) { return demo.querySelector('[data-slot="' + name + '"]'); }
+
+  // FLIP: record where each row is, move the DOM, then animate from old to new.
+  function move(apply) {
+    var first = new Map();
+    eps.forEach(function (el) { first.set(el, el.getBoundingClientRect()); });
+    apply();
+    if (reduce) return;
+    eps.forEach(function (el, i) {
+      var a = first.get(el);
+      var b = el.getBoundingClientRect();
+      var dx = a.left - b.left, dy = a.top - b.top;
+      if (!dx && !dy) return;
+      el.animate(
+        [{ transform: 'translate(' + dx + 'px,' + dy + 'px)' }, { transform: 'none' }],
+        { duration: 700, delay: i * 70, easing: 'cubic-bezier(.2,.7,.2,1)', fill: 'backwards' }
+      );
+    });
+  }
+
+  function sort() {
+    move(function () {
+      eps.filter(function (el) { return el.dataset.to === 'morning' || el.dataset.to === 'long'; })
+        .sort(function (a, b) { return a.dataset.order - b.dataset.order; })
+        .forEach(function (el) { slot(el.dataset.to).appendChild(el); });
+    });
+    eps.forEach(function (el) { if (el.dataset.to === 'gone') el.classList.add('gone'); });
+    demo.classList.add('sorted');
+    sorted = true;
+    replay.textContent = 'Show the feed again';
+  }
+
+  function unsort() {
+    move(function () {
+      eps.forEach(function (el) { el.classList.remove('gone'); feedSlot.appendChild(el); });
+    });
+    demo.classList.remove('sorted');
+    sorted = false;
+    replay.textContent = 'Sort it into playlists';
+  }
+
+  replay.addEventListener('click', function () {
+    clearTimeout(timer);
+    sorted ? unsort() : sort();
+  });
+
+  replay.textContent = 'Sort it into playlists';
+  timer = setTimeout(sort, reduce ? 0 : 900);
+})();
+</script>
+</body>
+</html>
