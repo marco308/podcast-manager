@@ -27,6 +27,10 @@ class PodcastResponse(PodcastBase):
     is_archived: bool = False
     playlist_ids: list[int] = []
     last_synced_at: datetime | None
+    # First sync that found the show gone from the Spotify library (issue
+    # #155). The show contributes no episodes to a build while it is set, and
+    # the row is deleted once it has been missing for UNSUBSCRIBE_GRACE.
+    missing_since: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

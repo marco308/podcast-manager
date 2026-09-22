@@ -17,6 +17,7 @@ from app.models.playlist import Playlist
 from app.models.settings import AppSetting
 from app.models.sync_log import SyncLog, SyncStatus
 from app.models.user import User
+from app.services.library_sync import sync_library
 from app.services.playlist_builder import PlaylistBuilder
 from app.services.spotify import CleanupBudgetExceeded, SpotifyService
 from app.services.token_manager import TokenManager
@@ -58,12 +59,19 @@ scheduler = AsyncIOScheduler()
 _last_run_times: dict[str, datetime] = {}
 
 
-# Jobs whose runs are recorded in SyncLog, keyed by scheduler job id. Their
-# last run is read from the table so it survives a restart; the in-memory
+LIBRARY_SYNC_JOB_TYPE = "library_sync"
+
+# The SyncLog job types each scheduler job's runs are recorded under. Last runs
+# are read from the table so they survive a restart; the in-memory
 # _last_run_times only covers the current process (issue #248).
-_SYNCLOG_JOB_TYPES: dict[str, str] = {
-    "daily_playlist_update": "playlist_update",
-    "remove_played_episodes": "cleanup",
+#
+# A job can have more than one: the daily run syncs the library and then
+# rebuilds, and each step writes its own row. The UI shows one line per job, so
+# the reported status is the worst of a job's steps — otherwise a failed
+# library sync under a successful rebuild rendered as a clean run (issue #240).
+_SYNCLOG_JOB_TYPES: dict[str, tuple[str, ...]] = {
+    "daily_playlist_update": ("playlist_update", LIBRARY_SYNC_JOB_TYPE),
+    "remove_played_episodes": ("cleanup",),
 }
 
 
@@ -120,6 +128,95 @@ async def refresh_all_tokens() -> None:
     logger.info("Token refresh job completed")
 
 
+async def sync_all_libraries() -> None:
+    """Refresh every user's podcast library from Spotify.
+
+    Runs as the first step of :func:`update_all_playlists` (issue #240). Until
+    this existed, nothing pulled ``GET /me/shows`` on a schedule: a new
+    subscription stayed invisible until someone pressed Sync, and the
+    unsubscribe reconcile from issue #155 — including the grace-period
+    deletion — only ever advanced when a human happened to press the button.
+
+    Failures are recorded in the job's own ``library_sync`` SyncLog row and
+    never abort the rebuild that follows — a stale library is a much smaller
+    problem than a day with no playlist update. ``get_job_status`` folds that
+    row into the daily job's reported status, so a sync that failed under a
+    successful rebuild still shows up in the UI.
+
+    Serialised against a manual ``POST /podcasts/sync`` through
+    ``library_sync_lock``; see the lock's own note for why two concurrent
+    walks are unsafe.
+    """
+    logger.info("Starting library sync job")
+
+    sync_log_id: int | None = None
+    try:
+        async with async_session_maker() as db:
+            sync_log = SyncLog(
+                job_type=LIBRARY_SYNC_JOB_TYPE,
+                status=SyncStatus.RUNNING,
+                started_at=datetime.now(UTC),
+            )
+            db.add(sync_log)
+            await db.commit()
+            sync_log_id = sync_log.id
+    except Exception as e:
+        logger.error(f"Library sync job failed creating sync log: {e}")
+
+    user_ids: list[int] = []
+    try:
+        async with async_session_maker() as db:
+            result = await db.execute(select(User.id))
+            user_ids = [row[0] for row in result.all()]
+    except Exception as e:
+        logger.error(f"Library sync job failed reading users: {e}")
+        await _finalise_sync_log(
+            sync_log_id,
+            status=SyncStatus.FAILED,
+            details=f"Failed reading users: {e}",
+            failure_code="unknown",
+        )
+        return
+
+    summaries: list[str] = []
+    errors: list[str] = []
+
+    # The lock covers each user's commit, not just its walk: releasing before
+    # the commit would leave the pending insert invisible to a concurrent sync,
+    # which is the whole race it exists to close.
+    if locks.library_sync_lock.locked():
+        logger.info("Waiting on library_sync_lock — a manual sync is running")
+    async with locks.library_sync_lock:
+        for user_id in user_ids:
+            async with async_session_maker() as db:
+                try:
+                    access_token = await TokenManager(user_id).get_token(min_remaining_seconds=300)
+                    spotify = SpotifyService(access_token=access_token)
+                    result = await sync_library(db, spotify)
+                    await db.commit()
+                    summaries.append(f"User {user_id}: {result.summary}")
+                except Exception as e:
+                    # A partial walk leaves uncommitted upserts and, by
+                    # construction, no reconciliation — roll the lot back so
+                    # the library is never half-updated from a half-read.
+                    logger.error(f"Library sync failed for user {user_id}: {e}")
+                    errors.append(f"User {user_id}: {e}")
+                    await db.rollback()
+
+    details = "; ".join(summaries) if summaries else "No users synced."
+    if errors:
+        details += f"\nErrors: {chr(10).join(errors[:10])}"
+
+    await _finalise_sync_log(
+        sync_log_id,
+        status=SyncStatus.SUCCESS if not errors else SyncStatus.FAILED,
+        details=details,
+        failure_code="unknown" if errors else None,
+    )
+
+    logger.info(f"Library sync job completed: {details}")
+
+
 async def update_all_playlists() -> None:
     """Update all enabled playlists for all users.
 
@@ -128,6 +225,17 @@ async def update_all_playlists() -> None:
     """
     _record_run("daily_playlist_update")
     logger.info("Starting daily playlist update job")
+
+    # Pull the library first so the rebuild sees today's subscriptions and
+    # skips shows unfollowed on Spotify (issue #240). Deliberately outside
+    # the playlist write lock: it only touches the podcasts table, and the
+    # /me/shows walk shouldn't hold a lock the cleanup job is waiting on.
+    try:
+        await sync_all_libraries()
+    except Exception as e:
+        # sync_all_libraries handles its own failures; anything escaping it
+        # must still not stop the rebuild.
+        logger.error(f"Library sync step failed, continuing with the rebuild: {e}")
 
     # Create sync log with a short-lived session
     sync_log_id: int | None = None
@@ -157,7 +265,7 @@ async def update_all_playlists() -> None:
 
     if read_error is not None:
         # Don't leave the RUNNING row created above orphaned (issue #174).
-        await _finalise_playlist_update_log(
+        await _finalise_sync_log(
             sync_log_id,
             status=SyncStatus.FAILED,
             details=f"Failed reading users: {read_error}",
@@ -226,7 +334,7 @@ async def update_all_playlists() -> None:
     if errors:
         details += f"\n{chr(10).join(errors[:10])}"
 
-    await _finalise_playlist_update_log(
+    await _finalise_sync_log(
         sync_log_id,
         status=SyncStatus.SUCCESS if not errors else SyncStatus.FAILED,
         details=details,
@@ -247,7 +355,7 @@ async def update_all_playlists() -> None:
     )
 
 
-async def _finalise_playlist_update_log(
+async def _finalise_sync_log(
     sync_log_id: int | None,
     *,
     status: SyncStatus,
@@ -256,7 +364,11 @@ async def _finalise_playlist_update_log(
     playlists_attempted: int = 0,
     playlists_failed: int = 0,
 ) -> None:
-    """Update the playlist-update SyncLog row with the final outcome."""
+    """Write the final outcome onto a RUNNING SyncLog row.
+
+    Shared by the playlist-update and library-sync jobs; the playlist
+    counters stay at 0 for the latter, which has no playlists to count.
+    """
     if sync_log_id is None:
         return
     async with async_session_maker() as db:
@@ -348,12 +460,15 @@ async def init_scheduler() -> None:
     except Exception as e:
         logger.warning(f"Failed to read persisted schedule, using defaults: {e}")
 
-    # Daily playlist update job
+    # Daily library sync + playlist rebuild. The id stays
+    # ``daily_playlist_update`` — it is what the persisted schedule, the
+    # reschedule endpoint and the UI's "configurable" flag key off — but the
+    # name says what the run actually does now (issue #240).
     scheduler.add_job(
         update_all_playlists,
         CronTrigger(hour=update_hour, minute=update_minute),
         id="daily_playlist_update",
-        name="Daily Playlist Update",
+        name="Daily Library Sync & Playlist Update",
         replace_existing=True,
     )
 
@@ -414,7 +529,7 @@ async def get_job_status() -> list[dict]:
     synclog_last_runs: dict[str, tuple[datetime, str]] = {}
     try:
         async with async_session_maker() as db:
-            for job_type in set(_SYNCLOG_JOB_TYPES.values()):
+            for job_type in {t for types in _SYNCLOG_JOB_TYPES.values() for t in types}:
                 row = await db.execute(
                     select(SyncLog).where(SyncLog.job_type == job_type).order_by(SyncLog.started_at.desc()).limit(1)
                 )
@@ -466,12 +581,22 @@ async def get_job_status() -> list[dict]:
         # fires before the row exists (the cleanup recency gate returns before
         # writing one at all), so falling back to the in-memory time would
         # report a run that did no work and carry no status.
-        job_type = _SYNCLOG_JOB_TYPES.get(job.id)
-        if job_type is not None:
-            synclog_run = synclog_last_runs.get(job_type)
-            if synclog_run:
-                info["last_run"] = synclog_run[0].isoformat()
-                info["last_run_status"] = synclog_run[1]
+        job_types = _SYNCLOG_JOB_TYPES.get(job.id)
+        if job_types is not None:
+            runs = {t: synclog_last_runs[t] for t in job_types if t in synclog_last_runs}
+            if runs:
+                # The steps of one run start in order, so the newest row is the
+                # last step that got going — the right "last run" to show.
+                newest_at, newest_status = max(runs.values(), key=lambda run: run[0])
+                info["last_run"] = newest_at.isoformat()
+                # Worst-of-the-steps, and name what failed so the UI can say
+                # which half of the daily run went wrong (issue #240).
+                failed = sorted(t for t, run in runs.items() if run[1] == SyncStatus.FAILED.value)
+                if failed:
+                    info["last_run_status"] = SyncStatus.FAILED.value
+                    info["last_run_failed_steps"] = failed
+                else:
+                    info["last_run_status"] = newest_status
         else:
             in_memory_run = _last_run_times.get(job.id)
             info["last_run"] = in_memory_run.isoformat() if in_memory_run else None

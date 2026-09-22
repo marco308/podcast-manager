@@ -3,6 +3,7 @@ import { App, Typography, Button, Space, Alert, Switch } from 'antd';
 import { SyncOutlined } from '@ant-design/icons';
 import { usePodcasts, useSyncPodcasts } from '../hooks';
 import { PodcastTable, LoadingSpinner } from '../components';
+import { syncResultSummary } from '../utils/syncSummary';
 
 const { Title, Text } = Typography;
 
@@ -15,8 +16,12 @@ export function Podcasts() {
 
   const handleSync = async () => {
     try {
-      const result = await syncPodcasts.mutateAsync();
-      message.success(result.message);
+      const { text, warn } = syncResultSummary(await syncPodcasts.mutateAsync());
+      if (warn) {
+        message.warning(text);
+      } else {
+        message.success(text);
+      }
     } catch {
       message.error('Failed to sync podcasts from Spotify');
     }
