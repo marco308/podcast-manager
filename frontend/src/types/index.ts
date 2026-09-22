@@ -24,6 +24,10 @@ export interface Podcast {
   is_archived: boolean;
   playlist_ids: number[];
   last_synced_at: string | null;
+  // First sync that found the show gone from the Spotify library (issue
+  // #155). While it is set the show contributes no episodes to a build, and
+  // the row is deleted once it has been missing for the grace period.
+  missing_since: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -119,6 +123,8 @@ export interface PlaylistPodcast {
   total_episodes: number;
   unplayed_episodes: number | null;
   is_sequential: boolean;
+  // Gone from the Spotify library: still assigned, skipped by the next build
+  missing_since?: string | null;
   position: number | null;
   rule: AssignmentRule;
   override: AssignmentOverride;
@@ -132,6 +138,9 @@ export interface SyncResult {
   // Gone from the Spotify library: counted down over a grace period, then removed
   missing: number;
   removed: number;
+  // True when the walk didn't look like a complete snapshot, so nothing was
+  // marked or retired. The upserts still happened (issue #240).
+  reconcile_skipped: boolean;
 }
 
 // Podcast list response
@@ -189,6 +198,10 @@ export interface Job {
   // covers runs interrupted by a restart, which the backend closes out at
   // startup, so an interrupted run never looks like a good one.
   last_run_status?: 'running' | 'success' | 'failed' | null;
+  // SyncLog job types that failed on the last run. The daily job runs two
+  // steps recorded under one line here, so this names which of them went
+  // wrong (issue #240).
+  last_run_failed_steps?: string[];
   type: 'cron' | 'interval';
   is_configurable: boolean;
   schedule?: JobSchedule;

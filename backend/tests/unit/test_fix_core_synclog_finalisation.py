@@ -205,7 +205,8 @@ async def test_playlist_update_finalises_log_when_user_read_fails():
 
     with (
         patch("app.jobs.scheduler.async_session_maker", _session_factory(fail_on="users")),
-        patch("app.jobs.scheduler._finalise_playlist_update_log", finalise),
+        patch("app.jobs.scheduler.sync_all_libraries", AsyncMock()),
+        patch("app.jobs.scheduler._finalise_sync_log", finalise),
     ):
         await scheduler.update_all_playlists()
 
@@ -223,7 +224,8 @@ async def test_playlist_update_finalises_log_on_unexpected_error():
 
     with (
         patch("app.jobs.scheduler.async_session_maker", _session_factory(users=[(1,)])),
-        patch("app.jobs.scheduler._finalise_playlist_update_log", finalise),
+        patch("app.jobs.scheduler.sync_all_libraries", AsyncMock()),
+        patch("app.jobs.scheduler._finalise_sync_log", finalise),
     ):
         await scheduler.update_all_playlists()
 
@@ -240,7 +242,8 @@ async def test_playlist_update_finalises_log_on_success():
 
     with (
         patch("app.jobs.scheduler.async_session_maker", _session_factory(users=[])),
-        patch("app.jobs.scheduler._finalise_playlist_update_log", finalise),
+        patch("app.jobs.scheduler.sync_all_libraries", AsyncMock()),
+        patch("app.jobs.scheduler._finalise_sync_log", finalise),
     ):
         await scheduler.update_all_playlists()
 
@@ -254,7 +257,7 @@ async def test_finalise_helper_is_a_noop_without_a_log_row():
     """If the RUNNING row was never created there is nothing to finalise."""
     factory = _session_factory()
     with patch("app.jobs.scheduler.async_session_maker", factory):
-        await scheduler._finalise_playlist_update_log(
+        await scheduler._finalise_sync_log(
             None,
             status=SyncStatus.FAILED,
             details="ignored",

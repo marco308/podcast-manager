@@ -139,6 +139,9 @@ class PlaylistPodcastResponse(BaseModel):
     total_episodes: int = 0
     unplayed_episodes: int | None = None
     is_sequential: bool
+    # Gone from the Spotify library: the assignment is still here but the
+    # show is skipped by the next build (issues #155, #240).
+    missing_since: datetime | None = None
     position: int | None = None
     rule: AssignmentRule
     override: AssignmentOverride

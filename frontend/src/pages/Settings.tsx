@@ -26,6 +26,23 @@ dayjs.extend(relativeTime);
 
 const { Title, Text, Paragraph } = Typography;
 
+// A job's run can span more than one SyncLog-backed step — the daily run syncs
+// the library and then rebuilds — and the table shows one line per job. Name
+// the step that failed so a failed sync under a successful rebuild is legible
+// rather than just a red tag (issue #240).
+const STEP_LABELS: Record<string, string> = {
+  library_sync: 'library sync',
+  playlist_update: 'playlist rebuild',
+  cleanup: 'played-episode cleanup',
+};
+
+function failedStepsLabel(job: Job): string {
+  const steps = job.last_run_failed_steps ?? [];
+  if (steps.length === 0) return 'The last run failed';
+  const names = steps.map((step) => STEP_LABELS[step] ?? step);
+  return `The last run failed: ${names.join(', ')}`;
+}
+
 export function Settings() {
   const { message } = App.useApp();
   const { user, logout } = useAuth();
@@ -105,7 +122,11 @@ export function Settings() {
             <Tooltip title={dayjs(last_run).format('YYYY-MM-DD HH:mm:ss')}>
               {dayjs(last_run).fromNow()}
             </Tooltip>
-            {record.last_run_status === 'failed' && <Tag color="red">failed</Tag>}
+            {record.last_run_status === 'failed' && (
+              <Tooltip title={failedStepsLabel(record)}>
+                <Tag color="red">failed</Tag>
+              </Tooltip>
+            )}
             {record.last_run_status === 'running' && <Tag color="processing">running</Tag>}
           </Space>
         ) : (
@@ -198,6 +219,13 @@ export function Settings() {
       </Card>
 
       <Card title="Scheduled Jobs" style={{ marginBottom: 24 }}>
+        <Paragraph style={{ marginBottom: 16 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            The daily run refreshes your Spotify library first — new subscriptions appear, and shows
+            you have unfollowed are flagged and stop contributing episodes — then rebuilds every
+            enabled playlist.
+          </Text>
+        </Paragraph>
         {jobsLoading ? (
           <div style={{ textAlign: 'center', padding: 24 }}>
             <Spin />

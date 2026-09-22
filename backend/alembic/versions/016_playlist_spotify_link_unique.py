@@ -1,8 +1,16 @@
 """Unique (user_id, spotify_playlist_id) on playlists (issue #245)
 
 Revision ID: 016_playlist_spotify_link_unique
-Revises: 015_podcast_is_archived
+Revises: 017_podcast_missing_since
 Create Date: 2026-09-22
+
+Relinked after 017 (issue #240). This migration and 016/017 were written off
+the same parent (015) on separate branches and merged independently, which
+left the chain with two heads and ``alembic upgrade head`` failing outright —
+including in the Docker entrypoint. The revision id is deliberately left as
+``016_...`` even though it now revises 017: renaming it would orphan any
+database already stamped at it. The file name keeps the id, so the numbering
+here records when it was written, not its place in the chain.
 
 Two managed playlists pointing at one Spotify playlist overwrite each other on
 every rebuild. The API refuses to create that, but a check-then-insert can be
@@ -17,7 +25,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "016_playlist_spotify_link_unique"
-down_revision: str | None = "015_podcast_is_archived"
+down_revision: str | None = "017_podcast_missing_since"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
