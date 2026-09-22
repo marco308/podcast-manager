@@ -74,7 +74,7 @@ export function Playlists() {
     setRunningPlaylistId(id);
     try {
       const result = await runPlaylist.mutateAsync(id);
-      // A skipped weekend-only playlist and a partial rebuild both come back
+      // A skipped (disabled) playlist and a partial rebuild both come back
       // 200, but neither is a clean success — don't report them as one.
       if (result.skipped || result.partial) {
         message.warning(result.message);
@@ -99,7 +99,7 @@ export function Playlists() {
 
       let summary = `Updated ${succeeded.length} playlist${succeeded.length === 1 ? '' : 's'}`;
       if (skipped.length > 0) {
-        summary += `, ${skipped.length} skipped (weekend-only)`;
+        summary += `, ${skipped.length} skipped (disabled)`;
       }
 
       if (failed.length > 0) {
@@ -132,7 +132,6 @@ export function Playlists() {
                 {ruleSummary(record.default_episode_limit, record.default_pick_from)}
               </Tag>
               {record.is_enabled ? <Tag color="success">On</Tag> : <Tag color="default">Off</Tag>}
-              {record.is_weekend_only && <Tag color="orange">Weekend</Tag>}
               {spotifyPlaylistUrl(record.spotify_playlist_id) && (
                 <a
                   href={spotifyPlaylistUrl(record.spotify_playlist_id) ?? undefined}
@@ -198,12 +197,8 @@ export function Playlists() {
       dataIndex: 'is_enabled',
       key: 'is_enabled',
       responsive: ['md'] as const,
-      render: (enabled: boolean, record: Playlist) => (
-        <Space size={4}>
-          {enabled ? <Tag color="success">Enabled</Tag> : <Tag color="default">Disabled</Tag>}
-          {record.is_weekend_only && <Tag color="orange">Weekend</Tag>}
-        </Space>
-      ),
+      render: (enabled: boolean) =>
+        enabled ? <Tag color="success">Enabled</Tag> : <Tag color="default">Disabled</Tag>,
     },
     {
       title: 'Last Updated',

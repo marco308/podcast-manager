@@ -58,7 +58,6 @@ interface PlaylistFormValues {
   episode_limit_mode: EpisodeLimitMode;
   custom_episode_limit?: number;
   default_pick_from: PickFrom;
-  is_weekend_only: boolean;
   is_enabled: boolean;
 }
 
@@ -81,7 +80,6 @@ const NEW_PLAYLIST_VALUES: PlaylistFormValues = {
   episode_limit_mode: 'all',
   custom_episode_limit: undefined,
   default_pick_from: 'newest',
-  is_weekend_only: false,
   is_enabled: true,
 };
 
@@ -96,7 +94,6 @@ function valuesFor(playlist: Playlist | null): PlaylistFormValues {
     episode_limit_mode: mode,
     custom_episode_limit: mode === 'custom' ? playlist.default_episode_limit : undefined,
     default_pick_from: playlist.default_pick_from,
-    is_weekend_only: playlist.is_weekend_only,
     is_enabled: playlist.is_enabled,
   };
 }
@@ -202,7 +199,6 @@ export function PlaylistFormModal({ open, playlist, onClose, onSaved }: Playlist
       // and an absent field as "leave the link alone".
       spotify_playlist_id: values.spotify_playlist_id ?? null,
       is_enabled: values.is_enabled,
-      is_weekend_only: values.is_weekend_only,
       default_episode_limit: modeToLimit(values.episode_limit_mode, values.custom_episode_limit),
       default_pick_from: values.default_pick_from,
       arrangement: values.arrangement,
@@ -469,14 +465,6 @@ export function PlaylistFormModal({ open, playlist, onClose, onSaved }: Playlist
             />
           </Form.Item>
 
-          <Form.Item
-            name="is_weekend_only"
-            label="Weekend Only"
-            valuePropName="checked"
-            extra="Only update this playlist on weekends and UK public holidays"
-          >
-            <Switch />
-          </Form.Item>
           <Form.Item
             name="is_enabled"
             label="Enabled"

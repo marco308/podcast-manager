@@ -4,7 +4,6 @@ struct Playlist: Codable, Identifiable, Hashable {
     let id: Int
     let name: String
     let isEnabled: Bool
-    let isWeekendOnly: Bool
     /// Default episodes per podcast: 0 = all unplayed, n >= 1 = at most n.
     let defaultEpisodeLimit: Int
     /// Which end of a show's unplayed episodes to take from: "newest" | "oldest".
@@ -60,7 +59,7 @@ struct PlaylistRunResponse: Codable {
     let message: String
     let playlistId: Int
     let episodeCount: Int
-    /// Weekend-only playlist left untouched on a non-qualifying day.
+    /// Disabled playlist left untouched.
     let skipped: Bool?
     /// Playlist was written, but from incomplete data.
     let partial: Bool?

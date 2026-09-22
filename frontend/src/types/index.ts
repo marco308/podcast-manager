@@ -59,7 +59,6 @@ export interface Playlist {
   name: string;
   spotify_playlist_id: string | null;
   is_enabled: boolean;
-  is_weekend_only: boolean;
   default_episode_limit: number;
   default_pick_from: PickFrom;
   arrangement: Arrangement;
@@ -73,7 +72,6 @@ export interface PlaylistCreate {
   name: string;
   spotify_playlist_id?: string | null;
   is_enabled?: boolean;
-  is_weekend_only?: boolean;
   default_episode_limit?: number;
   default_pick_from?: PickFrom;
   arrangement?: Arrangement;
@@ -85,7 +83,6 @@ export interface PlaylistUpdate {
   // Present and null unlinks the Spotify playlist; absent leaves it alone.
   spotify_playlist_id?: string | null;
   is_enabled?: boolean;
-  is_weekend_only?: boolean;
   default_episode_limit?: number;
   default_pick_from?: PickFrom;
   arrangement?: Arrangement;
@@ -225,8 +222,8 @@ export interface HealthResponse {
 }
 
 // Result of a manual single-playlist run.
-// `skipped` is set when a weekend-only playlist was deliberately left
-// untouched; `partial` when it was written from incomplete data because some
+// `skipped` is set when a disabled playlist was deliberately left untouched;
+// `partial` when it was written from incomplete data because some
 // podcasts could not be fetched.
 export interface PlaylistRunResult {
   message: string;

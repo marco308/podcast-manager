@@ -134,7 +134,7 @@ class TestRunAllErrorReporting:
         finally:
             await engine.dispose()
 
-        assert response["message"] == "Updated 1 playlists, 1 failed, 1 updated with warnings, 1 skipped (weekend-only)"
+        assert response["message"] == "Updated 1 playlists, 1 failed, 1 updated with warnings, 1 skipped (disabled)"
 
         by_id = {r["playlist_id"]: r for r in response["results"]}
         # Genuine failure: generic client message, raw text only in the log.

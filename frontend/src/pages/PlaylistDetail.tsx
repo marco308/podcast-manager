@@ -179,7 +179,7 @@ export function PlaylistDetail() {
     if (!playlist) return;
     try {
       const result = await runPlaylist.mutateAsync(playlist.id);
-      // A skipped weekend-only playlist and a partial rebuild both come back
+      // A skipped (disabled) playlist and a partial rebuild both come back
       // 200, but neither is a clean success — don't report them as one.
       if (result.skipped || result.partial) {
         message.warning(result.message);
@@ -329,9 +329,6 @@ export function PlaylistDetail() {
                 </Text>
               </Space>
             )}
-          </Descriptions.Item>
-          <Descriptions.Item label="Weekend only">
-            {playlist.is_weekend_only ? <Tag color="orange">Weekend</Tag> : 'No'}
           </Descriptions.Item>
           <Descriptions.Item label="Last updated">
             {playlist.last_updated_at ? (

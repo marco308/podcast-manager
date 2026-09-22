@@ -25,7 +25,6 @@ class PlaylistBase(BaseModel):
 
     name: str
     is_enabled: bool = True
-    is_weekend_only: bool = False
     # Defaults inherited by assignments without an override.
     default_episode_limit: int = Field(ALL_EPISODES, ge=0, le=EPISODE_LIMIT_MAX)
     default_pick_from: PickFrom = PickFrom.NEWEST
@@ -60,6 +59,9 @@ class PlaylistResponse(PlaylistBase):
     last_updated_at: datetime | None
     created_at: datetime
     podcast_count: int = 0
+    # Always False: the setting was removed (issue #238), but installed iOS
+    # builds decode it as a required field. Drop once they are gone.
+    is_weekend_only: bool = False
 
 
 class PlaylistUpdate(BaseModel):
@@ -78,7 +80,6 @@ class PlaylistUpdate(BaseModel):
         return value
 
     is_enabled: bool | None = None
-    is_weekend_only: bool | None = None
     default_episode_limit: int | None = Field(None, ge=0, le=EPISODE_LIMIT_MAX)
     default_pick_from: PickFrom | None = None
     arrangement: Arrangement | None = None

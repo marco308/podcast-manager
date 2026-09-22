@@ -101,7 +101,6 @@ def _build_playlist_response(playlist: Playlist, podcast_count: int) -> Playlist
         id=playlist.id,
         name=playlist.name,
         is_enabled=playlist.is_enabled,
-        is_weekend_only=playlist.is_weekend_only,
         default_episode_limit=playlist.default_episode_limit,
         default_pick_from=playlist.default_pick_from,
         arrangement=playlist.arrangement,
@@ -320,7 +319,6 @@ async def create_playlist(
         name=playlist_data.name,
         spotify_playlist_id=playlist_data.spotify_playlist_id,
         is_enabled=playlist_data.is_enabled,
-        is_weekend_only=playlist_data.is_weekend_only,
         default_episode_limit=playlist_data.default_episode_limit,
         default_pick_from=playlist_data.default_pick_from.value,
         arrangement=playlist_data.arrangement.value,
@@ -400,8 +398,6 @@ async def update_playlist(
         playlist.name = update_data.name
     if update_data.is_enabled is not None:
         playlist.is_enabled = update_data.is_enabled
-    if update_data.is_weekend_only is not None:
-        playlist.is_weekend_only = update_data.is_weekend_only
     if update_data.default_episode_limit is not None:
         playlist.default_episode_limit = update_data.default_episode_limit
     if update_data.default_pick_from is not None:
@@ -773,10 +769,10 @@ async def run_playlist_update(
         raise HTTPException(status_code=500, detail="Failed to update playlist. Check the server logs for details.")
 
     if result.skipped:
-        # Weekend-only playlist on a non-qualifying day — deliberately left
-        # untouched, so say so rather than claiming an update (issue #150).
+        # Disabled after the re-check above — update_playlist left it
+        # untouched, so say so rather than claiming an update (issue #239).
         return {
-            "message": f"Playlist '{playlist.name}' is weekend-only and was left unchanged today",
+            "message": f"Playlist '{playlist.name}' is disabled and was left unchanged",
             "playlist_id": playlist_id,
             "episode_count": 0,
             "skipped": True,
@@ -841,7 +837,7 @@ async def run_all_playlist_updates(
     if partial:
         message += f", {len(partial)} updated with warnings"
     if skipped:
-        message += f", {len(skipped)} skipped (weekend-only)"
+        message += f", {len(skipped)} skipped (disabled)"
 
     return {
         "message": message,
