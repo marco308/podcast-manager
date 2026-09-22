@@ -247,6 +247,12 @@ class PlaylistBuilder:
         first page gives ``total``; pages are then read backwards from the
         tail. The result keeps Spotify's newest-first order; ``complete`` is
         True when the head and tail reads met (the whole catalogue was seen).
+
+        The cap applies to the tail candidates only, and the head page is
+        only merged in when the reads met. If the walk stops short, the
+        unread middle is older than every head episode, so the head must not
+        compete for "oldest" — it would be trimmed in ahead of episodes we
+        never looked at.
         """
         first = await spotify.get_show_episodes(show_id, limit=PAGE_SIZE, offset=0)
         head: list[dict[str, Any]] = list(first.get("items", []))
@@ -258,7 +264,7 @@ class PlaylistBuilder:
         tail: list[dict[str, Any]] = []
         unplayed = 0
         end = total  # exclusive index of the unread region
-        while end > covered_end and len(head) + len(tail) < MAX_EPISODES_PER_SHOW:
+        while end > covered_end and len(tail) < MAX_EPISODES_PER_SHOW:
             start = max(end - PAGE_SIZE, covered_end)
             data = await spotify.get_show_episodes(show_id, limit=end - start, offset=start)
             page = data.get("items", [])
@@ -270,17 +276,20 @@ class PlaylistBuilder:
             if unplayed >= need:
                 break
 
-        # A release between the two reads shifts offsets by one; drop any
+        complete = end <= covered_end
+        candidates = head + tail if complete else tail
+
+        # A release between two reads shifts offsets by one; drop any
         # episode seen twice rather than double-adding it.
         seen: set[str] = set()
         merged: list[dict[str, Any]] = []
-        for ep in head + tail:
+        for ep in candidates:
             ep_id = ep.get("id") if ep else None
             if not ep_id or ep_id in seen:
                 continue
             seen.add(ep_id)
             merged.append(ep)
-        return merged, end <= covered_end
+        return merged, complete
 
     async def _fetch_unplayed(self, podcast: Podcast, *, need: int | None, from_oldest: bool) -> list[Episode]:
         """Fetch a show's unplayed episodes, reading only as much as the rule needs.

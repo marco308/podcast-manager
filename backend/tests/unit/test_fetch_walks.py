@@ -130,6 +130,26 @@ class TestWalkFromTail:
         assert podcast.unplayed_episodes == 999
 
     @pytest.mark.asyncio
+    async def test_cap_applies_to_the_tail_and_excludes_the_head_when_incomplete(self):
+        """A max-sized oldest rule on a 600-episode show must return the 500
+        oldest, not 450 oldest plus the 50 newest (the unread middle is older
+        than every head episode)."""
+        spotify = FakeSpotify(total=600)
+        result = await _builder(spotify)._fetch_unplayed(_podcast(), need=500, from_oldest=True)
+        ids = [e.id for e in result]
+        assert len(ids) == 500
+        assert ids[0] == "e100" and ids[-1] == "e599"
+        assert not any(e.id in {f"e{i}" for i in range(50)} for e in result)
+
+    @pytest.mark.asyncio
+    async def test_incomplete_walk_with_a_played_tail_does_not_fall_back_to_the_head(self):
+        """If the capped tail is all played, the honest answer is 'nothing
+        within budget', not the newest episode from the head page."""
+        spotify = FakeSpotify(total=600, played=range(100, 600))
+        result = await _builder(spotify)._fetch_unplayed(_podcast(), need=1, from_oldest=True)
+        assert result == []
+
+    @pytest.mark.asyncio
     async def test_episode_seen_in_both_reads_is_not_duplicated(self):
         spotify = FakeSpotify(total=60)
         # Simulate a release between the two reads: the tail page overlaps the head.
