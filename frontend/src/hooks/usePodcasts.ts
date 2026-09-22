@@ -7,16 +7,17 @@ import { playlistKeys } from './usePlaylists';
 export const podcastKeys = {
   all: ['podcasts'] as const,
   lists: () => [...podcastKeys.all, 'list'] as const,
-  list: () => [...podcastKeys.lists()] as const,
+  list: (includeArchived = false) => [...podcastKeys.lists(), { includeArchived }] as const,
   details: () => [...podcastKeys.all, 'detail'] as const,
   detail: (podcastId: number) => [...podcastKeys.details(), podcastId] as const,
 };
 
-// Hook to list podcasts
-export function usePodcasts() {
+// Hook to list podcasts. Archived podcasts are excluded unless asked for, so
+// the dashboard counts and assignment selects never see them.
+export function usePodcasts({ includeArchived = false }: { includeArchived?: boolean } = {}) {
   return useQuery({
-    queryKey: podcastKeys.list(),
-    queryFn: () => podcastsApi.list(),
+    queryKey: podcastKeys.list(includeArchived),
+    queryFn: () => podcastsApi.list({ includeArchived }),
   });
 }
 
@@ -41,6 +42,9 @@ export function useUpdatePodcast() {
       queryClient.setQueryData(podcastKeys.detail(updatedPodcast.id), updatedPodcast);
       // Invalidate list queries to refetch
       queryClient.invalidateQueries({ queryKey: podcastKeys.lists() });
+      // Archiving removes the podcast from its playlists, changing
+      // podcast_counts and memberships
+      queryClient.invalidateQueries({ queryKey: playlistKeys.all });
     },
   });
 }

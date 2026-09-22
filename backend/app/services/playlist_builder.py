@@ -32,6 +32,11 @@ MAX_EPISODES_PER_SHOW = 500
 PAGE_SIZE = 50
 
 
+def spotify_playlist_description(name: str) -> str:
+    """Description written on the Spotify playlist (on create, and on rename)."""
+    return f"{name} - auto-managed by Podcast Manager"
+
+
 class EpisodeFetchError(Exception):
     """Raised when a podcast's episodes could not be fetched from Spotify.
 
@@ -482,11 +487,9 @@ class PlaylistBuilder:
         # Create a new Spotify playlist
         spotify = await self._get_spotify_client()
 
-        description = f"{playlist.name} - auto-managed by Podcast Manager"
-
         spotify_playlist = await spotify.create_playlist(
             name=playlist.name,
-            description=description,
+            description=spotify_playlist_description(playlist.name),
             public=False,
             on_unauthorized=self._token_manager.force_refresh,
         )

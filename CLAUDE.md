@@ -84,6 +84,12 @@ Registered in `app/jobs/scheduler.py`, started from the FastAPI lifespan context
 
 **Podcast attribute:**
 - `is_sequential`: story-based. A hint that resolves `pick_from` to `oldest` on every assignment unless the row overrides it.
+- `is_archived`: hidden from the app (`GET /podcasts` leaves it out unless `include_archived=true`, so dashboard counts and assignment selects never see it) but still followed on Spotify. Archiving drops the podcast's assignments; unfollowing (`DELETE /podcasts/{id}`) stays a separate, destructive action (issue #247).
+
+
+**Podcast routes are keyed by the integer `id`** (`/podcasts/{podcast_id}`), the same key as `/playlists/{id}/podcasts/{podcast_id}`. `_get_podcast_or_404` still resolves a non-numeric segment as a `spotify_id` so iOS builds predating the switch keep working; drop that fallback once they are gone (issue #248). `GET /podcasts` has no membership filters — both clients page the whole library and filter locally.
+
+**Playlist ↔ Spotify:** `DELETE /playlists/{id}?remove_from_spotify=true` unfollows (= deletes) the Spotify playlist before removing the row; without it the Spotify playlist is left orphaned. A rename via `PATCH` is pushed to Spotify first (`PUT /playlists/{id}`); a Spotify failure saves nothing (502), a Spotify 404 renames locally only.
 
 **Single-user by construction:** `auth.py` closes registration once one `User` row exists, so the deployment has exactly one user. Consequently `podcasts` is a **deliberately global table** — it has no `user_id`, and the podcast routes do not filter by owner. `playlists` *is* user-scoped (it predates the decision and the column is harmless), but nothing depends on that scoping for security. If multi-user is ever wanted, adding `Podcast.user_id` and filtering every podcast route is a prerequisite, not an optimisation (issue #154).
 
