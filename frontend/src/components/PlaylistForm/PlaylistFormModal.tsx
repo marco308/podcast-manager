@@ -421,7 +421,7 @@ export function PlaylistFormModal({ open, playlist, onClose, onSaved }: Playlist
             name="is_enabled"
             label="Enabled"
             valuePropName="checked"
-            extra="Disabled playlists are skipped by the daily update"
+            extra="Disabled playlists are never written to on Spotify: no daily rebuild, no cleanup of played episodes, and Run is unavailable. The Spotify playlist keeps whatever it had."
           >
             <Switch />
           </Form.Item>

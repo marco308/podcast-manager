@@ -530,7 +530,11 @@ async def run_playlist_update(
     session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Manually trigger a playlist update."""
+    """Manually trigger a playlist update.
+
+    Disabled playlists are refused with a 409 — see the ``is_enabled`` gate
+    below (issue #239).
+    """
     # Get the playlist
     playlist_result = await db.execute(
         select(Playlist).where((Playlist.id == playlist_id) & (Playlist.user_id == session.user_id))
@@ -539,6 +543,16 @@ async def run_playlist_update(
 
     if not playlist:
         raise HTTPException(status_code=404, detail="Playlist not found")
+
+    # Disabled means "never written to on Spotify" — by the daily rebuild, by
+    # the cleanup job, and by a manual run too (issue #239). Refuse here
+    # rather than silently skipping, so a client that offers the button at
+    # all gets told why nothing happened.
+    if not playlist.is_enabled:
+        raise HTTPException(
+            status_code=409,
+            detail="This playlist is disabled. Enable it to run it.",
+        )
 
     # Get the user
     user_result = await db.execute(select(User).where(User.id == session.user_id))

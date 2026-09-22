@@ -220,15 +220,28 @@ export function Playlists() {
       width: isMobile ? 100 : undefined,
       render: (_, record) => (
         <Space size={isMobile ? 4 : 8}>
-          <Tooltip title="Run playlist">
-            <Button
-              size="small"
-              icon={<PlayCircleOutlined />}
-              onClick={() => handleRun(record.id)}
-              loading={runningPlaylistId === record.id}
+          {/* Disabled playlists are never written to on Spotify, manual runs
+              included (issue #239) — the backend refuses them with a 409.
+              The span is the tooltip's trigger: antd 6 no longer wraps a
+              disabled child, and a disabled <button> fires no mouse events. */}
+          <Tooltip title={record.is_enabled ? 'Run playlist' : 'Disabled — enable it to run it'}>
+            <span
+              style={{
+                display: 'inline-block',
+                cursor: record.is_enabled ? undefined : 'not-allowed',
+              }}
             >
-              {!isMobile && 'Run'}
-            </Button>
+              <Button
+                size="small"
+                icon={<PlayCircleOutlined />}
+                onClick={() => handleRun(record.id)}
+                loading={runningPlaylistId === record.id}
+                disabled={!record.is_enabled}
+                style={record.is_enabled ? undefined : { pointerEvents: 'none' }}
+              >
+                {!isMobile && 'Run'}
+              </Button>
+            </span>
           </Tooltip>
           <Tooltip title="Edit">
             <Button

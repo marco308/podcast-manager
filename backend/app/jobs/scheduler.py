@@ -662,6 +662,8 @@ async def remove_played_episodes_from_playlists() -> None:
             users = result.scalars().all()
 
             for user in users:
+                # Disabled playlists are never written to, cleanup included
+                # (issue #239) — they keep whatever they had until re-enabled.
                 playlists_result = await db.execute(
                     select(Playlist).where((Playlist.user_id == user.id) & (Playlist.is_enabled == True))
                 )

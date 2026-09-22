@@ -242,9 +242,28 @@ export function PlaylistDetail() {
           </Text>
         </div>
         <Space wrap>
-          <Button icon={<PlayCircleOutlined />} onClick={handleRun} loading={runPlaylist.isPending}>
-            Run
-          </Button>
+          {/* Disabled playlists are never written to on Spotify, manual runs
+              included (issue #239) — the backend refuses them with a 409.
+              The span is the tooltip's trigger: antd 6 no longer wraps a
+              disabled child, and a disabled <button> fires no mouse events. */}
+          <Tooltip title={playlist.is_enabled ? undefined : 'Disabled — enable it to run it'}>
+            <span
+              style={{
+                display: 'inline-block',
+                cursor: playlist.is_enabled ? undefined : 'not-allowed',
+              }}
+            >
+              <Button
+                icon={<PlayCircleOutlined />}
+                onClick={handleRun}
+                loading={runPlaylist.isPending}
+                disabled={!playlist.is_enabled}
+                style={playlist.is_enabled ? undefined : { pointerEvents: 'none' }}
+              >
+                Run
+              </Button>
+            </span>
+          </Tooltip>
           <Button icon={<EditOutlined />} onClick={() => setIsEditOpen(true)}>
             Edit
           </Button>
@@ -281,7 +300,12 @@ export function PlaylistDetail() {
             {playlist.is_enabled ? (
               <Tag color="success">Enabled</Tag>
             ) : (
-              <Tag color="default">Disabled</Tag>
+              <Space size={6}>
+                <Tag color="default">Disabled</Tag>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  Never written to on Spotify until re-enabled
+                </Text>
+              </Space>
             )}
           </Descriptions.Item>
           <Descriptions.Item label="Weekend only">
