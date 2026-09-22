@@ -22,13 +22,7 @@
   --signal: #F2B705;
   --signal-ink: #1B2340;
   --focus: #2F6FEB;
-  --c-news: #D9533B;
-  --c-markets: #2F7FC1;
-  --c-world: #2A9D8F;
-  --c-serial: #7A5C99;
-  --c-long: #C07A1B;
-  --c-talk: #4F6B3A;
-  --shadow: 0 1px 0 rgba(27, 35, 64, 0.06), 0 8px 24px -12px rgba(27, 35, 64, 0.25);
+  --shadow: 0 1px 0 rgba(27, 35, 64, 0.06), 0 12px 32px -14px rgba(27, 35, 64, 0.3);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -40,7 +34,7 @@
     --signal: #F5C433;
     --signal-ink: #121831;
     --focus: #8AB0FF;
-    --shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 10px 28px -14px rgba(0, 0, 0, 0.7);
+    --shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 14px 36px -14px rgba(0, 0, 0, 0.75);
   }
 }
 :root[data-theme="dark"] {
@@ -52,7 +46,7 @@
   --signal: #F5C433;
   --signal-ink: #121831;
   --focus: #8AB0FF;
-  --shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 10px 28px -14px rgba(0, 0, 0, 0.7);
+  --shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 14px 36px -14px rgba(0, 0, 0, 0.75);
 }
 
 * { box-sizing: border-box; }
@@ -103,39 +97,74 @@ h1 .fixed { color: var(--muted); font-weight: 500; }
 .btn-quiet { background: transparent; }
 .btn-quiet:hover { background: var(--ink); color: var(--paper); text-decoration: none; }
 
-/* The feed demo */
-.demo { position: relative; }
-.demo-grid { display: grid; gap: 20px; align-items: start; }
+/*
+ * App mock-ups. These copy the web app's own look (Ant Design, light theme,
+ * Spotify-green primary) so the page shows what people will actually use.
+ * They stay light in dark mode, as a window sitting on the page.
+ */
+.app {
+  --a-text: rgba(0, 0, 0, 0.88);
+  --a-muted: rgba(0, 0, 0, 0.45);
+  --a-border: #f0f0f0;
+  --a-control: #d9d9d9;
+  --a-bg: #f5f5f5;
+  --a-green: #1DB954;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5715;
+  color: var(--a-text);
+}
+.a-card { background: #fff; border: 1px solid var(--a-border); border-radius: 8px; box-shadow: var(--shadow); }
+.a-card-head {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  padding: 12px 16px; border-bottom: 1px solid var(--a-border); font-weight: 600; font-size: 15px;
+}
+.a-card-head span { font-weight: 400; font-size: 12px; color: var(--a-muted); }
+.a-card-body { padding: 8px 12px 12px; }
+.a-tag {
+  display: inline-block; font-size: 12px; line-height: 20px; padding: 0 7px; border-radius: 4px;
+  border: 1px solid var(--a-control); background: #fafafa; color: var(--a-text); white-space: nowrap;
+}
+.a-tag.small { font-size: 10px; line-height: 16px; padding: 0 5px; }
+.a-tag.blue { color: #0958d9; background: #e6f4ff; border-color: #91caff; }
+.a-tag.green { color: #389e0d; background: #f6ffed; border-color: #b7eb8f; }
+.a-tag.grey { color: var(--a-muted); }
+.a-btn {
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 15px;
+  border: 1px solid var(--a-control); border-radius: 6px; background: #fff; font-size: 14px; color: var(--a-text);
+  white-space: nowrap;
+}
+.a-btn.primary { background: var(--a-green); border-color: var(--a-green); color: #fff; }
+.a-btn.sm { height: 24px; padding: 0 7px; font-size: 13px; }
+.a-btn svg { width: 14px; height: 14px; }
+
+/* A podcast row, as in the app's tables: square cover, name, publisher */
+.pod { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 7px 4px; background: #fff; border-radius: 6px; }
+.cover { width: 32px; height: 32px; border-radius: 6px; object-fit: cover; background: #e9e9e9; display: block; }
+.pod-name { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.pod-name b { font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pod-pub { font-size: 12px; color: var(--a-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.3; }
+.pod-meta { font-size: 12px; color: var(--a-muted); white-space: nowrap; }
+.pod.played .pod-name b { text-decoration: line-through; color: var(--a-muted); }
+.pod[hidden] { display: none; }
+.pod.gone { opacity: 0; transform: scale(0.96); transition: opacity 350ms ease, transform 350ms ease; }
+/* In the feed a row shows when it arrived; in a playlist, what it contributes */
+.slot .for-list { display: none; }
+.slot:not([data-slot="feed"]) .for-feed { display: none; }
+.slot:not([data-slot="feed"]) .for-list { display: inline-block; }
+
+/* Hero demo */
+.demo-grid { display: grid; gap: 16px; align-items: start; }
 @media (min-width: 640px) { .demo-grid { grid-template-columns: 1fr 1fr; } }
-.pane {
-  background: var(--surface); border-radius: 18px; padding: 16px; box-shadow: var(--shadow);
-  min-height: 96px;
-}
-.pane h2, .pane h3 { font-size: 0.95rem; font-weight: 600; margin: 0 0 10px; line-height: 1.25; }
-.pane h2 small, .pane h3 small { display: block; color: var(--muted); font-weight: 400; font-size: 0.8rem; }
 .feed { transition: opacity 400ms ease; }
-.demo.sorted .feed { opacity: 0.55; }
+.demo.sorted .feed { opacity: 0.6; }
 .lists { display: grid; gap: 16px; align-content: start; }
-.list-morning { border: 2px solid var(--signal); }
-.slot { min-height: 8px; }
-.ep {
-  display: grid; grid-template-columns: 36px 1fr auto; gap: 10px; align-items: center;
-  padding: 6px 4px; border-radius: 10px; background: var(--surface);
-}
-.ep + .ep { margin-top: 2px; }
-.cover {
-  width: 36px; height: 36px; border-radius: 7px; display: grid; place-items: center;
-  color: #fff; font-weight: 700; font-size: 0.8rem; letter-spacing: 0.02em;
-}
-.ep-title { font-size: 0.92rem; font-weight: 600; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ep-show { font-size: 0.8rem; color: var(--muted); line-height: 1.2; }
-.ep-meta { font-size: 0.78rem; color: var(--muted); white-space: nowrap; }
-.ep.played .ep-title { text-decoration: line-through; color: var(--muted); }
-.ep.gone { opacity: 0; transform: scale(0.96); transition: opacity 350ms ease, transform 350ms ease; }
-.ep-text { min-width: 0; }
-.empty-note { font-size: 0.85rem; color: var(--muted); margin: 6px 4px 0; }
+.list-morning { outline: 3px solid var(--signal); outline-offset: -1px; }
+.slot { min-height: 12px; }
+.feed-done { display: none; font-size: 12px; color: var(--a-muted); padding: 4px; }
+.demo.sorted .feed-done { display: block; }
 .demo-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
-.demo-foot p { margin: 0; font-size: 0.9rem; color: var(--muted); }
+.demo-foot p { margin: 0; font-size: 0.9rem; color: var(--muted); max-width: 30em; }
 .replay {
   font: inherit; font-size: 0.9rem; font-weight: 600; color: var(--ink);
   background: transparent; border: 2px solid var(--line); border-radius: 999px; padding: 6px 14px; cursor: pointer;
@@ -162,19 +191,45 @@ h2.section-title {
 .steps h3 { margin: 0 0 8px; font-size: 1.3rem; letter-spacing: -0.01em; }
 .steps p { margin: 0; color: var(--muted); max-width: 30em; }
 
-/* Morning example */
-.example { display: grid; gap: 40px; align-items: start; }
-@media (min-width: 900px) { .example { grid-template-columns: 1fr 1fr; gap: 64px; } }
-.example-copy p { max-width: 32em; margin: 0 0 16px; }
+/* Morning example: the playlist page, as the app draws it */
+.example-copy { display: grid; gap: 8px 48px; margin-bottom: 40px; }
+@media (min-width: 900px) { .example-copy { grid-template-columns: 1fr 1fr; } }
+.example-copy h2 { grid-column: 1 / -1; }
+.example-copy p { margin: 0 0 12px; max-width: 32em; }
 .example-copy p.muted { color: var(--muted); }
-.phone {
-  background: var(--surface); border-radius: 22px; padding: 20px; box-shadow: var(--shadow); max-width: 440px;
-}
-.phone header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; }
-.phone header strong { font-size: 1.3rem; }
-.phone header span { color: var(--muted); font-size: 0.9rem; }
-.why { font-size: 0.78rem; color: var(--muted); }
-.why-serial { color: var(--c-serial); font-weight: 600; }
+
+.window { border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); background: var(--a-bg); border: 1px solid rgba(0, 0, 0, 0.06); }
+.w-header { display: flex; justify-content: space-between; align-items: center; height: 56px; padding: 0 20px; background: #fff; border-bottom: 1px solid var(--a-border); }
+.w-brand { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 600; }
+.w-brand svg { width: 22px; height: 22px; color: var(--a-muted); }
+.w-avatar { width: 28px; height: 28px; border-radius: 50%; background: #bfbfbf; }
+.w-body { display: grid; }
+@media (min-width: 820px) { .w-body { grid-template-columns: 180px minmax(0, 1fr); } }
+.w-side { display: none; background: #fff; border-right: 1px solid var(--a-border); padding: 12px 8px; }
+@media (min-width: 820px) { .w-side { display: block; } }
+.w-side div { padding: 9px 16px; border-radius: 8px; margin-bottom: 4px; }
+.w-side .on { background: #e8f8ee; color: var(--a-green); }
+.w-main { padding: 20px; min-width: 0; }
+@media (min-width: 820px) { .w-main { padding: 24px 28px; } }
+.w-title { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
+.w-title h3 { margin: 0; font-size: 20px; font-weight: 600; line-height: 1.4; }
+.w-title p { margin: 0; color: var(--a-muted); }
+.w-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+.w-card { box-shadow: none; }
+.w-table-head, .w-row { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 4px 12px; align-items: center; padding: 10px 16px; }
+@media (min-width: 620px) { .w-table-head, .w-row { grid-template-columns: 36px minmax(0, 1fr) 250px; } }
+.w-table-head { background: #fafafa; font-weight: 600; border-bottom: 1px solid var(--a-border); }
+.w-table-head .rule-col { display: none; }
+@media (min-width: 620px) { .w-table-head .rule-col { display: block; } }
+.w-row { border-bottom: 1px solid var(--a-border); }
+.w-row:last-child { border-bottom: 0; }
+.w-row .num { text-align: center; }
+.w-row .pod { padding: 0; }
+.w-row .rule { grid-column: 2; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+@media (min-width: 620px) { .w-row .rule { grid-column: 3; } }
+.w-row .rule small { font-size: 12px; color: var(--a-muted); }
+.w-row.highlight { background: #fffbe6; }
+.w-note { margin: 16px 0 0; font-size: 0.95rem; color: var(--muted); }
 
 /* Features */
 .features { display: grid; gap: 40px 56px; }
@@ -190,9 +245,7 @@ h2.section-title {
 .checklist li:first-child { border-top: 1px solid var(--line); }
 .checklist strong { display: block; font-size: 1.15rem; margin-bottom: 4px; }
 .checklist span { color: var(--muted); }
-.aside {
-  background: var(--ink); color: var(--paper); border-radius: 22px; padding: 28px;
-}
+.aside { background: var(--ink); color: var(--paper); border-radius: 22px; padding: 28px; }
 .aside h3 { margin: 0 0 12px; font-size: 1.35rem; }
 .aside p { margin: 0 0 20px; opacity: 0.85; }
 .aside .btn { border-color: var(--paper); background: var(--paper); color: var(--ink); }
@@ -207,6 +260,14 @@ footer p { margin: 0 0 8px; max-width: 60em; }
 </style>
 </head>
 <body>
+<!-- Podcast artwork comes from Apple's public podcast directory and belongs to each show's publisher. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-headphones" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M4 15v-3a8 8 0 0 1 16 0v3M4 15a2 2 0 0 1 2-2h1v7H6a2 2 0 0 1-2-2zm16 0a2 2 0 0 0-2-2h-1v7h1a2 2 0 0 0 2-2z"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 8.5v7l5.5-3.5z" fill="currentColor"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" d="M4 20h4L19 9l-4-4L4 16zM13 7l4 4"/></symbol>
+  <symbol id="i-out" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></symbol>
+</svg>
+
 <div class="wrap">
   <header class="top">
     <a class="brand" href="./">
@@ -224,43 +285,48 @@ footer p { margin: 0 0 8px; max-width: 60em; }
           <span class="line">One feed.</span>
           <span class="line fixed">Sorted before breakfast.</span>
         </h1>
-        <p class="lede">Spotify drops every podcast you follow into one long pile. Podcast Manager splits it into playlists you design, like today’s news for the commute or the next chapter of your serial, and rebuilds them for you every day.</p>
+        <p class="lede">Spotify drops every podcast you follow into one long pile. Podcast Manager splits it into playlists you design, like the day’s news for the commute or the next chapter of a serial, and rebuilds them for you every day.</p>
         <div class="actions">
           <a class="btn btn-primary" href="#setup">What you need</a>
           <a class="btn btn-quiet" href="https://github.com/marco308/podcast-manager">View on GitHub</a>
         </div>
       </div>
 
-      <div class="demo" id="demo" aria-label="Example: a podcast feed being sorted into playlists">
-        <div class="demo-grid">
-          <div class="pane feed">
-            <h2>Your podcast feed <small>everything, newest first</small></h2>
-            <div class="slot" data-slot="feed">
-              <div class="ep" data-to="morning" data-order="1"><div class="cover" style="background:var(--c-news)">DB</div><div class="ep-text"><div class="ep-title">Tuesday’s headlines</div><div class="ep-show">The Daily Brief</div></div><div class="ep-meta">Today</div></div>
-              <div class="ep" data-to="long" data-order="1"><div class="cover" style="background:var(--c-long)">SH</div><div class="ep-title-wrap ep-text"><div class="ep-title">The salt roads, part 1</div><div class="ep-show">Slow History</div></div><div class="ep-meta">Today</div></div>
-              <div class="ep" data-to="morning" data-order="2"><div class="cover" style="background:var(--c-markets)">MM</div><div class="ep-text"><div class="ep-title">Rates hold, for now</div><div class="ep-show">Morning Markets</div></div><div class="ep-meta">Today</div></div>
-              <div class="ep played" data-to="gone"><div class="cover" style="background:var(--c-talk)">KT</div><div class="ep-text"><div class="ep-title">Listener questions</div><div class="ep-show">Kitchen Table</div></div><div class="ep-meta">Played</div></div>
-              <div class="ep" data-to="morning" data-order="3"><div class="cover" style="background:var(--c-world)">W7</div><div class="ep-text"><div class="ep-title">Elections across the region</div><div class="ep-show">World at Seven</div></div><div class="ep-meta">Today</div></div>
-              <div class="ep" data-to="none"><div class="cover" style="background:var(--c-serial)">DW</div><div class="ep-text"><div class="ep-title">Episode 9: The verdict</div><div class="ep-show">Deep Water</div></div><div class="ep-meta">Yesterday</div></div>
-              <div class="ep" data-to="long" data-order="2"><div class="cover" style="background:var(--c-talk)">KT</div><div class="ep-text"><div class="ep-title">The perfect loaf</div><div class="ep-show">Kitchen Table</div></div><div class="ep-meta">Mon</div></div>
-              <div class="ep" data-to="morning" data-order="4"><div class="cover" style="background:var(--c-serial)">DW</div><div class="ep-text"><div class="ep-title">Episode 4: The boathouse</div><div class="ep-show">Deep Water</div></div><div class="ep-meta">Mar</div></div>
+      <div>
+      <div class="demo app" id="demo" role="img" aria-label="Illustration: a podcast feed being sorted into a Morning playlist and a Long walks playlist">
+        <div class="demo-grid" aria-hidden="true">
+          <div class="a-card feed">
+            <div class="a-card-head">Your Spotify feed <span>newest first</span></div>
+            <div class="a-card-body">
+              <div class="slot" data-slot="feed">
+                <div class="pod" data-to="morning" data-order="3"><img class="cover" alt="" src="https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/d0/a7/d6/d0a7d6a3-e1d3-52ba-60fd-d788ceb7d559/mza_17193364103373697567.jpg/120x120bb.jpg"><div><div class="pod-name"><b>The Rest Is Politics</b></div><div class="pod-pub">Goalhanger</div></div><div class="pod-meta"><span class="for-feed">Today</span><span class="for-list a-tag small">Latest</span></div></div>
+                <div class="pod" data-to="long" data-order="1"><img class="cover" alt="" src="https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/bf/89/a5/bf89a586-3f77-bf37-7ba3-b75f1bca7bfa/mza_1664785978944494824.jpg/120x120bb.jpg"><div><div class="pod-name"><b>The Rest Is History</b></div><div class="pod-pub">Goalhanger</div></div><div class="pod-meta"><span class="for-feed">Today</span><span class="for-list a-tag small">Up to 2</span></div></div>
+                <div class="pod" data-to="morning" data-order="2"><img class="cover" alt="" src="https://is1-ssl.mzstatic.com/image/thumb/Podcasts126/v4/f1/13/71/f113715f-56e4-f542-a08c-b5890c0841bc/mza_18228009703397905678.jpg/120x120bb.jpg"><div><div class="pod-name"><b>Today in Focus</b></div><div class="pod-pub">The Guardian</div></div><div class="pod-meta"><span class="for-feed">Today</span><span class="for-list a-tag small">Latest</span></div></div>
+                <div class="pod played" data-to="gone"><img class="cover" alt="" src="https://is1-ssl.mzstatic.com/image/thumb/Podcasts116/v4/c4/dc/de/c4dcdec7-fbea-749e-7a03-bbe27db17137/mza_4311127974403693339.jpeg/120x120bb.jpg"><div><div class="pod-name"><b>Off Menu</b></div><div class="pod-pub">Plosive</div></div><div class="pod-meta">Played</div></div>
+                <div class="pod" data-to="morning" data-order="1"><img class="cover" alt="" src="https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/84/57/09/8457093f-677a-d6de-5666-6514cc588a7e/mza_17083078915388787537.jpg/120x120bb.jpg"><div><div class="pod-name"><b>Global News Podcast</b></div><div class="pod-pub">BBC World Service</div></div><div class="pod-meta"><span class="for-feed">Today</span><span class="for-list a-tag small">Latest</span></div></div>
+                <div class="pod" data-to="morning" data-order="5"><img class="cover" alt="" src="https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/9a/fb/87/9afb8760-0e05-2b3e-24a2-7e14cce74570/mza_14816055607064169808.jpg/120x120bb.jpg"><div><div class="pod-name"><b>Serial</b><span class="a-tag small blue">SEQ</span></div><div class="pod-pub">Serial Productions &amp; The New York Times</div></div><div class="pod-meta"><span class="for-feed">Yesterday</span><span class="for-list a-tag small blue">Next unheard</span></div></div>
+                <div class="pod" data-to="long" data-order="2"><img class="cover" alt="" src="https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/ea/9d/1e/ea9d1ea0-3fb7-eccb-a679-3e3bcbc4c7b3/mza_7452413238920854236.jpg/120x120bb.jpg"><div><div class="pod-name"><b>Desert Island Discs</b></div><div class="pod-pub">BBC Radio 4</div></div><div class="pod-meta"><span class="for-feed">Sun</span><span class="for-list a-tag small">Latest</span></div></div>
+                <div class="pod" data-to="morning" data-order="4"><img class="cover" alt="" src="https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/40/86/8d/40868d10-4f7c-a931-e314-0e31be83667b/mza_15291423343249011134.jpg/120x120bb.jpg"><div><div class="pod-name"><b>The News Agents</b></div><div class="pod-pub">Global</div></div><div class="pod-meta"><span class="for-feed">Mon</span><span class="for-list a-tag small">Latest</span></div></div>
+              </div>
+              <div class="feed-done">All sorted. Played episodes don’t go anywhere.</div>
             </div>
           </div>
           <div class="lists">
-            <div class="pane list-morning">
-              <h3>Morning <small>news, then the serial</small></h3>
-              <div class="slot" data-slot="morning"></div>
+            <div class="a-card list-morning">
+              <div class="a-card-head">Morning <span>news, then the serial</span></div>
+              <div class="a-card-body"><div class="slot" data-slot="morning"></div></div>
             </div>
-            <div class="pane">
-              <h3>Long walks <small>one of each</small></h3>
-              <div class="slot" data-slot="long"></div>
+            <div class="a-card">
+              <div class="a-card-head">Long walks <span>one of each</span></div>
+              <div class="a-card-body"><div class="slot" data-slot="long"></div></div>
             </div>
           </div>
         </div>
-        <div class="demo-foot">
-          <p id="demo-caption">Played episodes drop out. The serial gives its next unheard episode, not its newest.</p>
-          <button class="replay" type="button" id="replay">Show the feed again</button>
-        </div>
+      </div>
+      <div class="demo-foot">
+        <p>Played episodes drop out. Serial gives the next episode you haven’t heard, not its newest.</p>
+        <button class="replay" type="button" id="replay">Sort it into playlists</button>
+      </div>
       </div>
     </div>
 
@@ -284,21 +350,48 @@ footer p { margin: 0 0 8px; max-width: 60em; }
     </section>
 
     <section aria-labelledby="example">
-      <div class="example">
-        <div class="example-copy">
-          <h2 class="section-title" id="example">What a Tuesday morning looks like</h2>
-          <p>The Morning playlist is set to take just the latest episode of each show. So three news shows give you today’s three episodes, and yesterday’s news never piles up.</p>
-          <p>Deep Water is a story told in order, so it’s marked as a serial. Instead of the newest episode, it gives you the next one you haven’t heard. Finish Episode 4 on the train, and Episode 5 is waiting tomorrow.</p>
-          <p class="muted">The same show can follow different rules in different playlists. Your Long walks playlist could take every unheard episode of it instead.</p>
+      <div class="example-copy">
+        <h2 class="section-title" id="example">What a Morning playlist looks like</h2>
+        <div>
+          <p>This playlist takes the latest episode of each show, in the order you set. Four news shows give you the day’s four episodes, and yesterday’s news never piles up.</p>
         </div>
-        <div class="phone" aria-label="Example Morning playlist">
-          <header><strong>Morning</strong><span>Rebuilt at 4:00</span></header>
-          <div class="ep"><div class="cover" style="background:var(--c-news)">DB</div><div class="ep-text"><div class="ep-title">Tuesday’s headlines</div><div class="ep-show">The Daily Brief</div></div><div class="why">latest</div></div>
-          <div class="ep"><div class="cover" style="background:var(--c-markets)">MM</div><div class="ep-text"><div class="ep-title">Rates hold, for now</div><div class="ep-show">Morning Markets</div></div><div class="why">latest</div></div>
-          <div class="ep"><div class="cover" style="background:var(--c-world)">W7</div><div class="ep-text"><div class="ep-title">Elections across the region</div><div class="ep-show">World at Seven</div></div><div class="why">latest</div></div>
-          <div class="ep"><div class="cover" style="background:var(--c-serial)">DW</div><div class="ep-text"><div class="ep-title">Episode 4: The boathouse</div><div class="ep-show">Deep Water</div></div><div class="why why-serial">next in story</div></div>
+        <div>
+          <p>Serial tells one story across many episodes, so it’s marked as a serial. Instead of its newest episode, it gives the next one you haven’t heard. Finish one on the train and the next is waiting tomorrow.</p>
+          <p class="muted">The same show can follow different rules in different playlists.</p>
         </div>
       </div>
+
+      <div class="window app" role="img" aria-label="The Morning playlist page in Podcast Manager, listing five podcasts and the rule each one follows">
+        <div aria-hidden="true">
+          <div class="w-header">
+            <div class="w-brand"><svg><use href="#i-headphones"/></svg>Podcast Manager</div>
+            <div class="w-avatar"></div>
+          </div>
+          <div class="w-body">
+            <nav class="w-side"><div>Dashboard</div><div>Podcasts</div><div class="on">Playlists</div><div>Settings</div></nav>
+            <div class="w-main">
+              <div class="w-title">
+                <div><h3>Morning</h3><p>5 podcasts · Podcast order</p></div>
+                <div class="w-buttons">
+                  <span class="a-btn"><svg><use href="#i-play"/></svg>Run</span>
+                  <span class="a-btn"><svg><use href="#i-edit"/></svg>Edit</span>
+                  <span class="a-btn"><svg><use href="#i-out"/></svg>Open in Spotify</span>
+                </div>
+              </div>
+              <div class="a-card w-card">
+                <div class="a-card-head">Podcasts (5) <span class="a-btn sm"><svg><use href="#i-edit"/></svg>Edit podcasts</span></div>
+                <div class="w-table-head"><div style="text-align:center">#</div><div>Podcast</div><div class="rule-col">Rule</div></div>
+                <div class="w-row"><div class="num">1</div><div class="pod"><img class="cover" alt="" src="https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/84/57/09/8457093f-677a-d6de-5666-6514cc588a7e/mza_17083078915388787537.jpg/120x120bb.jpg"><div><div class="pod-name"><b>Global News Podcast</b></div><div class="pod-pub">BBC World Service</div></div></div><div class="rule"><span class="a-tag">Latest only · newest</span><small>playlist default</small></div></div>
+                <div class="w-row"><div class="num">2</div><div class="pod"><img class="cover" alt="" src="https://is1-ssl.mzstatic.com/image/thumb/Podcasts126/v4/f1/13/71/f113715f-56e4-f542-a08c-b5890c0841bc/mza_18228009703397905678.jpg/120x120bb.jpg"><div><div class="pod-name"><b>Today in Focus</b></div><div class="pod-pub">The Guardian</div></div></div><div class="rule"><span class="a-tag">Latest only · newest</span><small>playlist default</small></div></div>
+                <div class="w-row"><div class="num">3</div><div class="pod"><img class="cover" alt="" src="https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/d0/a7/d6/d0a7d6a3-e1d3-52ba-60fd-d788ceb7d559/mza_17193364103373697567.jpg/120x120bb.jpg"><div><div class="pod-name"><b>The Rest Is Politics</b></div><div class="pod-pub">Goalhanger</div></div></div><div class="rule"><span class="a-tag">Latest only · newest</span><small>playlist default</small></div></div>
+                <div class="w-row"><div class="num">4</div><div class="pod"><img class="cover" alt="" src="https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/40/86/8d/40868d10-4f7c-a931-e314-0e31be83667b/mza_15291423343249011134.jpg/120x120bb.jpg"><div><div class="pod-name"><b>The News Agents</b></div><div class="pod-pub">Global</div></div></div><div class="rule"><span class="a-tag">Latest only · newest</span><small>playlist default</small></div></div>
+                <div class="w-row highlight"><div class="num">5</div><div class="pod"><img class="cover" alt="" src="https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/9a/fb/87/9afb8760-0e05-2b3e-24a2-7e14cce74570/mza_14816055607064169808.jpg/120x120bb.jpg"><div><div class="pod-name"><b>Serial</b><span class="a-tag small blue">SEQ</span></div><div class="pod-pub">Serial Productions &amp; The New York Times</div></div></div><div class="rule"><span class="a-tag">Latest only · oldest</span><small>sequential</small></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="w-note">This is the playlist’s page in the app. Each row shows the rule it will follow on the next rebuild. For Serial, “oldest” means the earliest episode you haven’t heard.</p>
     </section>
 
     <section aria-labelledby="features">
@@ -340,7 +433,7 @@ footer p { margin: 0 0 8px; max-width: 60em; }
       </div>
     </section>
 
-    <section aria-labelledby="setup" id="setup">
+    <section aria-labelledby="setup-title" id="setup">
       <div class="needs">
         <div>
           <h2 class="section-title" id="setup-title">What you need</h2>
@@ -363,7 +456,7 @@ footer p { margin: 0 0 8px; max-width: 60em; }
 
   <footer>
     <p>Podcast Manager is free for personal and other non-commercial use under the <a href="https://github.com/marco308/podcast-manager/blob/main/LICENSE">PolyForm Noncommercial licence</a>. The source is <a href="https://github.com/marco308/podcast-manager">on GitHub</a>.</p>
-    <p>Podcast Manager is an independent project. It isn’t made, endorsed or supported by Spotify. Spotify is a trademark of Spotify AB. The shows on this page are made up.</p>
+    <p>Podcast Manager is an independent project. It isn’t made, endorsed or supported by Spotify or by any of the podcasts shown. Spotify is a trademark of Spotify AB. Podcast names and artwork belong to their publishers and appear here only to show what the app looks like with a real library.</p>
   </footer>
 </div>
 
@@ -372,20 +465,20 @@ footer p { margin: 0 0 8px; max-width: 60em; }
   var demo = document.getElementById('demo');
   var replay = document.getElementById('replay');
   var feedSlot = demo.querySelector('[data-slot="feed"]');
-  var eps = Array.prototype.slice.call(feedSlot.children);
+  var rows = Array.prototype.slice.call(feedSlot.children);
   var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  var sorted = false;
   var timer = null;
+  var sorted = false;
 
   function slot(name) { return demo.querySelector('[data-slot="' + name + '"]'); }
 
-  // FLIP: record where each row is, move the DOM, then animate from old to new.
+  // FLIP: record where each row is, move it in the DOM, then animate from old to new.
   function move(apply) {
     var first = new Map();
-    eps.forEach(function (el) { first.set(el, el.getBoundingClientRect()); });
+    rows.forEach(function (el) { first.set(el, el.getBoundingClientRect()); });
     apply();
     if (reduce) return;
-    eps.forEach(function (el, i) {
+    rows.forEach(function (el, i) {
       var a = first.get(el);
       var b = el.getBoundingClientRect();
       var dx = a.left - b.left, dy = a.top - b.top;
@@ -399,11 +492,15 @@ footer p { margin: 0 0 8px; max-width: 60em; }
 
   function sort() {
     move(function () {
-      eps.filter(function (el) { return el.dataset.to === 'morning' || el.dataset.to === 'long'; })
+      rows.filter(function (el) { return el.dataset.to === 'morning' || el.dataset.to === 'long'; })
         .sort(function (a, b) { return a.dataset.order - b.dataset.order; })
         .forEach(function (el) { slot(el.dataset.to).appendChild(el); });
     });
-    eps.forEach(function (el) { if (el.dataset.to === 'gone') el.classList.add('gone'); });
+    rows.forEach(function (el) {
+      if (el.dataset.to !== 'gone') return;
+      el.classList.add('gone');
+      setTimeout(function () { if (sorted) el.hidden = true; }, reduce ? 0 : 400);
+    });
     demo.classList.add('sorted');
     sorted = true;
     replay.textContent = 'Show the feed again';
@@ -411,7 +508,7 @@ footer p { margin: 0 0 8px; max-width: 60em; }
 
   function unsort() {
     move(function () {
-      eps.forEach(function (el) { el.classList.remove('gone'); feedSlot.appendChild(el); });
+      rows.forEach(function (el) { el.hidden = false; el.classList.remove('gone'); feedSlot.appendChild(el); });
     });
     demo.classList.remove('sorted');
     sorted = false;
@@ -423,8 +520,7 @@ footer p { margin: 0 0 8px; max-width: 60em; }
     sorted ? unsort() : sort();
   });
 
-  replay.textContent = 'Sort it into playlists';
-  timer = setTimeout(sort, reduce ? 0 : 900);
+  timer = setTimeout(sort, reduce ? 0 : 1200);
 })();
 </script>
 </body>
