@@ -72,12 +72,42 @@ Once configured, the app runs four background jobs:
 
 ## Screenshots
 
-The app has four main screens:
+**Dashboard** — quick stats (total podcasts, playlist assignment progress, playlist status) and one-click sync/update buttons
 
-- **Dashboard** — Quick stats (total podcasts, playlist assignment progress, playlist status) and one-click sync/update buttons
-- **Podcasts** — Searchable list with card and table views; inline playlist assignment, sequential toggle, unfollow
-- **Playlists** — Playlist CRUD with episode mode and ordering config; drag-and-drop podcast reordering; add/remove podcast assignments
-- **Settings** — Spotify account info, theme selector (light/dark/system/auto)
+![Dashboard](docs/screenshots/dashboard-light.png)
+
+**Podcasts** — searchable list with card and table views; inline playlist assignment, sequential toggle, unfollow
+
+![Podcasts](docs/screenshots/podcasts-light.png)
+
+**Playlists** — playlist CRUD with episode mode and ordering config; drag-and-drop podcast reordering; add/remove podcast assignments
+
+![Playlists](docs/screenshots/playlists-light.png)
+
+**Settings** — Spotify account info, theme selector (light/dark/system/auto)
+
+![Settings](docs/screenshots/settings-light.png)
+
+<details>
+<summary>Dark theme</summary>
+
+![Dashboard, dark](docs/screenshots/dashboard-dark.png)
+![Podcasts, dark](docs/screenshots/podcasts-dark.png)
+![Playlists, dark](docs/screenshots/playlists-dark.png)
+![Settings, dark](docs/screenshots/settings-dark.png)
+
+</details>
+
+The images are generated, not hand-captured. With the backend and Vite dev server running:
+
+```bash
+cd frontend
+npx playwright install chromium       # one-off
+npm run screenshots -- --login        # one-off: complete the Spotify login in the window that opens
+npm run screenshots                   # writes docs/screenshots/*.png, light and dark
+```
+
+The saved session lives in the gitignored `frontend/.screenshots-auth.json`; account details on the Settings page are masked automatically. Rerun `npm run screenshots` whenever the UI changes.
 
 ## Setup
 
@@ -98,7 +128,7 @@ Every self-hosted instance needs its **own** Spotify Developer application — t
 
 ### Spotify Development Mode Constraints (read this first)
 
-- Dev Mode apps are capped at **25 users**, each manually allowlisted in the dashboard. Extended quota is effectively unavailable to hobby apps, so treat this as software for you and your household — not something to open to the public.
+- Dev Mode apps are capped at **5 users**, each manually allowlisted in the dashboard. Extended quota is effectively unavailable to hobby apps, so treat this as software for you and your household — not something to open to the public.
 - The app is built for Dev Mode's reduced API surface (Spotify removed the batch "Get Several X" endpoints for Dev Mode apps in early 2026; single-item fetches with low concurrency are used instead).
 - There are no admin/user roles in the app itself: anyone allowlisted in your Spotify dashboard can sign in to your instance.
 - Spotify OAuth rejects plain-HTTP and `localhost` redirect URIs — hence the HTTPS + `127.0.0.1` requirements below.
