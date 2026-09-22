@@ -84,3 +84,34 @@ def test_007_downgrade_preserves_single_category(tmp_path: Path) -> None:
     with sqlite3.connect(db) as conn:
         rows = dict(conn.execute("SELECT spotify_id, category FROM podcasts"))
     assert rows == {"s1": "news", "s2": "none", "s3": "primary"}
+
+
+def test_015_clears_counts_on_upgrade_and_restores_zero_on_downgrade(tmp_path: Path) -> None:
+    """Counts written before 015 are fabricated (extrapolated from the newest
+    50 episodes) and indistinguishable from real ones, so the upgrade must
+    clear every one of them — leaving a stale value would put an invented
+    number back in front of the user (issue #155)."""
+    db = tmp_path / "unplayed.db"
+    _assert_ok(_run_alembic(db, "upgrade", "014_assignment_rules"))
+
+    with sqlite3.connect(db) as conn:
+        conn.executemany(
+            "INSERT INTO podcasts (spotify_id, name, total_episodes, unplayed_episodes, is_sequential) "
+            "VALUES (?, ?, ?, ?, 0)",
+            [("s1", "Extrapolated", 500, 312), ("s2", "Zero", 10, 0)],
+        )
+        conn.commit()
+
+    _assert_ok(_run_alembic(db, "upgrade", "015_unplayed_episodes_nullable"))
+
+    with sqlite3.connect(db) as conn:
+        rows = dict(conn.execute("SELECT spotify_id, unplayed_episodes FROM podcasts"))
+    assert rows == {"s1": None, "s2": None}
+
+    _assert_ok(_run_alembic(db, "downgrade", "014_assignment_rules"))
+
+    with sqlite3.connect(db) as conn:
+        rows = dict(conn.execute("SELECT spotify_id, unplayed_episodes FROM podcasts"))
+        nullable = {row[1]: not row[3] for row in conn.execute("PRAGMA table_info(podcasts)")}
+    assert rows == {"s1": 0, "s2": 0}
+    assert nullable["unplayed_episodes"] is False, "downgrade must restore NOT NULL"

@@ -125,6 +125,8 @@ export interface SyncResult {
   message: string;
   synced: number;
   new: number;
+  // Gone from the Spotify library: counted down over a grace period, then removed
+  missing: number;
   removed: number;
 }
 

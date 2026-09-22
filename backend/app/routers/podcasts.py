@@ -1,7 +1,7 @@
 """Podcasts router for managing podcast metadata."""
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select
@@ -26,6 +26,12 @@ from app.services.spotify import SpotifyService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/podcasts", tags=["Podcasts"])
+
+# How long a podcast must stay absent from the Spotify library before sync
+# deletes it (issue #155). Deleting cascades to playlist assignments, so one
+# sync's word isn't enough: a single paginated walk is never a guaranteed
+# snapshot of the library.
+UNSUBSCRIBE_GRACE = timedelta(days=7)
 
 
 async def get_user_with_token(
@@ -241,14 +247,21 @@ async def sync_podcasts(
     # can't see the first pending insert, so a repeat would 500 the whole
     # sync on the unique constraint — skip anything already seen (issue #182).
     seen_spotify_ids: set[str] = set()
+    # Spotify's reported library size, and whether it held still for the whole
+    # walk. A total that moves mid-walk means the library changed underneath
+    # us, so the pages don't add up to a snapshot of anything (issue #155).
     reported_total: int | None = None
+    total_changed = False
 
     while True:
         # Fetch shows from Spotify
         shows_data = await spotify.get_user_shows(limit=limit, offset=offset)
         items = shows_data.get("items", [])
-        if isinstance(shows_data.get("total"), int):
-            reported_total = shows_data["total"]
+        page_total = shows_data.get("total")
+        if isinstance(page_total, int):
+            if reported_total is not None and page_total != reported_total:
+                total_changed = True
+            reported_total = page_total
 
         if not items:
             break
@@ -287,6 +300,8 @@ async def sync_podcasts(
                 podcast.publisher = show.get("publisher")
                 podcast.total_episodes = show.get("total_episodes", 0)
                 podcast.last_synced_at = datetime.now(UTC)
+                # Still subscribed: clear any pending unsubscribe mark.
+                podcast.missing_since = None
             else:
                 # Create new podcast. unplayed_episodes stays NULL ("not
                 # counted") until a playlist build reads the whole show.
@@ -310,39 +325,80 @@ async def sync_podcasts(
         if len(items) < limit:
             break
 
-    removed_count = await _prune_unsubscribed(db, seen_spotify_ids, reported_total)
+    missing_count, removed_count = await _reconcile_subscriptions(
+        db, seen_spotify_ids, None if total_changed else reported_total
+    )
 
     await db.commit()  # persist before the response is sent (see get_db)
 
+    message = "Sync completed"
+    if removed_count:
+        message += f", removed {removed_count} unsubscribed"
+    if missing_count:
+        message += f", {missing_count} no longer subscribed (removed after {UNSUBSCRIBE_GRACE.days} days)"
+
     return {
-        "message": "Sync completed",
+        "message": message,
         "synced": synced_count,
         "new": new_count,
+        "missing": missing_count,
         "removed": removed_count,
     }
 
 
-async def _prune_unsubscribed(db: AsyncSession, seen_spotify_ids: set[str], reported_total: int | None) -> int:
-    """Delete podcasts no longer in the user's Spotify library (issue #155).
+async def _reconcile_subscriptions(
+    db: AsyncSession, seen_spotify_ids: set[str], reported_total: int | None
+) -> tuple[int, int]:
+    """Retire podcasts that have left the user's Spotify library (issue #155).
 
-    Deleting a podcast also drops its playlist assignments (cascade), so this
-    only runs when the walk demonstrably saw the whole library: at least as
-    many distinct shows as Spotify's ``total``. If the list shifted under
-    pagination and a show fell between pages, or Spotify answered with an
-    empty page, pruning would destroy assignments for a show that's still
-    subscribed. Skipping is harmless: the next sync tries again.
+    Deleting a podcast cascades to its playlist assignments, so absence has to
+    be earned. ``GET /me/shows`` is paginated and the library can change
+    underneath the walk: a page can come back short, a show can slip between
+    pages, and the reported ``total`` shifts with it — cardinality alone never
+    proves a given show is gone. So a show missing from a walk is only
+    *marked* (``missing_since``), and is deleted once it has been missing for
+    ``UNSUBSCRIBE_GRACE``, which spans many syncs. Anything that reappears
+    has its mark cleared by the upsert loop.
+
+    The walk still has to look complete before anything is marked. Fewer
+    distinct shows than Spotify's ``total`` means pages were lost; so does a
+    ``total`` that moved between pages (the caller passes ``None`` for that),
+    which is how a library that shrinks mid-walk would otherwise hand back a
+    short page whose smaller total the already-seen IDs satisfy. Marking on
+    either would start the clock on shows that never left.
+
+    Returns ``(missing, removed)``.
     """
     if reported_total is None or not seen_spotify_ids or len(seen_spotify_ids) < reported_total:
         logger.warning(
-            "Skipping podcast prune: saw %d shows, Spotify reported %s",
+            "Skipping subscription reconcile: saw %d shows, Spotify reported %s",
             len(seen_spotify_ids),
             reported_total,
         )
-        return 0
+        return 0, 0
 
+    now = datetime.now(UTC)
     result = await db.execute(select(Podcast).where(Podcast.spotify_id.not_in(seen_spotify_ids)))
-    stale = result.scalars().all()
-    for podcast in stale:
-        logger.info("Removing podcast %s (%s): no longer subscribed", podcast.name, podcast.spotify_id)
-        await db.delete(podcast)
-    return len(stale)
+    missing = result.scalars().all()
+
+    removed = 0
+    for podcast in missing:
+        if podcast.missing_since is None:
+            podcast.missing_since = now
+            logger.info(
+                "Podcast %s (%s) is no longer subscribed; removing if still absent in %s",
+                podcast.name,
+                podcast.spotify_id,
+                UNSUBSCRIBE_GRACE,
+            )
+        elif now - podcast.missing_since >= UNSUBSCRIBE_GRACE:
+            logger.info(
+                "Removing podcast %s (%s): unsubscribed since %s",
+                podcast.name,
+                podcast.spotify_id,
+                podcast.missing_since,
+            )
+            await db.delete(podcast)
+            removed += 1
+
+    return len(missing) - removed, removed

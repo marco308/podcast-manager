@@ -72,6 +72,8 @@ struct SyncResponse: Codable {
     let message: String
     let synced: Int
     let new: Int
-    /// Absent on older backends.
+    /// Gone from the Spotify library, removed after a grace period.
+    /// Both absent on older backends.
+    let missing: Int?
     let removed: Int?
 }

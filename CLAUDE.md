@@ -82,7 +82,7 @@ Registered in `app/jobs/scheduler.py`, started from the FastAPI lifespan context
 
 **Fetching is proportional to the rule** (`PlaylistBuilder._fetch_unplayed`): a `newest` rule walks pages from offset 0 and stops once it has enough unplayed; an `oldest` rule reads `total` from the first page and walks backwards from the tail; an unlimited rule reads up to `MAX_EPISODES_PER_SHOW`. `podcast.unplayed_episodes` is only written when the walk saw the whole catalogue. It is `NULL` ("not counted") until then; `POST /podcasts/sync` never writes it and makes no per-show episode calls (issue #155).
 
-**Podcast sync** (`POST /podcasts/sync`) upserts from `GET /me/shows` and deletes podcasts no longer in the library (cascading their assignments), but only when the walk saw at least Spotify's reported `total` distinct shows; otherwise it skips the prune rather than risk deleting a still-subscribed show.
+**Podcast sync** (`POST /podcasts/sync`) upserts from `GET /me/shows` and retires podcasts that have left the library. Deleting one cascades to its assignments, so absence has to be earned: a show missing from a walk is marked (`podcasts.missing_since`) and only deleted once it has stayed missing for `UNSUBSCRIBE_GRACE` (7 days, `routers/podcasts.py`); reappearing clears the mark. Nothing is marked unless the walk looks like a whole snapshot — at least Spotify's reported `total` distinct shows, and a `total` that didn't move between pages (a library that shrinks mid-walk otherwise returns a short page whose smaller total the already-seen IDs satisfy).
 
 **Podcast attribute:**
 - `is_sequential`: story-based. A hint that resolves `pick_from` to `oldest` on every assignment unless the row overrides it.

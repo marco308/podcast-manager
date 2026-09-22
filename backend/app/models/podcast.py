@@ -30,6 +30,10 @@ class Podcast(Base):
     is_sequential: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Sync tracking
+    # First sync that found the show gone from the Spotify library; cleared if
+    # it comes back, and the row is deleted once it has been missing for
+    # UNSUBSCRIBE_GRACE (issue #155).
+    missing_since: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     last_synced_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
 
     # Timestamps

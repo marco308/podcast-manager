@@ -131,6 +131,9 @@ struct PodcastsScreen: View {
             if let removed = response.removed, removed > 0 {
                 message += ", removed \(removed) unsubscribed"
             }
+            if let missing = response.missing, missing > 0 {
+                message += ", \(missing) no longer subscribed"
+            }
             withAnimation {
                 syncResult = message
             }
