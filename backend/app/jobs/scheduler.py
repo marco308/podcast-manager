@@ -58,6 +58,15 @@ scheduler = AsyncIOScheduler()
 _last_run_times: dict[str, datetime] = {}
 
 
+# Jobs whose runs are recorded in SyncLog, keyed by scheduler job id. Their
+# last run is read from the table so it survives a restart; the in-memory
+# _last_run_times only covers the current process (issue #248).
+_SYNCLOG_JOB_TYPES: dict[str, str] = {
+    "daily_playlist_update": "playlist_update",
+    "remove_played_episodes": "cleanup",
+}
+
+
 def _record_run(job_id: str) -> None:
     """Record the current time as the last run for a job."""
     _last_run_times[job_id] = datetime.now(UTC)
@@ -399,29 +408,23 @@ async def get_job_status() -> list[dict]:
     """Get status of all scheduled jobs with enhanced info."""
     jobs = scheduler.get_jobs()
 
-    # Get last playlist_update run from SyncLog. The status travels with the
-    # timestamp so a failed or interrupted run isn't shown as if it worked
-    # (issue #161).
-    playlist_last_run = None
-    playlist_last_run_status: str | None = None
+    # Last run of each SyncLog-backed job, read from the table so it survives
+    # a restart. The status travels with the timestamp so a failed or
+    # interrupted run isn't shown as if it worked (issue #161).
+    synclog_last_runs: dict[str, tuple[datetime, str]] = {}
     try:
         async with async_session_maker() as db:
-            result = await db.execute(
-                select(SyncLog)
-                .where(SyncLog.job_type == "playlist_update")
-                .order_by(SyncLog.started_at.desc())
-                .limit(1)
-            )
-            last_sync = result.scalar_one_or_none()
-            if last_sync and last_sync.started_at:
-                # UTCDateTime guarantees an aware value, so isoformat() already
-                # carries the offset — no manual "Z" suffix (issue #156).
-                playlist_last_run = last_sync.started_at.isoformat()
-                playlist_last_run_status = last_sync.status.value
+            for job_type in set(_SYNCLOG_JOB_TYPES.values()):
+                row = await db.execute(
+                    select(SyncLog).where(SyncLog.job_type == job_type).order_by(SyncLog.started_at.desc()).limit(1)
+                )
+                last_sync = row.scalar_one_or_none()
+                if last_sync and last_sync.started_at:
+                    synclog_last_runs[job_type] = (last_sync.started_at, last_sync.status.value)
     except Exception as e:
         # Non-fatal — the job list is still useful without last_run — but
         # don't hide the read failure entirely (issue #182).
-        logger.warning(f"Failed to read last playlist_update run from SyncLog: {e}")
+        logger.warning(f"Failed to read last job runs from SyncLog: {e}")
 
     result = []
     for job in jobs:
@@ -451,17 +454,27 @@ async def get_job_status() -> list[dict]:
                         minute = int(str(field))
             info["schedule"] = {"hour": hour, "minute": minute}
             info["is_configurable"] = job.id == "daily_playlist_update"
-            if job.id == "daily_playlist_update":
-                info["last_run"] = playlist_last_run
-                info["last_run_status"] = playlist_last_run_status
         elif isinstance(job.trigger, IntervalTrigger):
             info["type"] = "interval"
             # Get interval in minutes
             interval_seconds = job.trigger.interval.total_seconds()
             info["interval_minutes"] = int(interval_seconds / 60)
-            # _record_run always stores datetime.now(UTC), so these are aware.
-            last_run = _last_run_times.get(job.id)
-            info["last_run"] = last_run.isoformat() if last_run else None
+
+        # UTCDateTime and _record_run both yield aware datetimes, so
+        # isoformat() already carries the offset — no manual "Z" (issue #156).
+        # SyncLog is the only source for the jobs that write it: _record_run
+        # fires before the row exists (the cleanup recency gate returns before
+        # writing one at all), so falling back to the in-memory time would
+        # report a run that did no work and carry no status.
+        job_type = _SYNCLOG_JOB_TYPES.get(job.id)
+        if job_type is not None:
+            synclog_run = synclog_last_runs.get(job_type)
+            if synclog_run:
+                info["last_run"] = synclog_run[0].isoformat()
+                info["last_run_status"] = synclog_run[1]
+        else:
+            in_memory_run = _last_run_times.get(job.id)
+            info["last_run"] = in_memory_run.isoformat() if in_memory_run else None
 
         result.append(info)
 

@@ -17,7 +17,8 @@ export interface Podcast {
   image_url: string | null;
   publisher: string | null;
   total_episodes: number;
-  unplayed_episodes: number;
+  // null = not counted yet; set by a playlist build that read the whole show
+  unplayed_episodes: number | null;
   is_sequential: boolean;
   // Hidden from the app but still followed on Spotify (issue #247)
   is_archived: boolean;
@@ -66,7 +67,7 @@ export interface Playlist {
 
 export interface PlaylistCreate {
   name: string;
-  spotify_playlist_id?: string;
+  spotify_playlist_id?: string | null;
   is_enabled?: boolean;
   is_weekend_only?: boolean;
   default_episode_limit?: number;
@@ -77,7 +78,8 @@ export interface PlaylistCreate {
 
 export interface PlaylistUpdate {
   name?: string;
-  spotify_playlist_id?: string;
+  // Present and null unlinks the Spotify playlist; absent leaves it alone.
+  spotify_playlist_id?: string | null;
   is_enabled?: boolean;
   is_weekend_only?: boolean;
   default_episode_limit?: number;
@@ -115,7 +117,7 @@ export interface PlaylistPodcast {
   image_url: string | null;
   publisher: string | null;
   total_episodes: number;
-  unplayed_episodes: number;
+  unplayed_episodes: number | null;
   is_sequential: boolean;
   position: number | null;
   rule: AssignmentRule;
@@ -127,6 +129,9 @@ export interface SyncResult {
   message: string;
   synced: number;
   new: number;
+  // Gone from the Spotify library: counted down over a grace period, then removed
+  missing: number;
+  removed: number;
 }
 
 // Podcast list response
@@ -138,6 +143,21 @@ export interface PodcastListResponse {
 // Playlist list response
 export interface PlaylistListResponse {
   items: Playlist[];
+  total: number;
+}
+
+// A Spotify playlist the user owns, offered as a link target (issue #245).
+export interface SpotifyPlaylistOption {
+  id: string;
+  name: string;
+  image_url: string | null;
+  item_count: number;
+  // The managed playlist already linked to it, if any.
+  linked_playlist_id: number | null;
+}
+
+export interface SpotifyPlaylistOptionListResponse {
+  items: SpotifyPlaylistOption[];
   total: number;
 }
 
@@ -163,10 +183,12 @@ export interface Job {
   name: string;
   next_run: string | null;
   last_run: string | null;
-  // Outcome of the run `last_run` refers to (cron jobs only). "failed"
+  // Outcome of the run `last_run` refers to. Only the jobs that write
+  // SyncLog rows (the daily playlist update and the cleanup) report it, so
+  // it is absent on the other interval jobs, cron or not. "failed"
   // covers runs interrupted by a restart, which the backend closes out at
   // startup, so an interrupted run never looks like a good one.
-  last_run_status?: 'pending' | 'running' | 'success' | 'failed' | null;
+  last_run_status?: 'running' | 'success' | 'failed' | null;
   type: 'cron' | 'interval';
   is_configurable: boolean;
   schedule?: JobSchedule;

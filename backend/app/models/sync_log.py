@@ -11,9 +11,14 @@ from app.models.types import UTCDateTime
 
 
 class SyncStatus(str, PyEnum):
-    """Sync job status."""
+    """Sync job status.
 
-    PENDING = "pending"
+    Jobs write ``RUNNING`` first and finalise to ``SUCCESS``/``FAILED``. There
+    is no ``PENDING``: nothing ever queued a row before running it, so it was
+    dropped (issue #248). The database enum type still carries ``pending``
+    from migration 001; it is simply never written.
+    """
+
     RUNNING = "running"
     SUCCESS = "success"
     FAILED = "failed"

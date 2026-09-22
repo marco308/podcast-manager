@@ -1,14 +1,13 @@
 """Podcasts router for managing podcast metadata."""
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models.playlist import Playlist
 from app.models.playlist_podcast import PlaylistPodcast
 from app.models.podcast import Podcast
 from app.models.session import Session
@@ -26,6 +25,12 @@ from app.services.spotify import SpotifyService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/podcasts", tags=["Podcasts"])
+
+# How long a podcast must stay absent from the Spotify library before sync
+# deletes it (issue #155). Deleting cascades to playlist assignments, so one
+# sync's word isn't enough: a single paginated walk is never a guaranteed
+# snapshot of the library.
+UNSUBSCRIBE_GRACE = timedelta(days=7)
 
 
 async def get_user_with_token(
@@ -60,6 +65,25 @@ async def _get_playlist_ids_for_podcast(db: AsyncSession, podcast_id: int) -> li
     return [row[0] for row in result.all()]
 
 
+async def _get_podcast_or_404(db: AsyncSession, podcast_ref: str) -> Podcast:
+    """Resolve a ``/podcasts/{podcast_id}`` path segment to a podcast.
+
+    The canonical key is the integer ``id``, matching the assignment routes
+    (``/playlists/{id}/podcasts/{podcast_id}``) — issue #248. A non-numeric
+    segment is looked up as a Spotify show ID instead, so iOS builds from
+    before the switch keep working; Spotify IDs are 22-character base62 and
+    never all digits in practice. Drop the fallback once those builds are gone.
+    """
+    if podcast_ref.isdigit():
+        result = await db.execute(select(Podcast).where(Podcast.id == int(podcast_ref)))
+    else:
+        result = await db.execute(select(Podcast).where(Podcast.spotify_id == podcast_ref))
+    podcast = result.scalar_one_or_none()
+    if not podcast:
+        raise HTTPException(status_code=404, detail="Podcast not found")
+    return podcast
+
+
 def _build_podcast_response(podcast: Podcast, playlist_ids: list[int]) -> PodcastResponse:
     """Build a PodcastResponse with playlist_ids."""
     return PodcastResponse(
@@ -82,15 +106,13 @@ def _build_podcast_response(podcast: Podcast, playlist_ids: list[int]) -> Podcas
 
 @router.get("", response_model=PodcastListResponse)
 async def list_podcasts(
-    playlist_id: int | None = Query(None, description="Filter by playlist membership"),
-    unassigned: bool = Query(False, description="Only return podcasts not assigned to any playlist"),
     include_archived: bool = Query(False, description="Also return archived podcasts"),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
     user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> PodcastListResponse:
-    """List all podcasts with optional filters.
+    """List all podcasts, paginated by name.
 
     Podcasts are a global table, not a per-user one — see the single-user
     note in ``CLAUDE.md`` (issue #154). Authentication is still required
@@ -99,29 +121,15 @@ async def list_podcasts(
 
     Archived podcasts are left out unless ``include_archived`` is set, so the
     dashboard counts and the assignment selects never see them (issue #247).
+
+    There are no membership filters: both clients page through the whole
+    library and filter locally, and ``GET /playlists/{id}/podcasts`` already
+    covers "the shows in this playlist". The unused ``playlist_id`` /
+    ``unassigned`` params were removed (issue #248).
     """
     query = select(Podcast)
     if not include_archived:
         query = query.where(Podcast.is_archived.is_(False))
-
-    if playlist_id is not None:
-        # Existence check only — a filter on an unknown playlist should 404
-        # rather than silently return an empty list. Scoped to the user like
-        # every other playlist read (issue #182).
-        exists = await db.execute(
-            select(Playlist.id).where((Playlist.id == playlist_id) & (Playlist.user_id == user_id))
-        )
-        if exists.scalar_one_or_none() is None:
-            raise HTTPException(status_code=404, detail="Playlist not found")
-
-        # Filter to podcasts in this playlist
-        query = query.join(PlaylistPodcast, PlaylistPodcast.podcast_id == Podcast.id).where(
-            PlaylistPodcast.playlist_id == playlist_id
-        )
-    elif unassigned:
-        # Filter to podcasts NOT in any playlist
-        assigned_subquery = select(PlaylistPodcast.podcast_id).distinct()
-        query = query.where(Podcast.id.not_in(assigned_subquery))
 
     # Get total count
     count_query = select(func.count()).select_from(query.subquery())
@@ -154,26 +162,22 @@ async def list_podcasts(
     return PodcastListResponse(items=items, total=total)
 
 
-@router.get("/{spotify_id}", response_model=PodcastResponse)
+@router.get("/{podcast_id}", response_model=PodcastResponse)
 async def get_podcast(
-    spotify_id: str,
+    podcast_id: str,
     user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> PodcastResponse:
-    """Get a single podcast by Spotify ID."""
-    result = await db.execute(select(Podcast).where(Podcast.spotify_id == spotify_id))
-    podcast = result.scalar_one_or_none()
-
-    if not podcast:
-        raise HTTPException(status_code=404, detail="Podcast not found")
+    """Get a single podcast by ID."""
+    podcast = await _get_podcast_or_404(db, podcast_id)
 
     pids = await _get_playlist_ids_for_podcast(db, podcast.id)
     return _build_podcast_response(podcast, pids)
 
 
-@router.patch("/{spotify_id}", response_model=PodcastResponse)
+@router.patch("/{podcast_id}", response_model=PodcastResponse)
 async def update_podcast(
-    spotify_id: str,
+    podcast_id: str,
     update_data: PodcastUpdate,
     session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
@@ -185,11 +189,7 @@ async def update_podcast(
     is invisible in the UI, so letting it keep contributing episodes would be
     a rule nobody can see (issue #247).
     """
-    result = await db.execute(select(Podcast).where(Podcast.spotify_id == spotify_id))
-    podcast = result.scalar_one_or_none()
-
-    if not podcast:
-        raise HTTPException(status_code=404, detail="Podcast not found")
+    podcast = await _get_podcast_or_404(db, podcast_id)
 
     if update_data.is_sequential is not None:
         podcast.is_sequential = update_data.is_sequential
@@ -206,28 +206,23 @@ async def update_podcast(
     return _build_podcast_response(podcast, pids)
 
 
-@router.delete("/{spotify_id}")
+@router.delete("/{podcast_id}")
 async def unfollow_podcast(
-    spotify_id: str,
+    podcast_id: str,
     session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
     """Unfollow a podcast from Spotify and optionally remove from local database."""
     user, access_token = await get_user_with_token(session.user_id, db)
 
-    # Check if podcast exists in our database
-    result = await db.execute(select(Podcast).where(Podcast.spotify_id == spotify_id))
-    podcast = result.scalar_one_or_none()
-
-    if not podcast:
-        raise HTTPException(status_code=404, detail="Podcast not found")
+    podcast = await _get_podcast_or_404(db, podcast_id)
 
     # Unfollow from Spotify
     spotify = SpotifyService(access_token=access_token)
     try:
-        await spotify.unfollow_show(spotify_id)
+        await spotify.unfollow_show(podcast.spotify_id)
     except Exception as e:
-        logger.exception(f"Failed to unfollow podcast {spotify_id} on Spotify: {e}")
+        logger.exception(f"Failed to unfollow podcast {podcast.spotify_id} on Spotify: {e}")
         raise HTTPException(status_code=500, detail="Failed to unfollow podcast on Spotify") from None
 
     # Remove from local database (cascade will remove join table entries)
@@ -258,11 +253,21 @@ async def sync_podcasts(
     # can't see the first pending insert, so a repeat would 500 the whole
     # sync on the unique constraint — skip anything already seen (issue #182).
     seen_spotify_ids: set[str] = set()
+    # Spotify's reported library size, and whether it held still for the whole
+    # walk. A total that moves mid-walk means the library changed underneath
+    # us, so the pages don't add up to a snapshot of anything (issue #155).
+    reported_total: int | None = None
+    total_changed = False
 
     while True:
         # Fetch shows from Spotify
         shows_data = await spotify.get_user_shows(limit=limit, offset=offset)
         items = shows_data.get("items", [])
+        page_total = shows_data.get("total")
+        if isinstance(page_total, int):
+            if reported_total is not None and page_total != reported_total:
+                total_changed = True
+            reported_total = page_total
 
         if not items:
             break
@@ -301,9 +306,11 @@ async def sync_podcasts(
                 podcast.publisher = show.get("publisher")
                 podcast.total_episodes = show.get("total_episodes", 0)
                 podcast.last_synced_at = datetime.now(UTC)
+                # Still subscribed: clear any pending unsubscribe mark.
+                podcast.missing_since = None
             else:
-                # Create new podcast. unplayed_episodes starts at 0 and is
-                # filled in by the next playlist build.
+                # Create new podcast. unplayed_episodes stays NULL ("not
+                # counted") until a playlist build reads the whole show.
                 podcast = Podcast(
                     spotify_id=spotify_id,
                     name=show.get("name", "Unknown"),
@@ -311,7 +318,6 @@ async def sync_podcasts(
                     image_url=image_url,
                     publisher=show.get("publisher"),
                     total_episodes=show.get("total_episodes", 0),
-                    unplayed_episodes=0,
                     last_synced_at=datetime.now(UTC),
                 )
                 db.add(podcast)
@@ -325,10 +331,80 @@ async def sync_podcasts(
         if len(items) < limit:
             break
 
+    missing_count, removed_count = await _reconcile_subscriptions(
+        db, seen_spotify_ids, None if total_changed else reported_total
+    )
+
     await db.commit()  # persist before the response is sent (see get_db)
 
+    message = "Sync completed"
+    if removed_count:
+        message += f", removed {removed_count} unsubscribed"
+    if missing_count:
+        message += f", {missing_count} no longer subscribed (removed after {UNSUBSCRIBE_GRACE.days} days)"
+
     return {
-        "message": "Sync completed",
+        "message": message,
         "synced": synced_count,
         "new": new_count,
+        "missing": missing_count,
+        "removed": removed_count,
     }
+
+
+async def _reconcile_subscriptions(
+    db: AsyncSession, seen_spotify_ids: set[str], reported_total: int | None
+) -> tuple[int, int]:
+    """Retire podcasts that have left the user's Spotify library (issue #155).
+
+    Deleting a podcast cascades to its playlist assignments, so absence has to
+    be earned. ``GET /me/shows`` is paginated and the library can change
+    underneath the walk: a page can come back short, a show can slip between
+    pages, and the reported ``total`` shifts with it — cardinality alone never
+    proves a given show is gone. So a show missing from a walk is only
+    *marked* (``missing_since``), and is deleted once it has been missing for
+    ``UNSUBSCRIBE_GRACE``, which spans many syncs. Anything that reappears
+    has its mark cleared by the upsert loop.
+
+    The walk still has to look complete before anything is marked. Fewer
+    distinct shows than Spotify's ``total`` means pages were lost; so does a
+    ``total`` that moved between pages (the caller passes ``None`` for that),
+    which is how a library that shrinks mid-walk would otherwise hand back a
+    short page whose smaller total the already-seen IDs satisfy. Marking on
+    either would start the clock on shows that never left.
+
+    Returns ``(missing, removed)``.
+    """
+    if reported_total is None or not seen_spotify_ids or len(seen_spotify_ids) < reported_total:
+        logger.warning(
+            "Skipping subscription reconcile: saw %d shows, Spotify reported %s",
+            len(seen_spotify_ids),
+            reported_total,
+        )
+        return 0, 0
+
+    now = datetime.now(UTC)
+    result = await db.execute(select(Podcast).where(Podcast.spotify_id.not_in(seen_spotify_ids)))
+    missing = result.scalars().all()
+
+    removed = 0
+    for podcast in missing:
+        if podcast.missing_since is None:
+            podcast.missing_since = now
+            logger.info(
+                "Podcast %s (%s) is no longer subscribed; removing if still absent in %s",
+                podcast.name,
+                podcast.spotify_id,
+                UNSUBSCRIBE_GRACE,
+            )
+        elif now - podcast.missing_since >= UNSUBSCRIBE_GRACE:
+            logger.info(
+                "Removing podcast %s (%s): unsubscribed since %s",
+                podcast.name,
+                podcast.spotify_id,
+                podcast.missing_since,
+            )
+            await db.delete(podcast)
+            removed += 1
+
+    return len(missing) - removed, removed

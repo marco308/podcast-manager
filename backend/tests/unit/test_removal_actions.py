@@ -82,7 +82,7 @@ SESSION = SimpleNamespace(user_id=1)
 
 
 async def _list(db, **kwargs):
-    params = {"playlist_id": None, "unassigned": False, "include_archived": False, "limit": 50, "offset": 0}
+    params = {"include_archived": False, "limit": 50, "offset": 0}
     params.update(kwargs)
     return await list_podcasts(user_id=1, db=db, **params)
 
@@ -101,7 +101,12 @@ class TestArchivePodcast:
                 db.add(PlaylistPodcast(playlist_id=1, podcast_id=2, position=1))
                 await db.commit()
 
-                response = await update_podcast("hide", PodcastUpdate(is_archived=True), session=SESSION, db=db)
+                # Routes are keyed by the integer id (issue #248).
+                hide_id = (await db.execute(select(Podcast.id).where(Podcast.spotify_id == "hide"))).scalar_one()
+
+                response = await update_podcast(
+                    str(hide_id), PodcastUpdate(is_archived=True), session=SESSION, db=db
+                )
                 assert response.is_archived is True
                 assert response.playlist_ids == []
 
@@ -112,15 +117,11 @@ class TestArchivePodcast:
                 assert [p.spotify_id for p in listed.items] == ["keep"]
                 assert listed.total == 1
 
-                # Unassigned excludes it too, so it no longer nags the dashboard.
-                unassigned = await _list(db, unassigned=True)
-                assert [p.spotify_id for p in unassigned.items] == ["keep"]
-
                 everything = await _list(db, include_archived=True)
                 assert {p.spotify_id for p in everything.items} == {"keep", "hide"}
 
                 # Unarchiving brings it back.
-                await update_podcast("hide", PodcastUpdate(is_archived=False), session=SESSION, db=db)
+                await update_podcast(str(hide_id), PodcastUpdate(is_archived=False), session=SESSION, db=db)
                 assert (await _list(db)).total == 2
         finally:
             await engine.dispose()

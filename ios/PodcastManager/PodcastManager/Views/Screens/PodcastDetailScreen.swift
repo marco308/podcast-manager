@@ -94,7 +94,7 @@ struct PodcastDetailScreen: View {
 
             statCard(
                 title: "Unplayed",
-                value: "\(podcast.unplayedEpisodes)",
+                value: podcast.unplayedEpisodes.map { "\($0)" } ?? "–",
                 icon: "play.circle",
                 color: Color.accentColor
             )
@@ -218,7 +218,7 @@ struct PodcastDetailScreen: View {
         isUpdating = true
         do {
             let updated = try await APIClient.shared.updatePodcast(
-                spotifyId: podcast.spotifyId,
+                id: podcast.id,
                 isSequential: newValue
             )
             podcast = updated

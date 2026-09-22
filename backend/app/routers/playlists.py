@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -31,8 +32,11 @@ from app.schemas.playlist import (
     PlaylistPodcastResponse,
     PlaylistResponse,
     PlaylistUpdate,
+    SpotifyPlaylistOption,
+    SpotifyPlaylistOptionListResponse,
 )
 from app.services.assignment_rules import resolve_rule
+from app.services.encryption import TokenDecryptionError
 from app.services.playlist_builder import PlaylistBuilder, spotify_playlist_description
 from app.services.spotify import SpotifyService
 from app.services.token_manager import TokenManager
@@ -50,6 +54,10 @@ WRITE_LOCK_WAIT_SECONDS = 5
 # Refusal for a manual run of a disabled playlist (issue #239). Checked twice:
 # once up front, and again once the write lock is held.
 DISABLED_PLAYLIST_DETAIL = "This playlist is disabled. Enable it to run it."
+
+# ``GET /me/playlists`` pages at 50; this bounds the link picker to 1000.
+SPOTIFY_PLAYLIST_PAGE_SIZE = 50
+SPOTIFY_PLAYLIST_MAX_PAGES = 20
 
 
 @asynccontextmanager
@@ -105,6 +113,106 @@ def _build_playlist_response(playlist: Playlist, podcast_count: int) -> Playlist
     )
 
 
+async def _spotify_client(user_id: int) -> tuple[SpotifyService, TokenManager]:
+    """A Spotify client with a fresh token, plus the manager for 401 recovery."""
+    token_manager = TokenManager(user_id)
+    try:
+        token = await token_manager.get_token()
+    except TokenDecryptionError:
+        logger.warning(f"Access token for user {user_id} could not be decrypted; forcing reauth")
+        raise HTTPException(
+            status_code=401,
+            detail="Stored credentials could not be read. Please sign in again.",
+        ) from None
+    return SpotifyService(access_token=token), token_manager
+
+
+async def _commit_playlist(db: AsyncSession) -> None:
+    """Commit a playlist write, turning a duplicate link into a 409.
+
+    ``_check_spotify_playlist_link`` reads before it writes, so two concurrent
+    saves can both find no clash; the unique constraint is what actually
+    stops them, and this is where that shows up (issue #245).
+    """
+    try:
+        await db.commit()  # persist before the response is sent (see get_db)
+    except IntegrityError:
+        await db.rollback()
+        logger.info("Playlist save lost the race for a Spotify link")
+        raise HTTPException(
+            status_code=409,
+            detail="That Spotify playlist is already linked to another playlist.",
+        ) from None
+
+
+async def _get_user(db: AsyncSession, user_id: int) -> User:
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+
+async def _check_spotify_playlist_link(
+    db: AsyncSession,
+    user_id: int,
+    spotify_playlist_id: str,
+    *,
+    playlist_id: int | None = None,
+) -> None:
+    """Refuse to link a Spotify playlist unless the user owns it (issue #245).
+
+    Every rebuild is a full ``replace_playlist_items``, so linking someone
+    else's playlist, or a mistyped ID that happens to hit one of the user's
+    music playlists, would wipe it on the next run. Linking one Spotify
+    playlist to two managed playlists is refused too: they would overwrite
+    each other on every rebuild.
+    """
+    clash_query = select(Playlist.name).where(
+        (Playlist.user_id == user_id) & (Playlist.spotify_playlist_id == spotify_playlist_id)
+    )
+    if playlist_id is not None:
+        clash_query = clash_query.where(Playlist.id != playlist_id)
+    clash = (await db.execute(clash_query)).scalars().first()
+    if clash is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"That Spotify playlist is already linked to '{clash}'.",
+        )
+
+    user = await _get_user(db, user_id)
+    spotify, token_manager = await _spotify_client(user_id)
+    try:
+        data = await spotify.get_playlist(spotify_playlist_id, on_unauthorized=token_manager.force_refresh)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code in (400, 403, 404):
+            raise HTTPException(
+                status_code=400,
+                detail="No Spotify playlist with that ID was found in your account.",
+            ) from None
+        logger.warning(f"Spotify playlist lookup failed with {e.response.status_code}")
+        raise HTTPException(
+            status_code=502,
+            detail="Could not check the Spotify playlist. Please try again.",
+        ) from None
+    except httpx.HTTPError as e:
+        logger.warning(f"Spotify playlist lookup failed: {e}")
+        raise HTTPException(
+            status_code=502,
+            detail="Could not check the Spotify playlist. Please try again.",
+        ) from None
+
+    owner_id = (data.get("owner") or {}).get("id")
+    if owner_id != user.spotify_id:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "That Spotify playlist isn't yours. Only playlists you own can be linked, "
+                "because every rebuild replaces their contents."
+            ),
+        )
+
+
 @router.get("", response_model=PlaylistListResponse)
 async def list_playlists(
     user_id: int = Depends(get_current_user_id),
@@ -134,6 +242,69 @@ async def list_playlists(
     return PlaylistListResponse(items=items, total=len(items))
 
 
+@router.get("/spotify-playlists", response_model=SpotifyPlaylistOptionListResponse)
+async def list_spotify_playlists(
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> SpotifyPlaylistOptionListResponse:
+    """List the Spotify playlists the user owns, as link targets (issue #245).
+
+    Followed playlists are left out: the builder fully replaces a linked
+    playlist, and the server refuses to link one the user doesn't own.
+    Declared before ``/{playlist_id}`` so the path isn't parsed as an ID.
+    """
+    user = await _get_user(db, user_id)
+    linked_result = await db.execute(
+        select(Playlist.spotify_playlist_id, Playlist.id).where(
+            (Playlist.user_id == user_id) & Playlist.spotify_playlist_id.is_not(None)
+        )
+    )
+    linked = {spotify_id: pid for spotify_id, pid in linked_result.all()}
+
+    spotify, token_manager = await _spotify_client(user_id)
+    items: list[SpotifyPlaylistOption] = []
+    offset = 0
+    for _ in range(SPOTIFY_PLAYLIST_MAX_PAGES):
+        try:
+            page = await spotify.get_user_playlists(
+                limit=SPOTIFY_PLAYLIST_PAGE_SIZE,
+                offset=offset,
+                on_unauthorized=token_manager.force_refresh,
+            )
+        except httpx.HTTPError as e:
+            logger.warning(f"Listing Spotify playlists failed: {e}")
+            raise HTTPException(
+                status_code=502,
+                detail="Could not load your Spotify playlists. Please try again.",
+            ) from None
+
+        for entry in page.get("items") or []:
+            # Spotify can return null entries for unavailable playlists.
+            if not entry or not entry.get("id"):
+                continue
+            if (entry.get("owner") or {}).get("id") != user.spotify_id:
+                continue
+            images = entry.get("images") or []
+            # The item count moved from ``tracks`` to ``items`` in the 2026
+            # API changes; accept either.
+            counts = entry.get("items") or entry.get("tracks") or {}
+            items.append(
+                SpotifyPlaylistOption(
+                    id=entry["id"],
+                    name=entry.get("name") or "",
+                    image_url=images[0].get("url") if images else None,
+                    item_count=counts.get("total", 0) if isinstance(counts, dict) else 0,
+                    linked_playlist_id=linked.get(entry["id"]),
+                )
+            )
+
+        if not page.get("next"):
+            break
+        offset += SPOTIFY_PLAYLIST_PAGE_SIZE
+
+    return SpotifyPlaylistOptionListResponse(items=items, total=len(items))
+
+
 @router.post("", response_model=PlaylistResponse, status_code=201)
 async def create_playlist(
     playlist_data: PlaylistCreate,
@@ -141,6 +312,9 @@ async def create_playlist(
     db: AsyncSession = Depends(get_db),
 ) -> PlaylistResponse:
     """Create a new playlist."""
+    if playlist_data.spotify_playlist_id is not None:
+        await _check_spotify_playlist_link(db, session.user_id, playlist_data.spotify_playlist_id)
+
     playlist = Playlist(
         user_id=session.user_id,
         name=playlist_data.name,
@@ -153,7 +327,7 @@ async def create_playlist(
         date_direction=playlist_data.date_direction.value,
     )
     db.add(playlist)
-    await db.commit()  # persist before the response is sent (see get_db)
+    await _commit_playlist(db)
 
     return _build_playlist_response(playlist, 0)
 
@@ -191,8 +365,14 @@ async def update_playlist(
     if not playlist:
         raise HTTPException(status_code=404, detail="Playlist not found")
 
-    if update_data.spotify_playlist_id is not None:
-        playlist.spotify_playlist_id = update_data.spotify_playlist_id
+    # Present-and-null unlinks (the Spotify playlist is left in place and a
+    # new one is created on the next run); an absent field is left alone.
+    if "spotify_playlist_id" in update_data.model_fields_set:
+        new_link = update_data.spotify_playlist_id
+        if new_link != playlist.spotify_playlist_id:
+            if new_link is not None:
+                await _check_spotify_playlist_link(db, session.user_id, new_link, playlist_id=playlist.id)
+            playlist.spotify_playlist_id = new_link
     if update_data.name is not None and update_data.name != playlist.name:
         # The name is otherwise only used when the Spotify playlist is first
         # created, so push a rename through (issue #247). Spotify first: if it
@@ -231,7 +411,7 @@ async def update_playlist(
     if update_data.date_direction is not None:
         playlist.date_direction = update_data.date_direction.value
 
-    await db.commit()  # persist before the response is sent (see get_db)
+    await _commit_playlist(db)
 
     count = await _get_podcast_count(db, playlist.id)
     return _build_playlist_response(playlist, count)

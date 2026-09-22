@@ -42,7 +42,7 @@ The app is a day-to-day companion, not a second admin UI. It covers browsing and
 | `DELETE /api/playlists/{id}` | Destructive and rare; keep it behind the web confirm dialog |
 | `PATCH /api/playlists/{id}/podcasts/{podcast_id}` (per-assignment `episode_limit` / `pick_from` override) | Rule editing is web-only for now; iOS shows the resolved `rule` on each row (see `docs/design/assignment-rules.md`) |
 | `PUT /api/playlists/{id}/podcasts/reorder` | Depends on the dnd-kit drag UI; a list-reorder UX on iOS is real work for a rarely-used feature |
-| `DELETE /api/podcasts/{spotify_id}` (unfollow) | Unfollowing is a Spotify-side action; do it in the Spotify app or the web UI |
+| `DELETE /api/podcasts/{podcast_id}` (unfollow) | Unfollowing is a Spotify-side action; do it in the Spotify app or the web UI |
 
 If one of these is ever wanted on iOS, it is a plain addition to `APIClient` (the backend needs no change) plus the corresponding screen. Update this table when that happens.
 

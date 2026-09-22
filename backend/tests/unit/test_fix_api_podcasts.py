@@ -4,8 +4,6 @@
   (the subscription list can shift under pagination mid-sync): with autoflush
   off the existence SELECT can't see the first pending insert, so the repeat
   hit the ``spotify_id`` unique constraint and sank the whole sync.
-- The ``playlist_id`` filter on ``GET /podcasts`` was the only playlist read
-  not scoped to ``user_id``.
 """
 
 from datetime import UTC, datetime
@@ -13,16 +11,15 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 import app.routers.podcasts as podcasts_module
 from app.database import Base
-from app.models import Playlist, Podcast, User
+from app.models import Podcast, User
 from app.rate_limit import limiter
-from app.routers.podcasts import list_podcasts, sync_podcasts
+from app.routers.podcasts import sync_podcasts
 from app.services.encryption import get_encryption_service
 
 
@@ -82,33 +79,5 @@ class TestSyncDuplicateShows:
 
                 count = (await db.execute(select(func.count()).select_from(Podcast))).scalar()
                 assert count == 2
-        finally:
-            await engine.dispose()
-
-
-class TestListPodcastsPlaylistScoping:
-    @pytest.mark.asyncio
-    async def test_playlist_filter_is_scoped_to_user(self):
-        engine, maker = await _make_db()
-        try:
-            async with maker() as db:
-                db.add(_user("owner"))
-                db.add(_user("other"))
-                db.add(Playlist(user_id=1, name="Mine"))
-                await db.commit()
-
-                # Another user's playlist id must 404, same as the sibling
-                # playlist routes.
-                with pytest.raises(HTTPException) as exc_info:
-                    await list_podcasts(
-                        playlist_id=1, unassigned=False, limit=50, offset=0, user_id=2, db=db
-                    )
-                assert exc_info.value.status_code == 404
-
-                # The owner still gets through.
-                response = await list_podcasts(
-                    playlist_id=1, unassigned=False, limit=50, offset=0, user_id=1, db=db
-                )
-                assert response.total == 0
         finally:
             await engine.dispose()

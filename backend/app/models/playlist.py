@@ -3,7 +3,7 @@
 from datetime import datetime
 from enum import Enum as PyEnum
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String
+from sqlalchemy import Boolean, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -51,6 +51,11 @@ class Playlist(Base):
     """
 
     __tablename__ = "playlists"
+    # Two playlists linked to one Spotify playlist would overwrite each other
+    # on every rebuild. The API refuses it up front; this is what makes the
+    # refusal race-proof (issue #245). NULL repeats freely — SQLite and
+    # Postgres both treat NULLs as distinct — so unlinked playlists are fine.
+    __table_args__ = (UniqueConstraint("user_id", "spotify_playlist_id", name="uq_playlists_user_spotify_playlist"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)

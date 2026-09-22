@@ -9,7 +9,7 @@ export const podcastKeys = {
   lists: () => [...podcastKeys.all, 'list'] as const,
   list: (includeArchived = false) => [...podcastKeys.lists(), { includeArchived }] as const,
   details: () => [...podcastKeys.all, 'detail'] as const,
-  detail: (spotifyId: string) => [...podcastKeys.details(), spotifyId] as const,
+  detail: (podcastId: number) => [...podcastKeys.details(), podcastId] as const,
 };
 
 // Hook to list podcasts. Archived podcasts are excluded unless asked for, so
@@ -22,11 +22,11 @@ export function usePodcasts({ includeArchived = false }: { includeArchived?: boo
 }
 
 // Hook to get a single podcast
-export function usePodcast(spotifyId: string) {
+export function usePodcast(podcastId: number) {
   return useQuery({
-    queryKey: podcastKeys.detail(spotifyId),
-    queryFn: () => podcastsApi.get(spotifyId),
-    enabled: !!spotifyId,
+    queryKey: podcastKeys.detail(podcastId),
+    queryFn: () => podcastsApi.get(podcastId),
+    enabled: !!podcastId,
   });
 }
 
@@ -35,11 +35,11 @@ export function useUpdatePodcast() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ spotifyId, data }: { spotifyId: string; data: PodcastUpdate }) =>
-      podcastsApi.update(spotifyId, data),
+    mutationFn: ({ podcastId, data }: { podcastId: number; data: PodcastUpdate }) =>
+      podcastsApi.update(podcastId, data),
     onSuccess: (updatedPodcast) => {
       // Update the specific podcast in cache
-      queryClient.setQueryData(podcastKeys.detail(updatedPodcast.spotify_id), updatedPodcast);
+      queryClient.setQueryData(podcastKeys.detail(updatedPodcast.id), updatedPodcast);
       // Invalidate list queries to refetch
       queryClient.invalidateQueries({ queryKey: podcastKeys.lists() });
       // Archiving removes the podcast from its playlists, changing
@@ -70,7 +70,7 @@ export function useUnfollowPodcast() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (spotifyId: string) => podcastsApi.unfollow(spotifyId),
+    mutationFn: (podcastId: number) => podcastsApi.unfollow(podcastId),
     onSuccess: () => {
       // Invalidate all podcast queries to refetch fresh data
       queryClient.invalidateQueries({ queryKey: podcastKeys.all });
