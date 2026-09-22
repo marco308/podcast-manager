@@ -86,7 +86,7 @@ async def test_finished_rows_are_left_alone(session_maker):
         session_maker,
         _row("playlist_update", SyncStatus.SUCCESS, minutes_ago=60),
         _row("playlist_update", SyncStatus.FAILED, minutes_ago=30),
-        _row("cleanup", SyncStatus.PENDING, minutes_ago=1),
+        _row("cleanup", SyncStatus.SUCCESS, minutes_ago=1),
     )
     before = [(r.status, r.completed_at, r.details, r.failure_code) for r in await _all_rows(session_maker)]
 

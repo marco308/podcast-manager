@@ -100,8 +100,8 @@ actor APIClient {
         try await post("/api/podcasts/sync")
     }
 
-    func updatePodcast(spotifyId: String, isSequential: Bool) async throws -> Podcast {
-        try await patch("/api/podcasts/\(spotifyId)", body: ["is_sequential": isSequential])
+    func updatePodcast(id: Int, isSequential: Bool) async throws -> Podcast {
+        try await patch("/api/podcasts/\(id)", body: ["is_sequential": isSequential])
     }
 
     // MARK: - Playlists

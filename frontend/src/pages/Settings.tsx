@@ -185,16 +185,12 @@ export function Settings() {
                   { label: 'Light', value: 'light' },
                   { label: 'Dark', value: 'dark' },
                   { label: 'System', value: 'system' },
-                  { label: 'Auto', value: 'auto' },
                 ]}
               />
             </div>
             <Paragraph style={{ marginTop: 8, marginBottom: 0 }}>
               <Text type="secondary" style={{ fontSize: 12 }}>
                 <Text strong>System</Text> — Follows your device's appearance setting
-                <br />
-                <Text strong>Auto</Text> — Uses system preference, or switches to dark mode between
-                7 PM and 7 AM
               </Text>
             </Paragraph>
           </div>

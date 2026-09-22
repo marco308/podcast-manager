@@ -62,7 +62,7 @@ The iOS app does OAuth via `ASWebAuthenticationSession` and a `redirect_scheme=p
 
 Registered in `app/jobs/scheduler.py`, started from the FastAPI lifespan context:
 
-- Last-run times for interval jobs are tracked in the in-memory `_last_run_times` dict in `scheduler.py`; `daily_playlist_update` last-run comes from the `SyncLog` table instead.
+- Last-run times come from the `SyncLog` table for jobs that write it (`daily_playlist_update` → `playlist_update`, `remove_played_episodes` → `cleanup`; mapped in `_SYNCLOG_JOB_TYPES`), so they survive a restart. The other interval jobs fall back to the in-memory `_last_run_times` dict in `scheduler.py`.
 - The cron schedule is mutable at runtime via `PUT /api/jobs/schedule`, persisted in the `app_settings` table (keys `playlist_update_hour`, `playlist_update_minute`) so restarts pick it up.
 
 ## Domain Concepts

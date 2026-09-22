@@ -9,27 +9,19 @@ const PAGE_SIZE = 100;
 const MAX_PAGES = 100;
 
 export const podcastsApi = {
-  // List all podcasts with optional filters.
+  // List all podcasts.
   //
   // Pages through the whole result set rather than returning just the first
   // response. The backend defaults to limit=50 and this used to send no
   // pagination params at all, silently capping the UI at 50 podcasts and
   // making the rest unassignable to playlists (issue #151).
-  async list(params?: { playlistId?: number; unassigned?: boolean }): Promise<Podcast[]> {
-    const queryParams: Record<string, string | number | boolean> = {};
-    if (params?.playlistId !== undefined) {
-      queryParams.playlist_id = params.playlistId;
-    }
-    if (params?.unassigned !== undefined) {
-      queryParams.unassigned = params.unassigned;
-    }
-
+  async list(): Promise<Podcast[]> {
     const items: Podcast[] = [];
     let offset = 0;
 
     for (let page = 0; page < MAX_PAGES; page++) {
       const response = await apiClient.get<PodcastListResponse>('/podcasts', {
-        params: { ...queryParams, limit: PAGE_SIZE, offset },
+        params: { limit: PAGE_SIZE, offset },
       });
 
       const batch = response.data.items;
@@ -47,15 +39,15 @@ export const podcastsApi = {
     return items;
   },
 
-  // Get a single podcast by Spotify ID
-  async get(spotifyId: string): Promise<Podcast> {
-    const response = await apiClient.get<Podcast>(`/podcasts/${spotifyId}`);
+  // Get a single podcast by ID
+  async get(podcastId: number): Promise<Podcast> {
+    const response = await apiClient.get<Podcast>(`/podcasts/${podcastId}`);
     return response.data;
   },
 
   // Update podcast metadata (is_sequential)
-  async update(spotifyId: string, data: PodcastUpdate): Promise<Podcast> {
-    const response = await apiClient.patch<Podcast>(`/podcasts/${spotifyId}`, data);
+  async update(podcastId: number, data: PodcastUpdate): Promise<Podcast> {
+    const response = await apiClient.patch<Podcast>(`/podcasts/${podcastId}`, data);
     return response.data;
   },
 
@@ -66,8 +58,8 @@ export const podcastsApi = {
   },
 
   // Unfollow a podcast from Spotify and remove from database
-  async unfollow(spotifyId: string): Promise<{ message: string }> {
-    const response = await apiClient.delete<{ message: string }>(`/podcasts/${spotifyId}`);
+  async unfollow(podcastId: number): Promise<{ message: string }> {
+    const response = await apiClient.delete<{ message: string }>(`/podcasts/${podcastId}`);
     return response.data;
   },
 };

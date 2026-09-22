@@ -8,7 +8,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models.playlist import Playlist
 from app.models.playlist_podcast import PlaylistPodcast
 from app.models.podcast import Podcast
 from app.models.session import Session
@@ -60,6 +59,25 @@ async def _get_playlist_ids_for_podcast(db: AsyncSession, podcast_id: int) -> li
     return [row[0] for row in result.all()]
 
 
+async def _get_podcast_or_404(db: AsyncSession, podcast_ref: str) -> Podcast:
+    """Resolve a ``/podcasts/{podcast_id}`` path segment to a podcast.
+
+    The canonical key is the integer ``id``, matching the assignment routes
+    (``/playlists/{id}/podcasts/{podcast_id}``) — issue #248. A non-numeric
+    segment is looked up as a Spotify show ID instead, so iOS builds from
+    before the switch keep working; Spotify IDs are 22-character base62 and
+    never all digits in practice. Drop the fallback once those builds are gone.
+    """
+    if podcast_ref.isdigit():
+        result = await db.execute(select(Podcast).where(Podcast.id == int(podcast_ref)))
+    else:
+        result = await db.execute(select(Podcast).where(Podcast.spotify_id == podcast_ref))
+    podcast = result.scalar_one_or_none()
+    if not podcast:
+        raise HTTPException(status_code=404, detail="Podcast not found")
+    return podcast
+
+
 def _build_podcast_response(podcast: Podcast, playlist_ids: list[int]) -> PodcastResponse:
     """Build a PodcastResponse with playlist_ids."""
     return PodcastResponse(
@@ -81,40 +99,24 @@ def _build_podcast_response(podcast: Podcast, playlist_ids: list[int]) -> Podcas
 
 @router.get("", response_model=PodcastListResponse)
 async def list_podcasts(
-    playlist_id: int | None = Query(None, description="Filter by playlist membership"),
-    unassigned: bool = Query(False, description="Only return podcasts not assigned to any playlist"),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
     user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> PodcastListResponse:
-    """List all podcasts with optional filters.
+    """List all podcasts, paginated by name.
 
     Podcasts are a global table, not a per-user one — see the single-user
     note in ``CLAUDE.md`` (issue #154). Authentication is still required
     (``get_current_user_id``); there is simply no per-user partition to
     enforce, because registration closes after the first user.
+
+    There are no filters: both clients page through the whole library and
+    filter locally, and ``GET /playlists/{id}/podcasts`` already covers "the
+    shows in this playlist". The unused ``playlist_id`` / ``unassigned``
+    params were removed (issue #248).
     """
     query = select(Podcast)
-
-    if playlist_id is not None:
-        # Existence check only — a filter on an unknown playlist should 404
-        # rather than silently return an empty list. Scoped to the user like
-        # every other playlist read (issue #182).
-        exists = await db.execute(
-            select(Playlist.id).where((Playlist.id == playlist_id) & (Playlist.user_id == user_id))
-        )
-        if exists.scalar_one_or_none() is None:
-            raise HTTPException(status_code=404, detail="Playlist not found")
-
-        # Filter to podcasts in this playlist
-        query = query.join(PlaylistPodcast, PlaylistPodcast.podcast_id == Podcast.id).where(
-            PlaylistPodcast.playlist_id == playlist_id
-        )
-    elif unassigned:
-        # Filter to podcasts NOT in any playlist
-        assigned_subquery = select(PlaylistPodcast.podcast_id).distinct()
-        query = query.where(Podcast.id.not_in(assigned_subquery))
 
     # Get total count
     count_query = select(func.count()).select_from(query.subquery())
@@ -147,36 +149,28 @@ async def list_podcasts(
     return PodcastListResponse(items=items, total=total)
 
 
-@router.get("/{spotify_id}", response_model=PodcastResponse)
+@router.get("/{podcast_id}", response_model=PodcastResponse)
 async def get_podcast(
-    spotify_id: str,
+    podcast_id: str,
     user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> PodcastResponse:
-    """Get a single podcast by Spotify ID."""
-    result = await db.execute(select(Podcast).where(Podcast.spotify_id == spotify_id))
-    podcast = result.scalar_one_or_none()
-
-    if not podcast:
-        raise HTTPException(status_code=404, detail="Podcast not found")
+    """Get a single podcast by ID."""
+    podcast = await _get_podcast_or_404(db, podcast_id)
 
     pids = await _get_playlist_ids_for_podcast(db, podcast.id)
     return _build_podcast_response(podcast, pids)
 
 
-@router.patch("/{spotify_id}", response_model=PodcastResponse)
+@router.patch("/{podcast_id}", response_model=PodcastResponse)
 async def update_podcast(
-    spotify_id: str,
+    podcast_id: str,
     update_data: PodcastUpdate,
     session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
 ) -> PodcastResponse:
     """Update podcast metadata."""
-    result = await db.execute(select(Podcast).where(Podcast.spotify_id == spotify_id))
-    podcast = result.scalar_one_or_none()
-
-    if not podcast:
-        raise HTTPException(status_code=404, detail="Podcast not found")
+    podcast = await _get_podcast_or_404(db, podcast_id)
 
     if update_data.is_sequential is not None:
         podcast.is_sequential = update_data.is_sequential
@@ -189,28 +183,23 @@ async def update_podcast(
     return _build_podcast_response(podcast, pids)
 
 
-@router.delete("/{spotify_id}")
+@router.delete("/{podcast_id}")
 async def unfollow_podcast(
-    spotify_id: str,
+    podcast_id: str,
     session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
     """Unfollow a podcast from Spotify and optionally remove from local database."""
     user, access_token = await get_user_with_token(session.user_id, db)
 
-    # Check if podcast exists in our database
-    result = await db.execute(select(Podcast).where(Podcast.spotify_id == spotify_id))
-    podcast = result.scalar_one_or_none()
-
-    if not podcast:
-        raise HTTPException(status_code=404, detail="Podcast not found")
+    podcast = await _get_podcast_or_404(db, podcast_id)
 
     # Unfollow from Spotify
     spotify = SpotifyService(access_token=access_token)
     try:
-        await spotify.unfollow_show(spotify_id)
+        await spotify.unfollow_show(podcast.spotify_id)
     except Exception as e:
-        logger.exception(f"Failed to unfollow podcast {spotify_id} on Spotify: {e}")
+        logger.exception(f"Failed to unfollow podcast {podcast.spotify_id} on Spotify: {e}")
         raise HTTPException(status_code=500, detail="Failed to unfollow podcast on Spotify") from None
 
     # Remove from local database (cascade will remove join table entries)
