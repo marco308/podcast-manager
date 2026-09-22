@@ -22,7 +22,9 @@ class Podcast(Base):
     image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     publisher: Mapped[str | None] = mapped_column(String(255), nullable=True)
     total_episodes: Mapped[int] = mapped_column(Integer, default=0)
-    unplayed_episodes: Mapped[int] = mapped_column(Integer, default=0)
+    # NULL = not counted yet. Only the playlist build writes it, and only after
+    # reading the show's whole catalogue (issue #155).
+    unplayed_episodes: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # Podcast attributes
     is_sequential: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -31,6 +33,10 @@ class Podcast(Base):
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Sync tracking
+    # First sync that found the show gone from the Spotify library; cleared if
+    # it comes back, and the row is deleted once it has been missing for
+    # UNSUBSCRIBE_GRACE (issue #155).
+    missing_since: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     last_synced_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
 
     # Timestamps

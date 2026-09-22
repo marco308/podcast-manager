@@ -17,7 +17,8 @@ export interface Podcast {
   image_url: string | null;
   publisher: string | null;
   total_episodes: number;
-  unplayed_episodes: number;
+  // null = not counted yet; set by a playlist build that read the whole show
+  unplayed_episodes: number | null;
   is_sequential: boolean;
   // Hidden from the app but still followed on Spotify (issue #247)
   is_archived: boolean;
@@ -115,7 +116,7 @@ export interface PlaylistPodcast {
   image_url: string | null;
   publisher: string | null;
   total_episodes: number;
-  unplayed_episodes: number;
+  unplayed_episodes: number | null;
   is_sequential: boolean;
   position: number | null;
   rule: AssignmentRule;
@@ -127,6 +128,9 @@ export interface SyncResult {
   message: string;
   synced: number;
   new: number;
+  // Gone from the Spotify library: counted down over a grace period, then removed
+  missing: number;
+  removed: number;
 }
 
 // Podcast list response

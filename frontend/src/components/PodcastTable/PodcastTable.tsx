@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
+import type { CSSProperties } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   App,
@@ -50,6 +51,27 @@ interface PodcastTableProps {
 }
 
 type ViewMode = 'cards' | 'table';
+
+// The count is only known once a playlist build has read the whole show
+// (issue #155); until then say so rather than showing a made-up number.
+function UnplayedTag({ count, style }: { count: number | null; style?: CSSProperties }) {
+  if (count === null) {
+    return (
+      <Tag
+        color="default"
+        style={style}
+        title="Counted when a playlist build reads this podcast's full episode list"
+      >
+        unplayed: not counted
+      </Tag>
+    );
+  }
+  return (
+    <Tag color="blue" style={style}>
+      {count} unplayed
+    </Tag>
+  );
+}
 
 export function PodcastTable({ podcasts }: PodcastTableProps) {
   const { message } = App.useApp();
@@ -299,10 +321,10 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
       render: (_, record) => (
         <Space direction="vertical" size={2} style={{ width: '100%' }}>
           <Tag color="default">{record.total_episodes} total</Tag>
-          <Tag color="blue">{record.unplayed_episodes} unplayed</Tag>
+          <UnplayedTag count={record.unplayed_episodes} />
         </Space>
       ),
-      sorter: (a, b) => a.unplayed_episodes - b.unplayed_episodes,
+      sorter: (a, b) => (a.unplayed_episodes ?? -1) - (b.unplayed_episodes ?? -1),
     },
     {
       title: 'Playlists',
@@ -464,9 +486,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
                   <Tag color="default" style={{ margin: 0 }}>
                     {podcast.total_episodes} eps
                   </Tag>
-                  <Tag color="blue" style={{ margin: 0 }}>
-                    {podcast.unplayed_episodes} unplayed
-                  </Tag>
+                  <UnplayedTag count={podcast.unplayed_episodes} style={{ margin: 0 }} />
                   {podcast.is_sequential && (
                     <Tag color="orange" style={{ margin: 0 }}>
                       Seq
