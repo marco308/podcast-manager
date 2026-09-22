@@ -38,7 +38,7 @@ The app is a day-to-day companion, not a second admin UI. It covers browsing and
 | Backend endpoint not wrapped by `APIClient` | Why |
 |---|---|
 | `POST /api/playlists` (create) | One-off setup; the web form already validates the defaults/arrangement |
-| `PATCH /api/playlists/{id}` (rename, default episode limit / pick-from, arrangement, date direction, enabled, weekend-only) | Same |
+| `PATCH /api/playlists/{id}` (rename, default episode limit / pick-from, arrangement, date direction, enabled) | Same |
 | `DELETE /api/playlists/{id}` | Destructive and rare; keep it behind the web confirm dialog |
 | `PATCH /api/playlists/{id}/podcasts/{podcast_id}` (per-assignment `episode_limit` / `pick_from` override) | Rule editing is web-only for now; iOS shows the resolved `rule` on each row (see `docs/design/assignment-rules.md`) |
 | `PUT /api/playlists/{id}/podcasts/reorder` | Depends on the dnd-kit drag UI; a list-reorder UX on iOS is real work for a rarely-used feature |

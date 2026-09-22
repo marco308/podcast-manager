@@ -39,7 +39,6 @@ import Testing
         "id": 1,
         "name": "Morning Playlist",
         "is_enabled": true,
-        "is_weekend_only": false,
         "default_episode_limit": 1,
         "default_pick_from": "newest",
         "arrangement": "by_date",

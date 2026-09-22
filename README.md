@@ -36,7 +36,6 @@ Example — a Morning playlist with defaults "latest only, newest": each daily n
 ### Playlist Settings
 
 - **Arrangement** — *In podcast order* (groups in the drag-and-drop order you set) or *By release date* (everything merged by date, newest or oldest first)
-- **Weekend Only** — Playlist is only rebuilt on Fridays, Saturdays, Sundays, and UK public holidays; on other days it is left untouched
 - **Enabled** — Disabled playlists are skipped by the background jobs
 
 ### Podcast Attributes

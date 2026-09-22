@@ -62,7 +62,6 @@ class Playlist(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     spotify_playlist_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    is_weekend_only: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Defaults inherited by assignments that have no override.
     default_episode_limit: Mapped[int] = mapped_column(Integer, default=ALL_EPISODES, nullable=False)

@@ -125,7 +125,6 @@ async def test_id_survives_a_build_failure_later_in_the_same_update():
     db = _make_db()
     builder = _make_builder(db)
     playlist = _make_playlist()
-    playlist.is_weekend_only = False
 
     spotify = MagicMock()
     spotify.create_playlist = AsyncMock(return_value={"id": "sp-new"})

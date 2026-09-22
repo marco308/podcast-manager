@@ -301,9 +301,8 @@ async def update_all_playlists() -> None:
 
                         for res in results:
                             if res.skipped:
-                                # Weekend-only playlist on a non-qualifying day —
-                                # deliberately untouched, so don't count it as an
-                                # attempted rebuild (issue #150).
+                                # Disabled playlist — deliberately untouched, so
+                                # don't count it as an attempted rebuild (#239).
                                 playlists_skipped += 1
                                 continue
                             total_playlists += 1
@@ -330,7 +329,7 @@ async def update_all_playlists() -> None:
 
     details = f"Updated {total_playlists} playlists with {total_episodes} episodes. Errors: {len(errors)}"
     if playlists_skipped:
-        details += f" Skipped (weekend-only): {playlists_skipped}."
+        details += f" Skipped (disabled): {playlists_skipped}."
     if errors:
         details += f"\n{chr(10).join(errors[:10])}"
 

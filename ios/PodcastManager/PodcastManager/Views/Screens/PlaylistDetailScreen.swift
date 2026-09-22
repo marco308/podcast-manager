@@ -85,9 +85,6 @@ struct PlaylistDetailScreen: View {
         Section {
             LabeledContent("Arrangement", value: playlist.arrangementLabel)
             LabeledContent("Episodes per podcast", value: playlist.ruleSummary)
-            if playlist.isWeekendOnly {
-                LabeledContent("Weekend Only", value: "Yes")
-            }
             LabeledContent("Status", value: playlist.isEnabled ? "Enabled" : "Disabled")
             if let url = playlist.spotifyURL {
                 // Universal link: opens the Spotify app when installed.

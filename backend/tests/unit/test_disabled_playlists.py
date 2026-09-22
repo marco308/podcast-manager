@@ -12,7 +12,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
@@ -69,12 +69,11 @@ def _user():
     )
 
 
-def _make_playlist(*, is_enabled=True, is_weekend_only=False):
+def _make_playlist(*, is_enabled=True):
     playlist = MagicMock(spec=Playlist)
     playlist.id = 1
     playlist.name = "Test Playlist"
     playlist.is_enabled = is_enabled
-    playlist.is_weekend_only = is_weekend_only
     playlist.default_episode_limit = ALL_EPISODES
     playlist.default_pick_from = "newest"
     playlist.arrangement = Arrangement.BY_POSITION.value
@@ -177,8 +176,7 @@ class TestUpdatePlaylistDisabledGate:
     async def test_disabled_playlist_is_skipped_before_any_spotify_call(self):
         builder, spotify = _builder_with_spotify()
 
-        with patch("app.services.playlist_builder.is_weekend_or_holiday", return_value=True):
-            result = await builder.update_playlist(_make_playlist(is_enabled=False))
+        result = await builder.update_playlist(_make_playlist(is_enabled=False))
 
         # The critical assertion: nothing is written, so the previous
         # contents survive untouched — and the playlist isn't even created
@@ -189,41 +187,17 @@ class TestUpdatePlaylistDisabledGate:
         builder._get_spotify_client.assert_not_awaited()
 
         assert result.skipped is True
-        assert result.skip_reason == "disabled"
         assert result.success is True, "a skip is not a failure"
         assert result.episode_count == 0
-
-    @pytest.mark.asyncio
-    async def test_disabled_wins_over_the_weekend_gate(self):
-        """A disabled weekend-only playlist is skipped as *disabled*, on any day."""
-        builder, spotify = _builder_with_spotify()
-
-        with patch("app.services.playlist_builder.is_weekend_or_holiday", return_value=True):
-            result = await builder.update_playlist(_make_playlist(is_enabled=False, is_weekend_only=True))
-
-        spotify.replace_playlist_items.assert_not_awaited()
-        assert result.skip_reason == "disabled"
-
-    @pytest.mark.asyncio
-    async def test_weekend_skip_keeps_its_own_reason(self):
-        builder, _spotify = _builder_with_spotify()
-
-        with patch("app.services.playlist_builder.is_weekend_or_holiday", return_value=False):
-            result = await builder.update_playlist(_make_playlist(is_weekend_only=True))
-
-        assert result.skipped is True
-        assert result.skip_reason == "weekend_only"
 
     @pytest.mark.asyncio
     async def test_enabled_playlist_still_runs(self):
         builder, spotify = _builder_with_spotify()
 
-        with patch("app.services.playlist_builder.is_weekend_or_holiday", return_value=False):
-            result = await builder.update_playlist(_make_playlist())
+        result = await builder.update_playlist(_make_playlist())
 
         spotify.replace_playlist_items.assert_awaited_once()
         assert result.skipped is False
-        assert result.skip_reason is None
 
 
 class TestUpdateAllPlaylists:

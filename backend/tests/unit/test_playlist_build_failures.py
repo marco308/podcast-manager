@@ -26,7 +26,6 @@ def _make_playlist(default_episode_limit=ALL_EPISODES):
     playlist = MagicMock(spec=Playlist)
     playlist.id = 1
     playlist.name = "Test Playlist"
-    playlist.is_weekend_only = False
     playlist.is_enabled = True
     playlist.default_episode_limit = default_episode_limit
     playlist.default_pick_from = "newest"

@@ -50,7 +50,7 @@ export function Dashboard() {
 
       let summary = `Updated ${succeeded.length} playlist${succeeded.length === 1 ? '' : 's'}`;
       if (skipped.length > 0) {
-        summary += `, ${skipped.length} skipped (weekend-only)`;
+        summary += `, ${skipped.length} skipped (disabled)`;
       }
 
       if (failed.length > 0) {
@@ -208,11 +208,6 @@ export function Dashboard() {
                       >
                         {ruleSummary(playlist.default_episode_limit, playlist.default_pick_from)}
                       </Tag>
-                      {playlist.is_weekend_only && (
-                        <Tag color="orange" style={{ width: 'fit-content' }}>
-                          Weekend
-                        </Tag>
-                      )}
                     </Space>
                     <Text type="secondary" style={{ fontSize: 12 }}>
                       {playlist.podcast_count} podcast{playlist.podcast_count !== 1 ? 's' : ''}

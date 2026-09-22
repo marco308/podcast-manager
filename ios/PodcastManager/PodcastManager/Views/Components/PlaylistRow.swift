@@ -29,12 +29,6 @@ struct PlaylistRow: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
-
-                if playlist.isWeekendOnly {
-                    Label("Weekend only", systemImage: "calendar")
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                }
             }
 
             Spacer()

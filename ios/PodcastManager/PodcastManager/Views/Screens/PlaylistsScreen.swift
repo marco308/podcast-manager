@@ -113,7 +113,7 @@ struct PlaylistsScreen: View {
     private func runPlaylist(_ playlist: Playlist) async {
         do {
             let response = try await APIClient.shared.runPlaylist(id: playlist.id)
-            // Use the server's message: it distinguishes weekend-only skips
+            // Use the server's message: it distinguishes skips
             // and partial updates, where a fabricated "0 episodes" read as
             // the playlist having been emptied (issue #181).
             withAnimation {
