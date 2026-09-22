@@ -17,9 +17,10 @@
 //   SCREENSHOT_SCALE  device scale factor, 2 for retina-crisp images (default 1)
 //   SCREENSHOT_MASK   extra comma-separated CSS selectors to black out on every page
 //
-// Account details on the Settings page are masked by default so the images can
-// be committed without leaking the maintainer's Spotify profile. Review the
-// output before committing regardless.
+// The header identity (display name / Spotify ID) on every page and the account
+// details on the Settings page are masked by default so the images can be
+// committed without leaking the maintainer's Spotify profile. Review the output
+// before committing regardless.
 
 import { chromium } from 'playwright';
 import { existsSync, mkdirSync } from 'node:fs';
@@ -41,7 +42,11 @@ const extraMask = (process.env.SCREENSHOT_MASK ?? '')
   .map((s) => s.trim())
   .filter(Boolean);
 
-// One entry per screen. `mask` selectors are blacked out in the image.
+// Blacked out on every page: the signed-in user's name in the header (Header.tsx).
+const GLOBAL_MASK = ['.header-username'];
+
+// One entry per screen. `mask` selectors are blacked out in the image, in
+// addition to GLOBAL_MASK.
 const PAGES = [
   { slug: 'dashboard', route: '/', mask: [] },
   { slug: 'podcasts', route: '/podcasts', mask: [] },
@@ -88,8 +93,7 @@ async function login() {
     await page.waitForTimeout(1000);
   }
   await browser.close();
-  console.error('Timed out waiting for login.');
-  process.exit(1);
+  throw new Error('Timed out waiting for login.');
 }
 
 async function capture() {
@@ -115,16 +119,14 @@ async function capture() {
       }, theme);
 
       if (!(await isAuthenticated(context))) {
-        console.error('Saved session is no longer valid. Run: npm run screenshots -- --login');
-        process.exit(1);
+        throw new Error('Saved session is no longer valid. Run: npm run screenshots -- --login');
       }
 
       const page = await context.newPage();
       for (const { slug, route, mask } of PAGES) {
         await page.goto(`${BASE_URL}${route}`, { waitUntil: 'networkidle' });
         if (new URL(page.url()).pathname === '/login') {
-          console.error(`Redirected to /login while opening ${route}; session expired?`);
-          process.exit(1);
+          throw new Error(`Redirected to /login while opening ${route}; session expired?`);
         }
         // Let React Query settle and Ant Design transitions finish.
         await page.waitForTimeout(500);
@@ -134,7 +136,7 @@ async function capture() {
           path: file,
           fullPage: false,
           animations: 'disabled',
-          mask: [...mask, ...extraMask].map((selector) => page.locator(selector)),
+          mask: [...GLOBAL_MASK, ...mask, ...extraMask].map((selector) => page.locator(selector)),
           maskColor: theme === 'dark' ? '#303030' : '#d9d9d9',
         });
         console.log(`wrote ${path.relative(process.cwd(), file)}`);
@@ -148,6 +150,6 @@ async function capture() {
 
 const mode = process.argv.includes('--login') ? 'login' : 'capture';
 (mode === 'login' ? login() : capture()).catch((err) => {
-  console.error(err);
+  console.error(err instanceof Error ? err.message : err);
   process.exit(1);
 });
