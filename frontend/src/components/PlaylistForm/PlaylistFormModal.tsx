@@ -32,6 +32,8 @@ import type {
   PlaylistUpdate,
   Podcast,
 } from '../../types';
+import { isAxiosError } from 'axios';
+import { getErrorMessage } from '../../api';
 import { EPISODE_LIMIT_MAX } from '../../types';
 import { spotifyPlaylistUrl } from '../../utils/playlistLabels';
 import { PlaylistPodcastsEditor, type EditorRow } from './PlaylistPodcastsEditor';
@@ -207,8 +209,14 @@ export function PlaylistFormModal({ open, playlist, onClose, onSaved }: Playlist
         const createData: PlaylistCreate = shared;
         saved = await createPlaylist.mutateAsync(createData);
       }
-    } catch {
-      message.error('Failed to save playlist');
+    } catch (err: unknown) {
+      // A rename that Spotify refused comes back 502 with a message saying
+      // nothing was saved; surface it rather than a generic failure.
+      message.error(
+        isAxiosError(err) && err.response?.status === 502
+          ? getErrorMessage(err)
+          : 'Failed to save playlist'
+      );
       return;
     }
 
@@ -304,6 +312,11 @@ export function PlaylistFormModal({ open, playlist, onClose, onSaved }: Playlist
           <Form.Item
             name="name"
             label="Name"
+            extra={
+              playlist?.spotify_playlist_id
+                ? 'Renaming here also renames the playlist on Spotify'
+                : undefined
+            }
             rules={[{ required: true, message: 'Please enter a name' }]}
           >
             <Input placeholder="e.g., Morning Podcasts" />
