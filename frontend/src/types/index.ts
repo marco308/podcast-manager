@@ -138,6 +138,21 @@ export interface PlaylistListResponse {
   total: number;
 }
 
+// A Spotify playlist the user owns, offered as a link target (issue #245).
+export interface SpotifyPlaylistOption {
+  id: string;
+  name: string;
+  image_url: string | null;
+  item_count: number;
+  // The managed playlist already linked to it, if any.
+  linked_playlist_id: number | null;
+}
+
+export interface SpotifyPlaylistOptionListResponse {
+  items: SpotifyPlaylistOption[];
+  total: number;
+}
+
 // Playlist podcast list response
 export interface PlaylistPodcastListResponse {
   items: PlaylistPodcast[];

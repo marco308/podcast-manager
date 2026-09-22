@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import {
+  Alert,
   App,
   Divider,
   Form,
@@ -12,6 +13,7 @@ import {
   Typography,
 } from 'antd';
 import { ExportOutlined } from '@ant-design/icons';
+import { getErrorMessage } from '../../api';
 import {
   useAddPodcastsToPlaylist,
   useCreatePlaylist,
@@ -19,6 +21,7 @@ import {
   usePodcasts,
   useRemovePodcastFromPlaylist,
   useReorderPlaylistPodcasts,
+  useSpotifyPlaylists,
   useUpdatePlaylist,
   useUpdatePlaylistPodcast,
 } from '../../hooks';
@@ -158,6 +161,7 @@ export function PlaylistFormModal({ open, playlist, onClose, onSaved }: Playlist
   const updateOverride = useUpdatePlaylistPodcast();
   const reorderPodcasts = useReorderPlaylistPodcasts();
   const { data: allPodcasts } = usePodcasts();
+  const spotifyPlaylists = useSpotifyPlaylists(open);
   // Current members, only needed when editing. The body is not rendered
   // until they arrive so the editor can start from them.
   const { data: members, isLoading: membersLoading } = usePlaylistPodcasts(playlist?.id ?? 0);
@@ -170,6 +174,7 @@ export function PlaylistFormModal({ open, playlist, onClose, onSaved }: Playlist
   const episodeLimitMode = Form.useWatch('episode_limit_mode', form);
   const customLimit = Form.useWatch('custom_episode_limit', form);
   const watchedPick = Form.useWatch('default_pick_from', form);
+  const linkedSpotifyId = Form.useWatch('spotify_playlist_id', form);
 
   const spotifyUrl = spotifyPlaylistUrl(playlist?.spotify_playlist_id);
 
@@ -207,8 +212,10 @@ export function PlaylistFormModal({ open, playlist, onClose, onSaved }: Playlist
         const createData: PlaylistCreate = shared;
         saved = await createPlaylist.mutateAsync(createData);
       }
-    } catch {
-      message.error('Failed to save playlist');
+    } catch (err) {
+      // The server refuses to link a Spotify playlist the user doesn't own
+      // or one already linked elsewhere; say which (issue #245).
+      message.error(`Failed to save playlist: ${getErrorMessage(err)}`);
       return;
     }
 
@@ -310,23 +317,70 @@ export function PlaylistFormModal({ open, playlist, onClose, onSaved }: Playlist
           </Form.Item>
           <Form.Item
             name="spotify_playlist_id"
-            label="Spotify Playlist ID"
+            label="Spotify playlist"
             extra={
               spotifyUrl ? (
                 <span>
-                  Linked to{' '}
+                  Currently linked to{' '}
                   <a href={spotifyUrl} target="_blank" rel="noopener noreferrer">
                     this Spotify playlist <ExportOutlined />
                   </a>
-                  . Every rebuild fully replaces its contents.
+                  .
                 </span>
               ) : (
-                'Leave blank and a Spotify playlist is created on the first run, or paste the ID of an existing one to take it over (its contents will be fully replaced on every rebuild)'
+                'Leave empty and a new Spotify playlist is created on the first run, or pick one of your own playlists to take it over'
               )
             }
           >
-            <Input placeholder="e.g., 37i9dQZF1DX..." />
+            <Select<string>
+              allowClear={!playlist?.spotify_playlist_id}
+              showSearch
+              optionFilterProp="label"
+              placeholder="Create a new Spotify playlist on the first run"
+              loading={spotifyPlaylists.isLoading}
+              notFoundContent={
+                spotifyPlaylists.isError
+                  ? `Couldn't load your Spotify playlists: ${getErrorMessage(spotifyPlaylists.error)}`
+                  : undefined
+              }
+              // Only playlists the user owns are listed; one already linked to
+              // another managed playlist is shown but can't be picked.
+              options={(spotifyPlaylists.data ?? []).map((sp) => {
+                const linkedElsewhere =
+                  sp.linked_playlist_id !== null && sp.linked_playlist_id !== playlist?.id;
+                return {
+                  value: sp.id,
+                  label: sp.name || sp.id,
+                  disabled: linkedElsewhere,
+                  title: linkedElsewhere ? 'Already linked to another playlist' : undefined,
+                };
+              })}
+              optionRender={(option) => {
+                const sp = spotifyPlaylists.data?.find((p) => p.id === option.value);
+                if (!sp) return option.label;
+                const linkedElsewhere =
+                  sp.linked_playlist_id !== null && sp.linked_playlist_id !== playlist?.id;
+                return (
+                  <span>
+                    {sp.name || sp.id}{' '}
+                    <Text type="secondary">
+                      {linkedElsewhere
+                        ? '· already linked to another playlist'
+                        : `· ${sp.item_count} item${sp.item_count === 1 ? '' : 's'}`}
+                    </Text>
+                  </span>
+                );
+              }}
+            />
           </Form.Item>
+          {linkedSpotifyId && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginTop: -8, marginBottom: 24 }}
+              message="This Spotify playlist will be fully overwritten on every rebuild. Anything you add to it in Spotify will be removed."
+            />
+          )}
 
           <Form.Item
             name="arrangement"

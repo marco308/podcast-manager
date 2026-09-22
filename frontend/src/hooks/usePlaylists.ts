@@ -10,6 +10,7 @@ export const playlistKeys = {
   list: () => [...playlistKeys.lists()] as const,
   detail: (playlistId: number) => [...playlistKeys.all, 'detail', playlistId] as const,
   podcasts: (playlistId: number) => [...playlistKeys.all, 'podcasts', playlistId] as const,
+  spotify: () => [...playlistKeys.all, 'spotify'] as const,
 };
 
 // Hook to list playlists
@@ -17,6 +18,17 @@ export function usePlaylists() {
   return useQuery({
     queryKey: playlistKeys.list(),
     queryFn: playlistsApi.list,
+  });
+}
+
+// Hook to list the user's own Spotify playlists (link targets). Only fetched
+// when asked for, so opening the form doesn't cost Spotify calls.
+export function useSpotifyPlaylists(enabled: boolean) {
+  return useQuery({
+    queryKey: playlistKeys.spotify(),
+    queryFn: playlistsApi.listSpotifyPlaylists,
+    enabled,
+    staleTime: 60_000,
   });
 }
 

@@ -12,6 +12,7 @@ export {
   usePlaylists,
   usePlaylist,
   usePlaylistPodcasts,
+  useSpotifyPlaylists,
   useCreatePlaylist,
   useUpdatePlaylist,
   useDeletePlaylist,
