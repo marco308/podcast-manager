@@ -15,42 +15,35 @@ Podcast Manager sits on top of Spotify and adds a **playlist management layer**.
 ### Core Workflow
 
 1. **Sync** your Spotify podcast library into the app
-2. **Create playlists** with an episode mode (all unplayed or latest only)
+2. **Create playlists** with defaults for how many episodes each show contributes and how they are arranged
 3. **Assign podcasts** directly to one or more playlists
-4. **Configure ordering** and set attributes like sequential (oldest-first for story podcasts)
+4. **Refine** individual assignments where a show needs a different rule, and mark story podcasts as sequential
 5. **The app handles the rest** — daily rebuilds, played-episode cleanup, token refresh
 
-### Episode Modes
+### Episode Rules
 
-Each playlist has an episode mode that controls how episodes are selected:
+What a show contributes is decided **per assignment** (podcast × playlist), so the same show can behave differently in different playlists. Every playlist carries defaults; a row inherits them until you refine it. See [docs/design/assignment-rules.md](docs/design/assignment-rules.md).
 
-| Mode | Behaviour |
-|------|-----------|
-| **All Unplayed** | Includes all unplayed episodes from each assigned podcast |
-| **Latest Only** | Includes only the most recent unplayed episode per assigned podcast |
+| Rule | Values | Meaning |
+|------|--------|---------|
+| **Episodes per podcast** | all unplayed / latest only / up to *n* | How many unplayed episodes the show contributes |
+| **Take from** | newest / oldest | Which end of the show's unplayed episodes to take from, and the order they are listened to |
+
+Precedence: the row's own override, then the podcast's **Sequential** flag (forces *oldest*), then the playlist default.
+
+Example — a Morning playlist with defaults "latest only, newest": each daily news show contributes today's episode, and a story podcast marked sequential contributes its *next unfinished* episode instead, with no per-row configuration.
 
 ### Playlist Settings
 
-- **Weekend Only** — Playlist only populates on Fridays, Saturdays, Sundays, and UK public holidays
-- **Ordering Mode** — How episodes are arranged (default, podcast order, chronological asc/desc)
-- **Podcast Order** — Drag-and-drop ordering of podcasts within a playlist
+- **Arrangement** — *In podcast order* (groups in the drag-and-drop order you set) or *By release date* (everything merged by date, newest or oldest first)
+- **Weekend Only** — Playlist is only rebuilt on Fridays, Saturdays, Sundays, and UK public holidays; on other days it is left untouched
+- **Enabled** — Disabled playlists are skipped by the background jobs
 
 ### Podcast Attributes
 
-- **Sequential** — Story-based podcasts that must be consumed oldest-to-newest (e.g. serialised true crime). Always ordered oldest-first regardless of playlist settings.
+- **Sequential** — Story-based podcasts that must be consumed oldest-to-newest (e.g. serialised true crime). Resolves every assignment's *take from* to oldest unless the row overrides it; in a by-date, newest-first playlist the show keeps the slots it wins but plays oldest-first within them.
 
-Podcasts can belong to multiple playlists simultaneously, with independent ordering per playlist.
-
-### Ordering Modes
-
-Each playlist can be ordered differently:
-
-- **Default** — Oldest-first for "all unplayed", newest-first for "latest only"
-- **Podcast Order** — Group by podcast, ordered by your manual ranking
-- **Chronological (oldest first)** — All episodes by release date, ascending
-- **Chronological (newest first)** — All episodes by release date, descending
-
-Sequential podcasts always maintain oldest-first ordering within their group, regardless of the playlist's ordering mode.
+Podcasts can belong to multiple playlists simultaneously, with independent rules and ordering per playlist.
 
 ## Automation
 
@@ -80,7 +73,7 @@ Once configured, the app runs four background jobs:
 
 ![Podcasts](docs/screenshots/podcasts-light.png)
 
-**Playlists** — playlist CRUD with episode mode and ordering config; drag-and-drop podcast reordering; add/remove podcast assignments
+**Playlists** — playlist CRUD with per-playlist defaults and arrangement; a detail page per playlist with drag-and-drop ordering, per-assignment rule overrides, and add/remove
 
 ![Playlists](docs/screenshots/playlists-light.png)
 

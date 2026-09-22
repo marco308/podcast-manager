@@ -1,20 +1,21 @@
-"""Tests for playlist ordering, especially the is_sequential contract (issue #146).
+"""Tests for playlist assembly (issue #249; the sequential contract from #146).
 
-The chronological modes previously grouped with ``itertools.groupby`` over a
-globally date-sorted list. ``groupby`` only groups *consecutive* runs, so a
-show's episodes were almost never grouped together and ``is_sequential`` was
-silently ignored. These tests pin the intended behaviour: a sequential show
-keeps its slots in the global ordering but fills them oldest-first.
+``assemble`` takes per-show contributions, each with its resolved rule.
+``by_position`` keeps assignment order; ``by_date`` merges by release date
+and then refills the slots of any ``oldest`` show oldest-first, so a serial is
+never played out of order. That refill is done by explicit slot lookup: after
+a date merge a show's episodes are rarely adjacent, which is what silently
+broke ``itertools.groupby`` before.
 """
 
-from unittest.mock import MagicMock
+from app.models.playlist import Arrangement, DateDirection, PickFrom
+from app.services.assignment_rules import ResolvedRule
+from app.services.playlist_builder import Episode, PlaylistBuilder, ShowContribution
 
-from app.models.playlist import PlaylistOrderingMode
-from app.services.playlist_builder import Episode, PlaylistBuilder, PodcastWithPosition
-
-ASC = PlaylistOrderingMode.CHRONOLOGICAL_ASC.value
-DESC = PlaylistOrderingMode.CHRONOLOGICAL_DESC.value
-BY_PODCAST = PlaylistOrderingMode.PODCAST_ORDER.value
+BY_POSITION = Arrangement.BY_POSITION.value
+BY_DATE = Arrangement.BY_DATE.value
+NEWEST_FIRST = DateDirection.NEWEST_FIRST.value
+OLDEST_FIRST = DateDirection.OLDEST_FIRST.value
 
 
 def _episode(name, show_id, release_date):
@@ -30,122 +31,115 @@ def _episode(name, show_id, release_date):
     )
 
 
-def _entry(spotify_id, *, is_sequential=False, position=None):
-    podcast = MagicMock()
-    podcast.spotify_id = spotify_id
-    podcast.is_sequential = is_sequential
-    podcast.name = spotify_id
-    return PodcastWithPosition(podcast=podcast, position=position)
+def _rule(pick):
+    return ResolvedRule(episode_limit=0, pick_from=pick, episode_limit_source="playlist", pick_from_source="playlist")
+
+
+def _contribution(show_id, episodes, pick=PickFrom.NEWEST):
+    return ShowContribution(show_id=show_id, rule=_rule(pick), episodes=list(episodes))
 
 
 def _names(episodes):
     return [e.name for e in episodes]
 
 
-def _builder():
-    return PlaylistBuilder(MagicMock(), MagicMock())
-
-
-# A deliberately interleaved fixture: the two shows alternate by release date,
-# so groupby-based grouping collapses to size-1 groups.
-INTERLEAVED = [
+STORY = [
     _episode("story1", "seq", "2026-01-01"),
-    _episode("chat1", "news", "2026-01-02"),
     _episode("story2", "seq", "2026-01-03"),
-    _episode("chat2", "news", "2026-01-04"),
     _episode("story3", "seq", "2026-01-05"),
+]
+NEWS = [
+    _episode("chat1", "news", "2026-01-02"),
+    _episode("chat2", "news", "2026-01-04"),
 ]
 
 
-class TestChronologicalDescending:
-    """Newest-first globally, but a sequential show plays oldest-first."""
-
-    def test_sequential_show_plays_oldest_first_within_its_slots(self):
-        result = _builder()._apply_ordering(
-            list(INTERLEAVED),
-            DESC,
-            [_entry("seq", is_sequential=True), _entry("news")],
+class TestByPosition:
+    def test_groups_are_concatenated_in_the_order_given(self):
+        result = PlaylistBuilder.assemble(
+            [_contribution("news", reversed(NEWS)), _contribution("seq", STORY, PickFrom.OLDEST)],
+            BY_POSITION,
+            OLDEST_FIRST,
         )
-
-        # Global order is newest-first: story3, chat2, story2, chat1, story1.
-        # The sequential show holds slots 0, 2, 4 — filled oldest-first.
-        assert _names(result) == ["story1", "chat2", "story2", "chat1", "story3"]
-
-    def test_non_sequential_shows_are_untouched(self):
-        result = _builder()._apply_ordering(
-            list(INTERLEAVED),
-            DESC,
-            [_entry("seq"), _entry("news")],
-        )
-
-        assert _names(result) == ["story3", "chat2", "story2", "chat1", "story1"]
-
-    def test_interleaving_is_preserved(self):
-        """A sequential show must not be collapsed into a contiguous block."""
-        result = _builder()._apply_ordering(
-            list(INTERLEAVED),
-            DESC,
-            [_entry("seq", is_sequential=True), _entry("news")],
-        )
-
-        assert [e.show_id for e in result] == ["seq", "news", "seq", "news", "seq"]
-
-
-class TestChronologicalAscending:
-    """Ascending order already satisfies the sequential contract."""
-
-    def test_sequential_show_is_oldest_first(self):
-        result = _builder()._apply_ordering(
-            list(INTERLEAVED),
-            ASC,
-            [_entry("seq", is_sequential=True), _entry("news")],
-        )
-
-        assert _names(result) == ["story1", "chat1", "story2", "chat2", "story3"]
-
-    def test_matches_plain_sort_when_nothing_is_sequential(self):
-        result = _builder()._apply_ordering(list(INTERLEAVED), ASC, [_entry("seq"), _entry("news")])
-
-        assert _names(result) == ["story1", "chat1", "story2", "chat2", "story3"]
-
-
-class TestPodcastOrder:
-    """Position drives show order; is_sequential drives order within a show."""
-
-    def test_shows_follow_position_and_sequential_shows_are_oldest_first(self):
-        result = _builder()._apply_ordering(
-            list(INTERLEAVED),
-            BY_PODCAST,
-            [
-                _entry("news", position=1),
-                _entry("seq", is_sequential=True, position=2),
-            ],
-        )
-
-        # news first (position 1), newest-first within it; then seq, oldest-first.
         assert _names(result) == ["chat2", "chat1", "story1", "story2", "story3"]
 
-    def test_unpositioned_shows_sort_last(self):
-        result = _builder()._apply_ordering(
-            list(INTERLEAVED),
-            BY_PODCAST,
-            [_entry("news"), _entry("seq", position=1)],
+    def test_date_direction_is_ignored(self):
+        groups = [_contribution("news", NEWS), _contribution("seq", STORY)]
+        assert PlaylistBuilder.assemble(groups, BY_POSITION, NEWEST_FIRST) == PlaylistBuilder.assemble(
+            groups, BY_POSITION, OLDEST_FIRST
         )
 
-        assert [e.show_id for e in result] == ["seq", "seq", "seq", "news", "news"]
+
+class TestByDateNewestFirst:
+    def test_oldest_show_keeps_its_slots_but_plays_oldest_first(self):
+        result = PlaylistBuilder.assemble(
+            [_contribution("seq", STORY, PickFrom.OLDEST), _contribution("news", NEWS)],
+            BY_DATE,
+            NEWEST_FIRST,
+        )
+        # Merge is newest-first: story3, chat2, story2, chat1, story1.
+        # The serial holds slots 0, 2, 4 and fills them oldest-first.
+        assert _names(result) == ["story1", "chat2", "story2", "chat1", "story3"]
+
+    def test_interleaving_is_preserved(self):
+        result = PlaylistBuilder.assemble(
+            [_contribution("seq", STORY, PickFrom.OLDEST), _contribution("news", NEWS)],
+            BY_DATE,
+            NEWEST_FIRST,
+        )
+        assert [e.show_id for e in result] == ["seq", "news", "seq", "news", "seq"]
+
+    def test_newest_shows_follow_the_playlist_direction(self):
+        result = PlaylistBuilder.assemble(
+            [_contribution("seq", STORY), _contribution("news", NEWS)],
+            BY_DATE,
+            NEWEST_FIRST,
+        )
+        assert _names(result) == ["story3", "chat2", "story2", "chat1", "story1"]
+
+    def test_single_episode_oldest_show_needs_no_refill(self):
+        result = PlaylistBuilder.assemble(
+            [_contribution("seq", STORY[:1], PickFrom.OLDEST), _contribution("news", NEWS)],
+            BY_DATE,
+            NEWEST_FIRST,
+        )
+        assert _names(result) == ["chat2", "chat1", "story1"]
 
 
-class TestDefaultMode:
-    def test_default_returns_input_untouched(self):
-        result = _builder()._apply_ordering(list(INTERLEAVED), "default", [_entry("seq", is_sequential=True)])
+class TestByDateOldestFirst:
+    def test_plain_ascending_merge(self):
+        result = PlaylistBuilder.assemble(
+            [_contribution("seq", STORY, PickFrom.OLDEST), _contribution("news", NEWS)],
+            BY_DATE,
+            OLDEST_FIRST,
+        )
+        assert _names(result) == ["story1", "chat1", "story2", "chat2", "story3"]
 
-        assert _names(result) == _names(INTERLEAVED)
+    def test_newest_preference_does_not_reverse_a_show(self):
+        """``newest`` is a preference the playlist direction may override."""
+        result = PlaylistBuilder.assemble(
+            [_contribution("seq", STORY), _contribution("news", NEWS)],
+            BY_DATE,
+            OLDEST_FIRST,
+        )
+        assert _names(result) == ["story1", "chat1", "story2", "chat2", "story3"]
+
+
+class TestSortWithinShow:
+    def test_newest_and_oldest(self):
+        assert _names(PlaylistBuilder.sort_within_show(STORY, PickFrom.NEWEST)) == ["story3", "story2", "story1"]
+        assert _names(PlaylistBuilder.sort_within_show(list(reversed(STORY)), PickFrom.OLDEST)) == [
+            "story1",
+            "story2",
+            "story3",
+        ]
 
 
 class TestNoEpisodes:
     def test_empty_input_is_safe_in_every_mode(self):
-        builder = _builder()
-        entries = [_entry("seq", is_sequential=True, position=1)]
-
-        for mode in (ASC, DESC, BY_PODCAST, "default"):
-            assert builder._apply_ordering([], mode, entries) == []
+        for arrangement in (BY_POSITION, BY_DATE):
+            for direction in (NEWEST_FIRST, OLDEST_FIRST):
+                assert PlaylistBuilder.assemble([], arrangement, direction) == []
+                assert (
+                    PlaylistBuilder.assemble([_contribution("seq", [], PickFrom.OLDEST)], arrangement, direction) == []
+                )

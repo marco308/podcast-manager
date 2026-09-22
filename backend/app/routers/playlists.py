@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.jobs import locks
-from app.models.playlist import Playlist, PlaylistOrderingMode
+from app.models.playlist import Playlist
 from app.models.playlist_podcast import PlaylistPodcast
 from app.models.podcast import Podcast
 from app.models.session import Session
@@ -19,6 +19,9 @@ from app.models.user import User
 from app.rate_limit import limiter
 from app.routers.auth import get_current_user_id, validate_csrf_token
 from app.schemas.playlist import (
+    AssignmentOverride,
+    AssignmentOverrideUpdate,
+    AssignmentRule,
     PlaylistCreate,
     PlaylistListResponse,
     PlaylistPodcastAdd,
@@ -28,6 +31,7 @@ from app.schemas.playlist import (
     PlaylistResponse,
     PlaylistUpdate,
 )
+from app.services.assignment_rules import resolve_rule
 from app.services.playlist_builder import PlaylistBuilder
 from app.services.token_manager import TokenManager
 
@@ -77,10 +81,12 @@ def _build_playlist_response(playlist: Playlist, podcast_count: int) -> Playlist
     return PlaylistResponse(
         id=playlist.id,
         name=playlist.name,
-        episode_mode=playlist.episode_mode,
         is_enabled=playlist.is_enabled,
         is_weekend_only=playlist.is_weekend_only,
-        ordering_mode=playlist.ordering_mode,
+        default_episode_limit=playlist.default_episode_limit,
+        default_pick_from=playlist.default_pick_from,
+        arrangement=playlist.arrangement,
+        date_direction=playlist.date_direction,
         spotify_playlist_id=playlist.spotify_playlist_id,
         last_updated_at=playlist.last_updated_at,
         created_at=playlist.created_at,
@@ -128,12 +134,12 @@ async def create_playlist(
         user_id=session.user_id,
         name=playlist_data.name,
         spotify_playlist_id=playlist_data.spotify_playlist_id,
-        episode_mode=playlist_data.episode_mode.value,
         is_enabled=playlist_data.is_enabled,
         is_weekend_only=playlist_data.is_weekend_only,
-        ordering_mode=PlaylistOrderingMode(playlist_data.ordering_mode.value)
-        if playlist_data.ordering_mode
-        else PlaylistOrderingMode.DEFAULT,
+        default_episode_limit=playlist_data.default_episode_limit,
+        default_pick_from=playlist_data.default_pick_from.value,
+        arrangement=playlist_data.arrangement.value,
+        date_direction=playlist_data.date_direction.value,
     )
     db.add(playlist)
     await db.commit()  # persist before the response is sent (see get_db)
@@ -180,12 +186,16 @@ async def update_playlist(
         playlist.spotify_playlist_id = update_data.spotify_playlist_id
     if update_data.is_enabled is not None:
         playlist.is_enabled = update_data.is_enabled
-    if update_data.episode_mode is not None:
-        playlist.episode_mode = update_data.episode_mode.value
     if update_data.is_weekend_only is not None:
         playlist.is_weekend_only = update_data.is_weekend_only
-    if update_data.ordering_mode is not None:
-        playlist.ordering_mode = PlaylistOrderingMode(update_data.ordering_mode.value)
+    if update_data.default_episode_limit is not None:
+        playlist.default_episode_limit = update_data.default_episode_limit
+    if update_data.default_pick_from is not None:
+        playlist.default_pick_from = update_data.default_pick_from.value
+    if update_data.arrangement is not None:
+        playlist.arrangement = update_data.arrangement.value
+    if update_data.date_direction is not None:
+        playlist.date_direction = update_data.date_direction.value
 
     await db.commit()  # persist before the response is sent (see get_db)
 
@@ -216,22 +226,60 @@ async def delete_playlist(
 # --- Playlist-Podcast assignment endpoints ---
 
 
+def _build_assignment_response(
+    playlist: Playlist, podcast: Podcast, assignment: PlaylistPodcast
+) -> PlaylistPodcastResponse:
+    """Build one assignment row with its resolved rule and raw override."""
+    rule = resolve_rule(playlist, podcast, assignment)
+    return PlaylistPodcastResponse(
+        id=podcast.id,
+        spotify_id=podcast.spotify_id,
+        name=podcast.name,
+        description=podcast.description,
+        image_url=podcast.image_url,
+        publisher=podcast.publisher,
+        total_episodes=podcast.total_episodes,
+        unplayed_episodes=podcast.unplayed_episodes,
+        is_sequential=podcast.is_sequential,
+        position=assignment.position,
+        rule=AssignmentRule(
+            episode_limit=rule.episode_limit,
+            pick_from=rule.pick_from,
+            episode_limit_source=rule.episode_limit_source,
+            pick_from_source=rule.pick_from_source,
+        ),
+        override=AssignmentOverride(
+            episode_limit=assignment.episode_limit,
+            pick_from=assignment.pick_from,
+        ),
+    )
+
+
+async def _get_owned_playlist(db: AsyncSession, playlist_id: int, user_id: int) -> Playlist:
+    """Load a playlist scoped to the user, or 404."""
+    result = await db.execute(select(Playlist).where((Playlist.id == playlist_id) & (Playlist.user_id == user_id)))
+    playlist = result.scalar_one_or_none()
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    return playlist
+
+
 @router.get("/{playlist_id}/podcasts", response_model=PlaylistPodcastListResponse)
 async def list_playlist_podcasts(
     playlist_id: int,
     user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
-):
-    """List podcasts assigned to a playlist, ordered by position."""
-    # Verify playlist exists and belongs to user
-    playlist_result = await db.execute(
-        select(Playlist).where((Playlist.id == playlist_id) & (Playlist.user_id == user_id))
-    )
-    if not playlist_result.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail="Playlist not found")
+) -> PlaylistPodcastListResponse:
+    """List podcasts assigned to a playlist, ordered by position.
+
+    Each row carries the rule the next build will apply (resolved through
+    ``resolve_rule``) and the raw override, so the UI can show which parts
+    are inherited and offer "reset to default".
+    """
+    playlist = await _get_owned_playlist(db, playlist_id, user_id)
 
     result = await db.execute(
-        select(Podcast, PlaylistPodcast.position)
+        select(Podcast, PlaylistPodcast)
         .join(PlaylistPodcast, PlaylistPodcast.podcast_id == Podcast.id)
         .where(PlaylistPodcast.playlist_id == playlist_id)
         .order_by(
@@ -242,22 +290,43 @@ async def list_playlist_podcasts(
     )
     rows = result.all()
 
-    items = [
-        PlaylistPodcastResponse(
-            id=podcast.id,
-            spotify_id=podcast.spotify_id,
-            name=podcast.name,
-            description=podcast.description,
-            image_url=podcast.image_url,
-            publisher=podcast.publisher,
-            total_episodes=podcast.total_episodes,
-            unplayed_episodes=podcast.unplayed_episodes,
-            is_sequential=podcast.is_sequential,
-            position=position,
-        )
-        for podcast, position in rows
-    ]
-    return {"items": items, "total": len(items)}
+    items = [_build_assignment_response(playlist, podcast, assignment) for podcast, assignment in rows]
+    return PlaylistPodcastListResponse(items=items, total=len(items))
+
+
+@router.patch("/{playlist_id}/podcasts/{podcast_id}", response_model=PlaylistPodcastResponse)
+async def update_playlist_podcast(
+    playlist_id: int,
+    podcast_id: int,
+    data: AssignmentOverrideUpdate,
+    session: Session = Depends(validate_csrf_token),
+    db: AsyncSession = Depends(get_db),
+) -> PlaylistPodcastResponse:
+    """Set or clear the per-assignment overrides.
+
+    A field present in the body and ``null`` clears that override (the row
+    goes back to inheriting); an absent field is left alone.
+    """
+    playlist = await _get_owned_playlist(db, playlist_id, session.user_id)
+
+    result = await db.execute(
+        select(Podcast, PlaylistPodcast)
+        .join(PlaylistPodcast, PlaylistPodcast.podcast_id == Podcast.id)
+        .where((PlaylistPodcast.playlist_id == playlist_id) & (PlaylistPodcast.podcast_id == podcast_id))
+    )
+    row = result.first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Podcast not assigned to this playlist")
+    podcast, assignment = row
+
+    if "episode_limit" in data.model_fields_set:
+        assignment.episode_limit = data.episode_limit
+    if "pick_from" in data.model_fields_set:
+        assignment.pick_from = data.pick_from.value if data.pick_from is not None else None
+
+    await db.commit()  # persist before the response is sent (see get_db)
+
+    return _build_assignment_response(playlist, podcast, assignment)
 
 
 @router.post("/{playlist_id}/podcasts")

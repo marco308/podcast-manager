@@ -3,14 +3,46 @@ import Foundation
 struct Playlist: Codable, Identifiable, Hashable {
     let id: Int
     let name: String
-    let episodeMode: String
     let isEnabled: Bool
     let isWeekendOnly: Bool
-    let orderingMode: String
+    /// Default episodes per podcast: 0 = all unplayed, n >= 1 = at most n.
+    let defaultEpisodeLimit: Int
+    /// Which end of a show's unplayed episodes to take from: "newest" | "oldest".
+    let defaultPickFrom: String
+    /// How contributions are assembled: "by_position" | "by_date".
+    let arrangement: String
+    /// Only used when arrangement is "by_date": "newest_first" | "oldest_first".
+    let dateDirection: String
     let spotifyPlaylistId: String?
     let lastUpdatedAt: String?
     let createdAt: String
     let podcastCount: Int
+
+    /// e.g. "All unplayed", "Latest only · newest", "Up to 3 · oldest".
+    var ruleSummary: String {
+        episodeRuleSummary(limit: defaultEpisodeLimit, pickFrom: defaultPickFrom)
+    }
+
+    var arrangementLabel: String {
+        switch arrangement {
+        case "by_date":
+            return dateDirection == "oldest_first" ? "By date, oldest first" : "By date, newest first"
+        default:
+            return "Podcast order"
+        }
+    }
+}
+
+/// Shared phrasing for playlist defaults and resolved assignment rules.
+func episodeRuleSummary(limit: Int, pickFrom: String) -> String {
+    let direction = pickFrom == "oldest" ? "oldest" : "newest"
+    // The direction is shown even when unlimited: it still sets the order the
+    // show's episodes are listened to within its group (matches the web UI).
+    switch limit {
+    case 0: return "All unplayed · \(direction)"
+    case 1: return "Latest only · \(direction)"
+    default: return "Up to \(limit) · \(direction)"
+    }
 }
 
 struct PlaylistListResponse: Codable {

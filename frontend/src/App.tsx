@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ConfigProvider, App as AntApp } from 'antd';
 import { AuthProvider, ThemeProvider, useTheme } from './context';
 import { MainLayout, ErrorBoundary } from './components';
-import { Login, Dashboard, Podcasts, Playlists, Settings } from './pages';
+import { Login, Dashboard, Podcasts, Playlists, PlaylistDetail, Settings } from './pages';
 import { lightTheme, darkTheme } from './theme/themeConfig';
 import './App.css';
 
@@ -35,6 +35,7 @@ function ThemedApp() {
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/podcasts" element={<Podcasts />} />
                 <Route path="/playlists" element={<Playlists />} />
+                <Route path="/playlists/:id" element={<PlaylistDetail />} />
                 <Route path="/settings" element={<Settings />} />
               </Route>
             </Routes>

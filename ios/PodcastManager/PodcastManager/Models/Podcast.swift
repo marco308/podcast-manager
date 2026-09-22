@@ -15,6 +15,28 @@ struct Podcast: Identifiable, Hashable {
     let lastSyncedAt: String?
     let createdAt: String?
     let updatedAt: String?
+    /// Resolved per-assignment rule; only present on rows from
+    /// `/api/playlists/{id}/podcasts`.
+    let rule: AssignmentRule?
+}
+
+/// What a build applies to one playlist assignment, and where each part came
+/// from (`playlist`, `sequential` or `override`).
+struct AssignmentRule: Codable, Hashable {
+    let episodeLimit: Int
+    let pickFrom: String
+    let episodeLimitSource: String
+    let pickFromSource: String
+
+    /// Same phrasing as `Playlist.ruleSummary`.
+    var summary: String {
+        episodeRuleSummary(limit: episodeLimit, pickFrom: pickFrom)
+    }
+
+    /// True when either part was set on the assignment itself.
+    var isCustom: Bool {
+        episodeLimitSource == "override" || pickFromSource == "override"
+    }
 }
 
 extension Podcast: Codable {
@@ -35,6 +57,7 @@ extension Podcast: Codable {
         lastSyncedAt = try c.decodeIfPresent(String.self, forKey: .lastSyncedAt)
         createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt)
         updatedAt = try c.decodeIfPresent(String.self, forKey: .updatedAt)
+        rule = try c.decodeIfPresent(AssignmentRule.self, forKey: .rule)
     }
 }
 

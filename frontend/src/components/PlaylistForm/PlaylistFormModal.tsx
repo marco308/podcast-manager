@@ -1,0 +1,243 @@
+import { App, Form, Input, InputNumber, Modal, Select, Switch } from 'antd';
+import { useCreatePlaylist, useUpdatePlaylist } from '../../hooks';
+import type {
+  Arrangement,
+  DateDirection,
+  PickFrom,
+  Playlist,
+  PlaylistCreate,
+  PlaylistUpdate,
+} from '../../types';
+import { EPISODE_LIMIT_MAX } from '../../types';
+
+// The form keeps the episode limit as a mode plus an optional custom count so
+// the Select can offer "All / Latest only / Up to…" while the API sees a single
+// integer (0 = all, 1 = latest, n = up to n).
+type EpisodeLimitMode = 'all' | 'latest' | 'custom';
+
+interface PlaylistFormValues {
+  name: string;
+  spotify_playlist_id?: string;
+  arrangement: Arrangement;
+  date_direction: DateDirection;
+  episode_limit_mode: EpisodeLimitMode;
+  custom_episode_limit?: number;
+  default_pick_from: PickFrom;
+  is_weekend_only: boolean;
+  is_enabled: boolean;
+}
+
+function limitToMode(limit: number): EpisodeLimitMode {
+  if (limit === 0) return 'all';
+  if (limit === 1) return 'latest';
+  return 'custom';
+}
+
+function modeToLimit(mode: EpisodeLimitMode, custom: number | undefined): number {
+  if (mode === 'all') return 0;
+  if (mode === 'latest') return 1;
+  return custom ?? 2;
+}
+
+const NEW_PLAYLIST_VALUES: PlaylistFormValues = {
+  name: '',
+  arrangement: 'by_position',
+  date_direction: 'oldest_first',
+  episode_limit_mode: 'all',
+  custom_episode_limit: undefined,
+  default_pick_from: 'newest',
+  is_weekend_only: false,
+  is_enabled: true,
+};
+
+function valuesFor(playlist: Playlist | null): PlaylistFormValues {
+  if (!playlist) return NEW_PLAYLIST_VALUES;
+  const mode = limitToMode(playlist.default_episode_limit);
+  return {
+    name: playlist.name,
+    spotify_playlist_id: playlist.spotify_playlist_id ?? undefined,
+    arrangement: playlist.arrangement,
+    date_direction: playlist.date_direction,
+    episode_limit_mode: mode,
+    custom_episode_limit: mode === 'custom' ? playlist.default_episode_limit : undefined,
+    default_pick_from: playlist.default_pick_from,
+    is_weekend_only: playlist.is_weekend_only,
+    is_enabled: playlist.is_enabled,
+  };
+}
+
+export interface PlaylistFormModalProps {
+  open: boolean;
+  // null creates a new playlist; otherwise edits this one.
+  playlist: Playlist | null;
+  onClose: () => void;
+  onSaved?: (playlist: Playlist) => void;
+}
+
+export function PlaylistFormModal({ open, playlist, onClose, onSaved }: PlaylistFormModalProps) {
+  const { message } = App.useApp();
+  const createPlaylist = useCreatePlaylist();
+  const updatePlaylist = useUpdatePlaylist();
+  const [form] = Form.useForm<PlaylistFormValues>();
+
+  const arrangement = Form.useWatch('arrangement', form);
+  const episodeLimitMode = Form.useWatch('episode_limit_mode', form);
+
+  const handleSubmit = async () => {
+    let values: PlaylistFormValues;
+    try {
+      values = await form.validateFields();
+    } catch {
+      // Form validation error — Ant Design shows inline errors automatically
+      return;
+    }
+
+    const shared = {
+      name: values.name,
+      spotify_playlist_id: values.spotify_playlist_id,
+      is_enabled: values.is_enabled,
+      is_weekend_only: values.is_weekend_only,
+      default_episode_limit: modeToLimit(values.episode_limit_mode, values.custom_episode_limit),
+      default_pick_from: values.default_pick_from,
+      arrangement: values.arrangement,
+      date_direction: values.date_direction,
+    };
+
+    try {
+      let saved: Playlist;
+      if (playlist) {
+        const updateData: PlaylistUpdate = shared;
+        saved = await updatePlaylist.mutateAsync({ id: playlist.id, data: updateData });
+        message.success('Playlist updated');
+      } else {
+        const createData: PlaylistCreate = shared;
+        saved = await createPlaylist.mutateAsync(createData);
+        message.success('Playlist created');
+      }
+      onSaved?.(saved);
+      onClose();
+    } catch {
+      message.error('Failed to save playlist');
+    }
+  };
+
+  return (
+    <Modal
+      title={playlist ? 'Edit Playlist' : 'Add Playlist'}
+      open={open}
+      onOk={handleSubmit}
+      onCancel={onClose}
+      confirmLoading={createPlaylist.isPending || updatePlaylist.isPending}
+      // Remount the form on every open so `initialValues` reflects the
+      // playlist being edited (or the defaults for a new one).
+      destroyOnHidden
+    >
+      <Form<PlaylistFormValues>
+        form={form}
+        layout="vertical"
+        style={{ marginTop: 16 }}
+        initialValues={valuesFor(playlist)}
+      >
+        <Form.Item
+          name="name"
+          label="Name"
+          rules={[{ required: true, message: 'Please enter a name' }]}
+        >
+          <Input placeholder="e.g., Morning Podcasts" />
+        </Form.Item>
+        <Form.Item
+          name="spotify_playlist_id"
+          label="Spotify Playlist ID"
+          extra="The ID of an existing Spotify playlist to update, or leave blank to create a new one"
+        >
+          <Input placeholder="e.g., 37i9dQZF1DX..." />
+        </Form.Item>
+
+        <Form.Item
+          name="arrangement"
+          label="Arrangement"
+          extra="Group each podcast's episodes in the order you drag them, or merge every episode by release date"
+          rules={[{ required: true, message: 'Please choose an arrangement' }]}
+        >
+          <Select<Arrangement>
+            options={[
+              { value: 'by_position', label: 'In podcast order' },
+              { value: 'by_date', label: 'By release date' },
+            ]}
+          />
+        </Form.Item>
+        {arrangement === 'by_date' && (
+          <Form.Item
+            name="date_direction"
+            label="Direction"
+            extra="Which end of the merged timeline the playlist starts from"
+            rules={[{ required: true, message: 'Please choose a direction' }]}
+          >
+            <Select<DateDirection>
+              options={[
+                { value: 'newest_first', label: 'Newest first' },
+                { value: 'oldest_first', label: 'Oldest first' },
+              ]}
+            />
+          </Form.Item>
+        )}
+
+        <Form.Item
+          name="episode_limit_mode"
+          label="Episodes per podcast"
+          extra="Default for every podcast in this playlist; individual podcasts can override it"
+          rules={[{ required: true, message: 'Please choose how many episodes to include' }]}
+        >
+          <Select<EpisodeLimitMode>
+            options={[
+              { value: 'all', label: 'All unplayed' },
+              { value: 'latest', label: 'Latest only' },
+              { value: 'custom', label: 'Up to…' },
+            ]}
+          />
+        </Form.Item>
+        {episodeLimitMode === 'custom' && (
+          <Form.Item
+            name="custom_episode_limit"
+            label="Maximum episodes"
+            extra={`Between 2 and ${EPISODE_LIMIT_MAX} unplayed episodes per podcast`}
+            rules={[{ required: true, message: 'Please enter a maximum' }]}
+          >
+            <InputNumber min={2} max={EPISODE_LIMIT_MAX} precision={0} style={{ width: 160 }} />
+          </Form.Item>
+        )}
+
+        <Form.Item
+          name="default_pick_from"
+          label="Take from"
+          extra="Sequential podcasts always take from the oldest unfinished episode"
+          rules={[{ required: true, message: 'Please choose where to take episodes from' }]}
+        >
+          <Select<PickFrom>
+            options={[
+              { value: 'newest', label: 'Newest' },
+              { value: 'oldest', label: 'Oldest' },
+            ]}
+          />
+        </Form.Item>
+
+        <Form.Item
+          name="is_weekend_only"
+          label="Weekend Only"
+          valuePropName="checked"
+          extra="Only update this playlist on weekends and UK public holidays"
+        >
+          <Switch />
+        </Form.Item>
+        <Form.Item
+          name="is_enabled"
+          label="Enabled"
+          valuePropName="checked"
+          extra="Disabled playlists are skipped by the daily update"
+        >
+          <Switch />
+        </Form.Item>
+      </Form>
+    </Modal>
+  );
+}

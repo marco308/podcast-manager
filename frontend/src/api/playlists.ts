@@ -1,5 +1,6 @@
 import apiClient from './client';
 import type {
+  AssignmentOverrideUpdate,
   Playlist,
   PlaylistCreate,
   PlaylistUpdate,
@@ -15,6 +16,12 @@ export const playlistsApi = {
   async list(): Promise<Playlist[]> {
     const response = await apiClient.get<PlaylistListResponse>('/playlists');
     return response.data.items;
+  },
+
+  // Get a single managed playlist
+  async get(id: number): Promise<Playlist> {
+    const response = await apiClient.get<Playlist>(`/playlists/${id}`);
+    return response.data;
   },
 
   // Create a new playlist mapping
@@ -57,6 +64,21 @@ export const playlistsApi = {
   // Add podcasts to a playlist
   async addPodcasts(playlistId: number, podcastIds: number[]): Promise<void> {
     await apiClient.post(`/playlists/${playlistId}/podcasts`, { podcast_ids: podcastIds });
+  },
+
+  // Set or clear the per-assignment rule overrides for a podcast in a playlist.
+  // A field present and null clears that override; an absent field is left
+  // alone (JSON serialisation drops undefined but keeps null).
+  async updatePodcastOverride(
+    playlistId: number,
+    podcastId: number,
+    data: AssignmentOverrideUpdate
+  ): Promise<PlaylistPodcast> {
+    const response = await apiClient.patch<PlaylistPodcast>(
+      `/playlists/${playlistId}/podcasts/${podcastId}`,
+      data
+    );
+    return response.data;
   },
 
   // Remove a podcast from a playlist

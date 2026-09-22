@@ -37,6 +37,8 @@ export function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const { token } = theme.useToken();
+  // Highlight the section for nested routes too (e.g. /playlists/3 -> /playlists).
+  const selectedKey = `/${location.pathname.split('/')[1] ?? ''}`;
 
   const handleMenuClick: MenuProps['onClick'] = ({ key }) => {
     navigate(key);
@@ -54,7 +56,7 @@ export function Sidebar() {
     >
       <Menu
         mode="inline"
-        selectedKeys={[location.pathname]}
+        selectedKeys={[selectedKey]}
         style={{ height: '100%', borderRight: 0 }}
         items={menuItems}
         onClick={handleMenuClick}

@@ -25,7 +25,7 @@ struct PlaylistRow: View {
 
                 HStack(spacing: 12) {
                     Label("\(playlist.podcastCount) podcasts", systemImage: "mic.fill")
-                    Label(episodeModeLabel, systemImage: "play.circle")
+                    Label(playlist.ruleSummary, systemImage: "play.circle")
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -59,12 +59,5 @@ struct PlaylistRow: View {
             .disabled(isRunning || !playlist.isEnabled)
         }
         .padding(.vertical, 4)
-    }
-
-    private var episodeModeLabel: String {
-        switch playlist.episodeMode {
-        case "latest_only": return "Latest only"
-        default: return "All unplayed"
-        }
     }
 }

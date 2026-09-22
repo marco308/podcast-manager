@@ -178,3 +178,82 @@ class TestPlaylistSchemaBounds:
             PlaylistPodcastReorder(podcast_ids=list(range(501)))
         # At the cap is fine.
         PlaylistPodcastAdd(podcast_ids=list(range(500)))
+
+
+class TestAssignmentOverrides:
+    """``PATCH /playlists/{id}/podcasts/{podcast_id}`` sets and clears overrides (issue #249)."""
+
+    @pytest.mark.asyncio
+    async def test_rows_resolve_through_defaults_and_overrides(self):
+        from app.routers.playlists import list_playlist_podcasts, update_playlist_podcast
+        from app.schemas.playlist import AssignmentOverrideUpdate
+
+        engine, maker = await _make_db()
+        try:
+            async with maker() as db:
+                db.add(_user())
+                db.add(Playlist(user_id=1, name="Morning", default_episode_limit=1, default_pick_from="newest"))
+                db.add(
+                    Podcast(spotify_id="story", name="Story", is_sequential=True, total_episodes=0, unplayed_episodes=0)
+                )
+                await db.commit()
+                await add_podcasts_to_playlist(
+                    playlist_id=1, data=PlaylistPodcastAdd(podcast_ids=[1]), session=SimpleNamespace(user_id=1), db=db
+                )
+
+                # Fresh row: limit from the playlist, direction from the sequential hint.
+                listed = await list_playlist_podcasts(playlist_id=1, user_id=1, db=db)
+                row = listed.items[0]
+                assert (row.rule.episode_limit, row.rule.pick_from.value) == (1, "oldest")
+                assert (row.rule.episode_limit_source, row.rule.pick_from_source) == ("playlist", "sequential")
+                assert (row.override.episode_limit, row.override.pick_from) == (None, None)
+
+                # Override the limit only; direction still inherits.
+                updated = await update_playlist_podcast(
+                    playlist_id=1,
+                    podcast_id=1,
+                    data=AssignmentOverrideUpdate(episode_limit=0),
+                    session=SimpleNamespace(user_id=1),
+                    db=db,
+                )
+                assert updated.rule.episode_limit == 0
+                assert updated.rule.episode_limit_source == "override"
+                assert updated.rule.pick_from_source == "sequential"
+
+                # Explicit null clears the override; an absent field is untouched.
+                cleared = await update_playlist_podcast(
+                    playlist_id=1,
+                    podcast_id=1,
+                    data=AssignmentOverrideUpdate.model_validate({"episode_limit": None}),
+                    session=SimpleNamespace(user_id=1),
+                    db=db,
+                )
+                assert cleared.rule.episode_limit == 1
+                assert cleared.rule.episode_limit_source == "playlist"
+        finally:
+            await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_unassigned_podcast_is_404(self):
+        from fastapi import HTTPException
+
+        from app.routers.playlists import update_playlist_podcast
+        from app.schemas.playlist import AssignmentOverrideUpdate
+
+        engine, maker = await _make_db()
+        try:
+            async with maker() as db:
+                db.add(_user())
+                db.add(Playlist(user_id=1, name="Morning"))
+                await db.commit()
+                with pytest.raises(HTTPException) as exc:
+                    await update_playlist_podcast(
+                        playlist_id=1,
+                        podcast_id=99,
+                        data=AssignmentOverrideUpdate(pick_from="oldest"),
+                        session=SimpleNamespace(user_id=1),
+                        db=db,
+                    )
+                assert exc.value.status_code == 404
+        finally:
+            await engine.dispose()
