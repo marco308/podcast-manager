@@ -6,27 +6,32 @@ swallowed every exception and returned ``[]``, which meant a transient Spotify
 outage produced an empty build, wiped the playlist, and reported success.
 """
 
+from datetime import date
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.models.playlist import Playlist, PlaylistOrderingMode
+from types import SimpleNamespace
+
+from app.models.playlist import ALL_EPISODES, Arrangement, DateDirection, Playlist
 from app.services.playlist_builder import (
+    AssignmentEntry,
     EpisodeFetchError,
     PlaylistBuilder,
     PlaylistBuildError,
-    PodcastWithPosition,
 )
 
 
-def _make_playlist(episode_mode="all_unplayed"):
+def _make_playlist(default_episode_limit=ALL_EPISODES):
     playlist = MagicMock(spec=Playlist)
     playlist.id = 1
     playlist.name = "Test Playlist"
     playlist.is_weekend_only = False
     playlist.is_enabled = True
-    playlist.episode_mode = episode_mode
-    playlist.ordering_mode = PlaylistOrderingMode.DEFAULT
+    playlist.default_episode_limit = default_episode_limit
+    playlist.default_pick_from = "newest"
+    playlist.arrangement = Arrangement.BY_POSITION.value
+    playlist.date_direction = DateDirection.OLDEST_FIRST.value
     playlist.spotify_playlist_id = "spotify123"
     playlist.last_updated_at = None
     return playlist
@@ -40,10 +45,14 @@ def _make_podcast(name, spotify_id, is_sequential=False):
     return podcast
 
 
+def _assignment(position):
+    return SimpleNamespace(position=position, episode_limit=None, pick_from=None)
+
+
 def _builder_with_podcasts(*podcasts):
     builder = PlaylistBuilder(AsyncMock(), MagicMock())
     builder._get_playlist_podcasts = AsyncMock(
-        return_value=[PodcastWithPosition(podcast=p, position=i) for i, p in enumerate(podcasts)]
+        return_value=[AssignmentEntry(podcast=p, assignment=_assignment(i)) for i, p in enumerate(podcasts)]
     )
     return builder
 
@@ -52,6 +61,7 @@ def _episode(uri, release_date="2026-01-01", show_id="show1"):
     episode = MagicMock()
     episode.uri = uri
     episode.release_date = release_date
+    episode.release_date_key = date.fromisoformat(release_date)
     episode.show_id = show_id
     return episode
 
@@ -65,7 +75,7 @@ class TestBuildRefusesEmptyWrite:
             _make_podcast("Alpha", "show1"),
             _make_podcast("Beta", "show2"),
         )
-        builder._get_unplayed_episodes = AsyncMock(side_effect=EpisodeFetchError("boom"))
+        builder._fetch_unplayed = AsyncMock(side_effect=EpisodeFetchError("boom"))
 
         with pytest.raises(PlaylistBuildError):
             await builder.build_playlist(_make_playlist())
@@ -74,7 +84,7 @@ class TestBuildRefusesEmptyWrite:
     async def test_update_playlist_does_not_write_when_all_fetches_fail(self):
         """The critical assertion: no Spotify write happens at all."""
         builder = _builder_with_podcasts(_make_podcast("Alpha", "show1"))
-        builder._get_unplayed_episodes = AsyncMock(side_effect=EpisodeFetchError("boom"))
+        builder._fetch_unplayed = AsyncMock(side_effect=EpisodeFetchError("boom"))
 
         spotify = AsyncMock()
         builder._ensure_spotify_playlist = AsyncMock(return_value="spotify123")
@@ -104,12 +114,12 @@ class TestPartialFailures:
             _make_podcast("Beta", "show2"),
         )
 
-        async def fetch(podcast, max_episodes=500):
+        async def fetch(podcast, *, need, from_oldest):
             if podcast.name == "Beta":
                 raise EpisodeFetchError("boom")
             return [_episode("spotify:episode:a1")]
 
-        builder._get_unplayed_episodes = AsyncMock(side_effect=fetch)
+        builder._fetch_unplayed = AsyncMock(side_effect=fetch)
 
         spotify = AsyncMock()
         builder._ensure_spotify_playlist = AsyncMock(return_value="spotify123")
@@ -130,7 +140,7 @@ class TestPartialFailures:
     @pytest.mark.asyncio
     async def test_clean_build_reports_success(self):
         builder = _builder_with_podcasts(_make_podcast("Alpha", "show1"))
-        builder._get_unplayed_episodes = AsyncMock(return_value=[_episode("spotify:episode:a1")])
+        builder._fetch_unplayed = AsyncMock(return_value=[_episode("spotify:episode:a1")])
 
         spotify = AsyncMock()
         builder._ensure_spotify_playlist = AsyncMock(return_value="spotify123")
@@ -144,55 +154,66 @@ class TestPartialFailures:
         assert result.episode_count == 1
 
 
+def _page(items, *, total, more):
+    return {"items": items, "total": total, "next": "next-url" if more else None}
+
+
 class TestUnplayedCountSideEffect:
-    """unplayed_episodes is now an exact by-product of the build (issue #155).
+    """unplayed_episodes is an exact by-product of a *complete* walk (issue #155).
 
     sync_podcasts used to extrapolate it from the newest 50 episodes and store
-    the guess as fact; the build already has the full episode list.
+    the guess as fact. A limited rule reads a slice and must not overwrite it.
     """
 
     @pytest.mark.asyncio
-    async def test_exact_count_is_recorded_on_the_podcast(self):
+    async def test_exact_count_is_recorded_after_a_full_walk(self):
         podcast = _make_podcast("Alpha", "show1")
         podcast.unplayed_episodes = 999
         builder = _builder_with_podcasts(podcast)
 
         spotify = AsyncMock()
         # 3 episodes, one already played -> 2 unplayed.
-        spotify.get_show_episodes_all = AsyncMock(
-            return_value=[
-                {"id": "a", "uri": "spotify:episode:a", "release_date": "2026-01-01"},
-                {"id": "b", "uri": "spotify:episode:b", "release_date": "2026-01-02"},
-                {
-                    "id": "c",
-                    "uri": "spotify:episode:c",
-                    "release_date": "2026-01-03",
-                    "resume_point": {"fully_played": True},
-                },
-            ]
+        spotify.get_show_episodes = AsyncMock(
+            return_value=_page(
+                [
+                    {"id": "a", "uri": "spotify:episode:a", "release_date": "2026-01-01"},
+                    {"id": "b", "uri": "spotify:episode:b", "release_date": "2026-01-02"},
+                    {
+                        "id": "c",
+                        "uri": "spotify:episode:c",
+                        "release_date": "2026-01-03",
+                        "resume_point": {"fully_played": True},
+                    },
+                ],
+                total=3,
+                more=False,
+            )
         )
         builder._get_spotify_client = AsyncMock(return_value=spotify)
 
-        result = await builder._get_unplayed_episodes(podcast)
+        result = await builder._fetch_unplayed(podcast, need=None, from_oldest=False)
 
         assert len(result) == 2
         assert podcast.unplayed_episodes == 2
 
     @pytest.mark.asyncio
-    async def test_count_is_left_alone_when_the_fetch_hit_the_cap(self):
-        """A capped fetch can't see the whole catalogue, so don't claim a total."""
+    async def test_count_is_left_alone_when_a_limited_walk_stopped_early(self):
+        """A short walk can't see the whole catalogue, so don't claim a total."""
         podcast = _make_podcast("Alpha", "show1")
         podcast.unplayed_episodes = 999
         builder = _builder_with_podcasts(podcast)
 
         spotify = AsyncMock()
-        spotify.get_show_episodes_all = AsyncMock(
-            return_value=[
-                {"id": str(i), "uri": f"spotify:episode:{i}", "release_date": "2026-01-01"} for i in range(10)
-            ]
+        spotify.get_show_episodes = AsyncMock(
+            return_value=_page(
+                [{"id": str(i), "uri": f"spotify:episode:{i}", "release_date": "2026-01-01"} for i in range(50)],
+                total=200,
+                more=True,
+            )
         )
         builder._get_spotify_client = AsyncMock(return_value=spotify)
 
-        await builder._get_unplayed_episodes(podcast, max_episodes=10)
+        await builder._fetch_unplayed(podcast, need=1, from_oldest=False)
 
         assert podcast.unplayed_episodes == 999, "a truncated fetch must not overwrite the count"
+        spotify.get_show_episodes.assert_awaited_once()

@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { playlistsApi } from '../api';
-import type { PlaylistCreate, PlaylistUpdate } from '../types';
+import type { AssignmentOverrideUpdate, PlaylistCreate, PlaylistUpdate } from '../types';
 import { podcastKeys } from './usePodcasts';
 
 // Query key factory for playlists
@@ -8,6 +8,7 @@ export const playlistKeys = {
   all: ['playlists'] as const,
   lists: () => [...playlistKeys.all, 'list'] as const,
   list: () => [...playlistKeys.lists()] as const,
+  detail: (playlistId: number) => [...playlistKeys.all, 'detail', playlistId] as const,
   podcasts: (playlistId: number) => [...playlistKeys.all, 'podcasts', playlistId] as const,
 };
 
@@ -16,6 +17,15 @@ export function usePlaylists() {
   return useQuery({
     queryKey: playlistKeys.list(),
     queryFn: playlistsApi.list,
+  });
+}
+
+// Hook to get a single playlist
+export function usePlaylist(playlistId: number) {
+  return useQuery({
+    queryKey: playlistKeys.detail(playlistId),
+    queryFn: () => playlistsApi.get(playlistId),
+    enabled: !!playlistId,
   });
 }
 
@@ -48,7 +58,9 @@ export function useUpdatePlaylist() {
     mutationFn: ({ id, data }: { id: number; data: PlaylistUpdate }) =>
       playlistsApi.update(id, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: playlistKeys.lists() });
+      // The detail page and the resolved rule on every assignment row both
+      // depend on the playlist defaults, so drop everything under the key.
+      queryClient.invalidateQueries({ queryKey: playlistKeys.all });
     },
   });
 }
@@ -73,7 +85,8 @@ export function useRunPlaylist() {
   return useMutation({
     mutationFn: (id: number) => playlistsApi.run(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: playlistKeys.lists() });
+      // A run touches last_updated_at (list + detail) and unplayed counts.
+      queryClient.invalidateQueries({ queryKey: playlistKeys.all });
     },
   });
 }
@@ -116,6 +129,26 @@ export function useRemovePodcastFromPlaylist() {
       queryClient.invalidateQueries({ queryKey: playlistKeys.podcasts(playlistId) });
       queryClient.invalidateQueries({ queryKey: playlistKeys.lists() });
       queryClient.invalidateQueries({ queryKey: podcastKeys.all });
+    },
+  });
+}
+
+// Hook to set or clear the rule overrides on one playlist assignment
+export function useUpdatePlaylistPodcast() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      playlistId,
+      podcastId,
+      data,
+    }: {
+      playlistId: number;
+      podcastId: number;
+      data: AssignmentOverrideUpdate;
+    }) => playlistsApi.updatePodcastOverride(playlistId, podcastId, data),
+    onSuccess: (_, { playlistId }) => {
+      queryClient.invalidateQueries({ queryKey: playlistKeys.podcasts(playlistId) });
     },
   });
 }

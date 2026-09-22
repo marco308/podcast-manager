@@ -83,19 +83,32 @@ struct PlaylistDetailScreen: View {
 
     private var settingsSection: some View {
         Section("Playlist Settings") {
-            LabeledContent("Episode Mode", value: episodeModeLabel)
+            LabeledContent("Arrangement", value: playlist.arrangementLabel)
+            LabeledContent("Episodes per podcast", value: playlist.ruleSummary)
             if playlist.isWeekendOnly {
                 LabeledContent("Weekend Only", value: "Yes")
             }
-            LabeledContent("Ordering", value: orderingModeLabel)
             LabeledContent("Status", value: playlist.isEnabled ? "Enabled" : "Disabled")
+            if let url = playlist.spotifyURL {
+                // Universal link: opens the Spotify app when installed.
+                Link(destination: url) {
+                    Label("Open in Spotify", systemImage: "arrow.up.right.square")
+                }
+            } else {
+                LabeledContent("Spotify playlist", value: "Created on first run")
+            }
         }
     }
 
     private var podcastsSection: some View {
         Section("Podcasts (\(podcasts.count))") {
             ForEach(podcasts) { podcast in
-                PodcastRow(podcast: podcast)
+                VStack(alignment: .leading, spacing: 4) {
+                    PodcastRow(podcast: podcast)
+                    if let rule = podcast.rule {
+                        ruleCaption(rule)
+                    }
+                }
             }
             .onDelete { indexSet in
                 Task { await removePodcasts(at: indexSet) }
@@ -103,20 +116,29 @@ struct PlaylistDetailScreen: View {
         }
     }
 
-    private var episodeModeLabel: String {
-        switch playlist.episodeMode {
-        case "latest_only": return "Latest only"
-        default: return "All unplayed"
+    /// One caption line: the resolved rule plus a badge saying why it differs
+    /// from the playlist default, if it does.
+    private func ruleCaption(_ rule: AssignmentRule) -> some View {
+        HStack(spacing: 6) {
+            Text(rule.summary)
+            if rule.isCustom {
+                ruleBadge("Custom", color: Color.accentColor)
+            } else if rule.pickFromSource == "sequential" {
+                ruleBadge("Sequential", color: .orange)
+            }
         }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .padding(.leading, 68) // align under the text column of PodcastRow (56pt art + 12pt gap)
     }
 
-    private var orderingModeLabel: String {
-        switch playlist.orderingMode {
-        case "podcast_order": return "Podcast order"
-        case "chronological_asc": return "Oldest first"
-        case "chronological_desc": return "Newest first"
-        default: return "Default"
-        }
+    private func ruleBadge(_ text: String, color: Color) -> some View {
+        Text(text)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(color.opacity(0.15))
+            .foregroundStyle(color)
+            .clipShape(Capsule())
     }
 
     private func errorView(_ message: String) -> some View {

@@ -4,7 +4,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.playlist import EpisodeMode, PlaylistOrderingMode
+from app.models.playlist import ALL_EPISODES, Arrangement, DateDirection, PickFrom
+from app.services.assignment_rules import RuleSource
 
 # Spotify playlist IDs are 22 chars of base62 — 64 leaves slack without
 # accepting arbitrary-length input.
@@ -13,16 +14,22 @@ SPOTIFY_ID_MAX_LENGTH = 64
 NAME_MAX_LENGTH = 255
 # Sanity cap on bulk assignment/reorder payloads.
 PODCAST_IDS_MAX_LENGTH = 500
+# ``episode_limit`` is 0 (all) or 1..N; N is bounded by the per-show fetch cap.
+EPISODE_LIMIT_MAX = 500
 
 
 class PlaylistBase(BaseModel):
     """Base playlist schema."""
 
     name: str
-    episode_mode: EpisodeMode = EpisodeMode.ALL_UNPLAYED
     is_enabled: bool = True
     is_weekend_only: bool = False
-    ordering_mode: PlaylistOrderingMode = PlaylistOrderingMode.DEFAULT
+    # Defaults inherited by assignments without an override.
+    default_episode_limit: int = Field(ALL_EPISODES, ge=0, le=EPISODE_LIMIT_MAX)
+    default_pick_from: PickFrom = PickFrom.NEWEST
+    # Assembly.
+    arrangement: Arrangement = Arrangement.BY_POSITION
+    date_direction: DateDirection = DateDirection.OLDEST_FIRST
 
 
 class PlaylistCreate(PlaylistBase):
@@ -50,9 +57,11 @@ class PlaylistUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=NAME_MAX_LENGTH)
     spotify_playlist_id: str | None = Field(None, max_length=SPOTIFY_ID_MAX_LENGTH)
     is_enabled: bool | None = None
-    episode_mode: EpisodeMode | None = None
     is_weekend_only: bool | None = None
-    ordering_mode: PlaylistOrderingMode | None = None
+    default_episode_limit: int | None = Field(None, ge=0, le=EPISODE_LIMIT_MAX)
+    default_pick_from: PickFrom | None = None
+    arrangement: Arrangement | None = None
+    date_direction: DateDirection | None = None
 
 
 class PlaylistListResponse(BaseModel):
@@ -66,6 +75,33 @@ class PlaylistPodcastAdd(BaseModel):
     """Schema for adding podcasts to a playlist."""
 
     podcast_ids: list[int] = Field(max_length=PODCAST_IDS_MAX_LENGTH)
+
+
+class AssignmentRule(BaseModel):
+    """The rule a build applies to one assignment, and where each part came from."""
+
+    episode_limit: int
+    pick_from: PickFrom
+    episode_limit_source: RuleSource
+    pick_from_source: RuleSource
+
+
+class AssignmentOverride(BaseModel):
+    """The raw per-assignment overrides. ``None`` means "inherit"."""
+
+    episode_limit: int | None = None
+    pick_from: PickFrom | None = None
+
+
+class AssignmentOverrideUpdate(BaseModel):
+    """Body for ``PATCH /playlists/{id}/podcasts/{podcast_id}``.
+
+    A field that is present and ``null`` clears that override; a field that is
+    absent is left alone (checked via ``model_fields_set``).
+    """
+
+    episode_limit: int | None = Field(None, ge=0, le=EPISODE_LIMIT_MAX)
+    pick_from: PickFrom | None = None
 
 
 class PlaylistPodcastResponse(BaseModel):
@@ -83,6 +119,8 @@ class PlaylistPodcastResponse(BaseModel):
     unplayed_episodes: int = 0
     is_sequential: bool
     position: int | None = None
+    rule: AssignmentRule
+    override: AssignmentOverride
 
 
 class PlaylistPodcastListResponse(BaseModel):

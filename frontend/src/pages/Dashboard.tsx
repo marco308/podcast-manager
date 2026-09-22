@@ -5,11 +5,13 @@ import {
   UnorderedListOutlined,
   ThunderboltOutlined,
   CheckCircleOutlined,
+  ExportOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { usePodcasts, useSyncPodcasts, usePlaylists, useRunAllPlaylists } from '../hooks';
 import { LoadingSpinner } from '../components';
 import { getErrorMessage } from '../api';
+import { ruleSummary, spotifyPlaylistUrl } from '../utils/playlistLabels';
 
 const { Title, Text } = Typography;
 const { useBreakpoint } = Grid;
@@ -196,10 +198,10 @@ export function Dashboard() {
                     </Text>
                     <Space size={4} wrap>
                       <Tag
-                        color={playlist.episode_mode === 'all_unplayed' ? 'blue' : 'green'}
+                        color={playlist.default_episode_limit === 0 ? 'blue' : 'green'}
                         style={{ width: 'fit-content' }}
                       >
-                        {playlist.episode_mode === 'all_unplayed' ? 'All Unplayed' : 'Latest Only'}
+                        {ruleSummary(playlist.default_episode_limit, playlist.default_pick_from)}
                       </Tag>
                       {playlist.is_weekend_only && (
                         <Tag color="orange" style={{ width: 'fit-content' }}>
@@ -219,6 +221,16 @@ export function Dashboard() {
                       <Tag color="default" style={{ width: 'fit-content' }}>
                         Disabled
                       </Tag>
+                    )}
+                    {spotifyPlaylistUrl(playlist.spotify_playlist_id) && (
+                      <a
+                        href={spotifyPlaylistUrl(playlist.spotify_playlist_id) ?? undefined}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ fontSize: 12 }}
+                      >
+                        Open in Spotify <ExportOutlined />
+                      </a>
                     )}
                   </Space>
                 </Card>

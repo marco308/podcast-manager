@@ -67,16 +67,23 @@ Registered in `app/jobs/scheduler.py`, started from the FastAPI lifespan context
 
 ## Domain Concepts
 
-**Playlist ↔ Podcast assignments:** many-to-many via `playlist_podcasts` (see `models/playlist_podcast.py`); each row has an optional `position` for per-playlist ordering. A podcast can sit in multiple playlists with independent positions.
+**Playlist ↔ Podcast assignments:** many-to-many via `playlist_podcasts` (see `models/playlist_podcast.py`). The assignment row is where "what this show contributes to this playlist" lives (`docs/design/assignment-rules.md`, issue #249):
+- `position` — per-playlist ordering, used when the playlist's `arrangement` is `by_position`
+- `episode_limit` — `0` = all unplayed, `n` = at most n, `NULL` = inherit the playlist default
+- `pick_from` — `newest` / `oldest`, `NULL` = inherit (sequential hint, then playlist default)
+
+`services/assignment_rules.py::resolve_rule` is the single resolver used by both the builder and the API; the API returns the resolved `rule` and the raw `override` on every row so the UI shows exactly what the next build does. `PATCH /playlists/{id}/podcasts/{podcast_id}` sets or clears overrides (present-and-null clears, absent leaves alone via `model_fields_set`).
 
 **Playlist settings:**
-- `episode_mode`: `all_unplayed` (every unplayed episode) or `latest_only` (newest unplayed per podcast)
+- `default_episode_limit`, `default_pick_from`: inherited by assignments without an override
+- `arrangement`: `by_position` (concatenate groups in assignment order) or `by_date` (merge by release date in `date_direction`). In a `by_date` / `newest_first` playlist, a show whose rule resolved to `oldest` keeps the slots it won in the merge but fills them oldest-first, so a serial is never played out of order (`PlaylistBuilder.assemble`, the slot refill from issue #146). `newest` is only a preference and follows the playlist direction.
 - `is_weekend_only`: on a day that isn't Fri/Sat/Sun or a UK public holiday, the playlist is **skipped entirely** — `update_playlist` returns early with `skipped=True` before any Spotify call, so the previous contents survive untouched. Holiday lookup is in `utils/holidays.py`. Note the gate lives in `update_playlist`, not `build_playlist`: an earlier version gated the build, which returned an empty list and — because `replace_playlist_items` is a full replace — *blanked* the playlist on weekdays (issue #150).
-- `ordering_mode`: `default`, `podcast_order`, `chronological_asc`, `chronological_desc`
 - `is_enabled`: jobs skip disabled playlists
 
+**Fetching is proportional to the rule** (`PlaylistBuilder._fetch_unplayed`): a `newest` rule walks pages from offset 0 and stops once it has enough unplayed; an `oldest` rule reads `total` from the first page and walks backwards from the tail; an unlimited rule reads up to `MAX_EPISODES_PER_SHOW`. `podcast.unplayed_episodes` is only written when the walk saw the whole catalogue.
+
 **Podcast attribute:**
-- `is_sequential`: story-based, always ordered oldest-first regardless of playlist `ordering_mode`
+- `is_sequential`: story-based. A hint that resolves `pick_from` to `oldest` on every assignment unless the row overrides it.
 
 **Single-user by construction:** `auth.py` closes registration once one `User` row exists, so the deployment has exactly one user. Consequently `podcasts` is a **deliberately global table** — it has no `user_id`, and the podcast routes do not filter by owner. `playlists` *is* user-scoped (it predates the decision and the column is harmless), but nothing depends on that scoping for security. If multi-user is ever wanted, adding `Podcast.user_id` and filtering every podcast route is a prerequisite, not an optimisation (issue #154).
 

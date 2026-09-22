@@ -15,19 +15,21 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.models.playlist import Playlist, PlaylistOrderingMode
+from app.models.playlist import ALL_EPISODES, Arrangement, DateDirection, Playlist
 from app.services.playlist_builder import PlaylistBuilder
 
 
-def _make_playlist(*, is_weekend_only=False, episode_mode="all_unplayed"):
+def _make_playlist(*, is_weekend_only=False):
     """Create a mock Playlist object."""
     playlist = MagicMock(spec=Playlist)
     playlist.id = 1
     playlist.name = "Test Playlist"
     playlist.is_weekend_only = is_weekend_only
     playlist.is_enabled = True
-    playlist.episode_mode = episode_mode
-    playlist.ordering_mode = PlaylistOrderingMode.DEFAULT
+    playlist.default_episode_limit = ALL_EPISODES
+    playlist.default_pick_from = "newest"
+    playlist.arrangement = Arrangement.BY_POSITION.value
+    playlist.date_direction = DateDirection.OLDEST_FIRST.value
     playlist.spotify_playlist_id = "spotify123"
     playlist.last_updated_at = None
     return playlist

@@ -9,10 +9,9 @@ in both directions. Every sort now goes through ``Episode.release_date_key``.
 """
 
 from datetime import date
-from unittest.mock import MagicMock
-
-from app.models.playlist import PlaylistOrderingMode
-from app.services.playlist_builder import Episode, PlaylistBuilder, PodcastWithPosition, parse_release_date
+from app.models.playlist import Arrangement, DateDirection, PickFrom
+from app.services.assignment_rules import ResolvedRule
+from app.services.playlist_builder import Episode, PlaylistBuilder, ShowContribution, parse_release_date
 
 
 def _episode(name, release_date, show_id="show"):
@@ -28,12 +27,9 @@ def _episode(name, release_date, show_id="show"):
     )
 
 
-def _entry(spotify_id, *, is_sequential=False, position=None):
-    podcast = MagicMock()
-    podcast.spotify_id = spotify_id
-    podcast.is_sequential = is_sequential
-    podcast.name = spotify_id
-    return PodcastWithPosition(podcast=podcast, position=position)
+def _contribution(show_id, episodes, pick=PickFrom.NEWEST):
+    rule = ResolvedRule(episode_limit=0, pick_from=pick, episode_limit_source="playlist", pick_from_source="playlist")
+    return ShowContribution(show_id=show_id, rule=rule, episodes=list(episodes))
 
 
 def _names(episodes):
@@ -103,16 +99,15 @@ class TestSortEpisodes:
         # result is deterministic rather than depending on string luck.
         a = _episode("a", "2024-01-01")
         b = _episode("b", "2024")
-        builder = PlaylistBuilder(MagicMock(), MagicMock())
-        assert _names(builder._sort_episodes([a, b], sequential=True)) == ["a", "b"]
-        assert _names(builder._sort_episodes([b, a], sequential=True)) == ["b", "a"]
+        assert _names(PlaylistBuilder.sort_within_show([a, b], PickFrom.OLDEST)) == ["a", "b"]
+        assert _names(PlaylistBuilder.sort_within_show([b, a], PickFrom.OLDEST)) == ["b", "a"]
 
     def test_sequential_is_oldest_first_across_precisions(self):
-        result = PlaylistBuilder(MagicMock(), MagicMock())._sort_episodes(list(MIXED), sequential=True)
+        result = PlaylistBuilder.sort_within_show(list(MIXED), PickFrom.OLDEST)
         assert _names(result) == OLDEST_FIRST
 
     def test_non_sequential_is_newest_first_across_precisions(self):
-        result = PlaylistBuilder(MagicMock(), MagicMock())._sort_episodes(list(MIXED), sequential=False)
+        result = PlaylistBuilder.sort_within_show(list(MIXED), PickFrom.NEWEST)
         assert _names(result) == list(reversed(OLDEST_FIRST))
 
     def test_raw_string_order_would_have_been_wrong(self):
@@ -123,37 +118,35 @@ class TestSortEpisodes:
         a = _episode("a", "2024-1")  # sloppy month, parses to 2024-01-01
         b = _episode("b", "2024-02-10")
         assert "2024-1" > "2024-02-10"  # string order says a is newer
-        result = PlaylistBuilder(MagicMock(), MagicMock())._sort_episodes([a, b], sequential=True)
+        result = PlaylistBuilder.sort_within_show([a, b], PickFrom.OLDEST)
         assert _names(result) == ["a", "b"]  # date order says a is older
 
 
-class TestOrderingModes:
-    def test_chronological_asc_and_desc(self):
-        builder = PlaylistBuilder(MagicMock(), MagicMock())
-        asc = builder._apply_ordering(list(MIXED), PlaylistOrderingMode.CHRONOLOGICAL_ASC.value, [_entry("show")])
-        desc = builder._apply_ordering(list(MIXED), PlaylistOrderingMode.CHRONOLOGICAL_DESC.value, [_entry("show")])
+class TestAssembly:
+    def test_by_date_asc_and_desc(self):
+        groups = [_contribution("show", MIXED)]
+        asc = PlaylistBuilder.assemble(groups, Arrangement.BY_DATE.value, DateDirection.OLDEST_FIRST.value)
+        desc = PlaylistBuilder.assemble(groups, Arrangement.BY_DATE.value, DateDirection.NEWEST_FIRST.value)
         assert _names(asc) == OLDEST_FIRST
         assert _names(desc) == list(reversed(OLDEST_FIRST))
 
-    def test_sequential_slots_in_chronological_desc_use_parsed_dates(self):
-        episodes = [
-            _episode("s_year", "2024", "seq"),
-            _episode("s_day", "2024-03-15", "seq"),
-            _episode("n_day", "2024-02-01", "news"),
-        ]
-        result = PlaylistBuilder(MagicMock(), MagicMock())._apply_ordering(
-            episodes,
-            PlaylistOrderingMode.CHRONOLOGICAL_DESC.value,
-            [_entry("seq", is_sequential=True), _entry("news")],
+    def test_oldest_show_slots_in_newest_first_merge_use_parsed_dates(self):
+        seq = [_episode("s_year", "2024", "seq"), _episode("s_day", "2024-03-15", "seq")]
+        news = [_episode("n_day", "2024-02-01", "news")]
+        result = PlaylistBuilder.assemble(
+            [_contribution("seq", seq, PickFrom.OLDEST), _contribution("news", news)],
+            Arrangement.BY_DATE.value,
+            DateDirection.NEWEST_FIRST.value,
         )
-        # Global newest-first: s_day (Mar), n_day (Feb), s_year (Jan 1).
-        # The sequential show holds slots 0 and 2, filled oldest-first.
+        # Merge newest-first: s_day (Mar), n_day (Feb), s_year (Jan 1).
+        # The serial holds slots 0 and 2, filled oldest-first.
         assert _names(result) == ["s_year", "n_day", "s_day"]
 
-    def test_podcast_order_sorts_within_show_by_parsed_date(self):
-        result = PlaylistBuilder(MagicMock(), MagicMock())._apply_ordering(
-            list(MIXED),
-            PlaylistOrderingMode.PODCAST_ORDER.value,
-            [_entry("show", is_sequential=True, position=0)],
+    def test_by_position_keeps_the_within_show_order_it_is_given(self):
+        ordered = PlaylistBuilder.sort_within_show(list(MIXED), PickFrom.OLDEST)
+        result = PlaylistBuilder.assemble(
+            [_contribution("show", ordered, PickFrom.OLDEST)],
+            Arrangement.BY_POSITION.value,
+            DateDirection.NEWEST_FIRST.value,
         )
         assert _names(result) == OLDEST_FIRST

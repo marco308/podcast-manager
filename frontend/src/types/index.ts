@@ -29,20 +29,34 @@ export interface PodcastUpdate {
   is_sequential?: boolean;
 }
 
-// Playlist types
-export type EpisodeMode = 'all_unplayed' | 'latest_only';
-export type PlaylistOrderingMode =
-  'default' | 'podcast_order' | 'chronological_asc' | 'chronological_desc';
+// Playlist types (see docs/design/assignment-rules.md)
+
+// Which end of a show's unplayed episodes to take from, and the order they
+// are listened to.
+export type PickFrom = 'newest' | 'oldest';
+// How contributions are assembled: grouped per podcast in assignment order,
+// or merged across podcasts by release date.
+export type Arrangement = 'by_position' | 'by_date';
+// Only used when `arrangement` is `by_date`.
+export type DateDirection = 'newest_first' | 'oldest_first';
+// Where a resolved rule field came from.
+export type RuleSource = 'override' | 'sequential' | 'playlist';
+
+// `episode_limit` is 0 for "all unplayed", n >= 1 for "at most n" (max 500).
+export const EPISODE_LIMIT_ALL = 0;
+export const EPISODE_LIMIT_MAX = 500;
 
 export interface Playlist {
   id: number;
   name: string;
   spotify_playlist_id: string | null;
-  episode_mode: EpisodeMode;
   is_enabled: boolean;
   is_weekend_only: boolean;
+  default_episode_limit: number;
+  default_pick_from: PickFrom;
+  arrangement: Arrangement;
+  date_direction: DateDirection;
   podcast_count: number;
-  ordering_mode: PlaylistOrderingMode;
   last_updated_at: string | null;
   created_at: string;
 }
@@ -50,29 +64,59 @@ export interface Playlist {
 export interface PlaylistCreate {
   name: string;
   spotify_playlist_id?: string;
-  episode_mode: EpisodeMode;
   is_enabled?: boolean;
   is_weekend_only?: boolean;
-  ordering_mode?: PlaylistOrderingMode;
+  default_episode_limit?: number;
+  default_pick_from?: PickFrom;
+  arrangement?: Arrangement;
+  date_direction?: DateDirection;
 }
 
 export interface PlaylistUpdate {
   name?: string;
   spotify_playlist_id?: string;
   is_enabled?: boolean;
-  episode_mode?: EpisodeMode;
   is_weekend_only?: boolean;
-  ordering_mode?: PlaylistOrderingMode;
+  default_episode_limit?: number;
+  default_pick_from?: PickFrom;
+  arrangement?: Arrangement;
+  date_direction?: DateDirection;
+}
+
+// The rule the next build applies to one assignment, and where each part came from.
+export interface AssignmentRule {
+  episode_limit: number;
+  pick_from: PickFrom;
+  episode_limit_source: RuleSource;
+  pick_from_source: RuleSource;
+}
+
+// The raw per-assignment overrides; null means "inherit".
+export interface AssignmentOverride {
+  episode_limit: number | null;
+  pick_from: PickFrom | null;
+}
+
+// Body for PATCH /playlists/{id}/podcasts/{podcast_id}. A field that is
+// present and null clears that override; an absent field is left alone.
+export interface AssignmentOverrideUpdate {
+  episode_limit?: number | null;
+  pick_from?: PickFrom | null;
 }
 
 export interface PlaylistPodcast {
   id: number;
   spotify_id: string;
   name: string;
-  image_url?: string;
-  publisher?: string;
+  description?: string | null;
+  image_url: string | null;
+  publisher: string | null;
+  total_episodes: number;
+  unplayed_episodes: number;
   is_sequential: boolean;
   position: number | null;
+  rule: AssignmentRule;
+  override: AssignmentOverride;
 }
 
 // Sync types

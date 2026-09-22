@@ -1,7 +1,9 @@
 """Pydantic Schemas for API validation."""
 
 from app.schemas.playlist import (
-    EpisodeMode,
+    AssignmentOverride,
+    AssignmentOverrideUpdate,
+    AssignmentRule,
     PlaylistBase,
     PlaylistCreate,
     PlaylistPodcastAdd,
@@ -24,7 +26,9 @@ __all__ = [
     "PodcastBase",
     "PodcastResponse",
     "PodcastUpdate",
-    "EpisodeMode",
+    "AssignmentOverride",
+    "AssignmentOverrideUpdate",
+    "AssignmentRule",
     "PlaylistBase",
     "PlaylistResponse",
     "PlaylistCreate",

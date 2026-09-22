@@ -1,22 +1,35 @@
-"""Playlist builder service for generating playlist content based on assignments."""
+"""Playlist builder service for generating playlist content based on assignments.
+
+What each show contributes is decided per assignment through
+``resolve_rule`` (limit + direction); the playlist decides how the
+contributions are assembled (``arrangement`` + ``date_direction``). See
+docs/design/assignment-rules.md.
+"""
 
 import logging
-from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.playlist import Playlist, PlaylistOrderingMode
+from app.models.playlist import Arrangement, DateDirection, PickFrom, Playlist
 from app.models.playlist_podcast import PlaylistPodcast
 from app.models.podcast import Podcast
 from app.models.user import User
+from app.services.assignment_rules import ResolvedRule, resolve_rule
 from app.services.spotify import SpotifyService
 from app.services.token_manager import TokenManager
 from app.utils.holidays import is_weekend_or_holiday
 
 logger = logging.getLogger(__name__)
+
+# Per-show fetch cap. Bounds the work for an unlimited rule on a show with a
+# huge back-catalogue; a limited rule stops as soon as it has enough.
+MAX_EPISODES_PER_SHOW = 500
+# Spotify's page size for /shows/{id}/episodes.
+PAGE_SIZE = 50
 
 
 class EpisodeFetchError(Exception):
@@ -105,11 +118,24 @@ class PlaylistUpdateResult:
 
 
 @dataclass
-class PodcastWithPosition:
-    """A podcast together with its position in a playlist."""
+class AssignmentEntry:
+    """A podcast together with its assignment row in a playlist."""
 
     podcast: Podcast
-    position: int | None
+    assignment: PlaylistPodcast
+
+    @property
+    def position(self) -> int | None:
+        return self.assignment.position
+
+
+@dataclass
+class ShowContribution:
+    """What one assignment contributed to a build: its rule and its episodes."""
+
+    show_id: str
+    rule: ResolvedRule
+    episodes: list[Episode]
 
 
 class PlaylistBuilder:
@@ -153,17 +179,14 @@ class PlaylistBuilder:
             self._spotify._access_token = access_token
         return self._spotify
 
-    async def _get_playlist_podcasts(self, playlist_id: int) -> list[PodcastWithPosition]:
-        """Get podcasts assigned to a playlist, ordered by position.
-
-        Args:
-            playlist_id: The playlist ID to get podcasts for.
+    async def _get_playlist_podcasts(self, playlist_id: int) -> list[AssignmentEntry]:
+        """Get podcasts assigned to a playlist with their assignment rows, by position.
 
         Returns:
-            List of PodcastWithPosition ordered by position (nulls last).
+            List of AssignmentEntry ordered by position (nulls last, then name).
         """
         result = await self._db.execute(
-            select(Podcast, PlaylistPodcast.position)
+            select(Podcast, PlaylistPodcast)
             .join(PlaylistPodcast, PlaylistPodcast.podcast_id == Podcast.id)
             .where(PlaylistPodcast.playlist_id == playlist_id)
             .order_by(
@@ -172,22 +195,115 @@ class PlaylistBuilder:
                 Podcast.name,
             )
         )
-        rows = result.all()
+        return [AssignmentEntry(podcast=podcast, assignment=assignment) for podcast, assignment in result.all()]
 
-        return [PodcastWithPosition(podcast=podcast, position=position) for podcast, position in rows]
+    @staticmethod
+    def _is_unplayed(ep: dict[str, Any] | None) -> bool:
+        """True for a playable, unrestricted episode that is not fully played."""
+        if not ep:
+            return False
+        if not ep.get("is_playable", True):
+            return False
+        restrictions = ep.get("restrictions", {})
+        if restrictions and restrictions.get("reason"):
+            return False
+        resume_point = ep.get("resume_point") or {}
+        return not resume_point.get("fully_played", False)
 
-    async def _get_unplayed_episodes(self, podcast: Podcast, max_episodes: int = 500) -> list[Episode]:
-        """Get unplayed episodes for a podcast.
+    async def _walk_from_head(
+        self, spotify: SpotifyService, show_id: str, need: int | None
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Read episodes newest-first from offset 0.
 
-        Uses the show episodes endpoint directly which includes resume_point
-        and is_playable data, avoiding expensive individual episode fetches.
+        Stops once ``need`` unplayed episodes have been seen (``None`` means
+        read everything up to the cap). Returns ``(raw_episodes, complete)``
+        where ``complete`` is True only if the whole catalogue was read.
+        """
+        items: list[dict[str, Any]] = []
+        unplayed = 0
+        offset = 0
+        while len(items) < MAX_EPISODES_PER_SHOW:
+            limit = min(PAGE_SIZE, MAX_EPISODES_PER_SHOW - len(items))
+            data = await spotify.get_show_episodes(show_id, limit=limit, offset=offset)
+            page = data.get("items", [])
+            if not page:
+                return items, True
+            items.extend(page)
+            offset += len(page)
+            unplayed += sum(1 for ep in page if self._is_unplayed(ep))
+            if need is not None and unplayed >= need:
+                return items, not data.get("next")
+            if not data.get("next"):
+                return items, True
+        return items, False
+
+    async def _walk_from_tail(
+        self, spotify: SpotifyService, show_id: str, need: int
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Read episodes from the *end* of the catalogue until ``need`` unplayed are found.
+
+        Spotify only pages newest-first, so "next unfinished episode of a
+        serial" would otherwise mean reading the whole back-catalogue. The
+        first page gives ``total``; pages are then read backwards from the
+        tail. The result keeps Spotify's newest-first order; ``complete`` is
+        True when the head and tail reads met (the whole catalogue was seen).
+
+        The cap applies to the tail candidates only, and the head page is
+        only merged in when the reads met. If the walk stops short, the
+        unread middle is older than every head episode, so the head must not
+        compete for "oldest" — it would be trimmed in ahead of episodes we
+        never looked at.
+        """
+        first = await spotify.get_show_episodes(show_id, limit=PAGE_SIZE, offset=0)
+        head: list[dict[str, Any]] = list(first.get("items", []))
+        total = first.get("total")
+        if not isinstance(total, int) or total <= len(head) or not first.get("next"):
+            return head, True
+
+        covered_end = len(head)  # indices [0, covered_end) are in ``head``
+        tail: list[dict[str, Any]] = []
+        unplayed = 0
+        end = total  # exclusive index of the unread region
+        while end > covered_end and len(tail) < MAX_EPISODES_PER_SHOW:
+            start = max(end - PAGE_SIZE, covered_end)
+            data = await spotify.get_show_episodes(show_id, limit=end - start, offset=start)
+            page = data.get("items", [])
+            if not page:
+                break
+            tail = page + tail  # keep newest-first overall
+            unplayed += sum(1 for ep in page if self._is_unplayed(ep))
+            end = start
+            if unplayed >= need:
+                break
+
+        complete = end <= covered_end
+        candidates = head + tail if complete else tail
+
+        # A release between two reads shifts offsets by one; drop any
+        # episode seen twice rather than double-adding it.
+        seen: set[str] = set()
+        merged: list[dict[str, Any]] = []
+        for ep in candidates:
+            ep_id = ep.get("id") if ep else None
+            if not ep_id or ep_id in seen:
+                continue
+            seen.add(ep_id)
+            merged.append(ep)
+        return merged, complete
+
+    async def _fetch_unplayed(self, podcast: Podcast, *, need: int | None, from_oldest: bool) -> list[Episode]:
+        """Fetch a show's unplayed episodes, reading only as much as the rule needs.
 
         Args:
-            podcast: The podcast to get episodes for.
-            max_episodes: Maximum number of episodes to fetch.
+            podcast: The podcast to fetch for.
+            need: How many unplayed episodes the caller wants, or ``None`` for
+                all (up to :data:`MAX_EPISODES_PER_SHOW`).
+            from_oldest: Read from the tail of the catalogue (a serial's
+                "next unfinished") rather than the head.
 
         Returns:
-            List of unplayed episodes (excluding subscriber-only/restricted content).
+            Unplayed, playable episodes in Spotify's newest-first order. The
+            caller sorts and trims; this method only bounds the read.
 
         Raises:
             EpisodeFetchError: if Spotify could not be reached or refused the
@@ -198,169 +314,83 @@ class PlaylistBuilder:
         spotify = await self._get_spotify_client()
 
         try:
-            episodes_data = await spotify.get_show_episodes_all(podcast.spotify_id, max_episodes=max_episodes)
+            if from_oldest and need is not None:
+                raw, complete = await self._walk_from_tail(spotify, podcast.spotify_id, need)
+            else:
+                raw, complete = await self._walk_from_head(spotify, podcast.spotify_id, need)
         except Exception as e:
             logger.error(f"Failed to fetch episodes for {podcast.name}: {e}")
             raise EpisodeFetchError(f"{podcast.name}: {e}") from e
 
-        unplayed = []
-        for ep in episodes_data:
-            if not ep:
-                continue
+        unplayed = [
+            Episode(
+                id=ep["id"],
+                uri=ep.get("uri") or f"spotify:episode:{ep['id']}",
+                name=ep.get("name", ""),
+                release_date=ep.get("release_date", ""),
+                duration_ms=ep.get("duration_ms", 0),
+                fully_played=False,
+                show_id=podcast.spotify_id,
+                show_name=podcast.name,
+            )
+            for ep in raw
+            if self._is_unplayed(ep)
+        ]
 
-            # Skip episodes that are not playable (restricted/subscriber-only)
-            if not ep.get("is_playable", True):
-                logger.debug(f"Skipping non-playable episode: {ep.get('name')}")
-                continue
-
-            # Skip episodes with restrictions
-            restrictions = ep.get("restrictions", {})
-            if restrictions and restrictions.get("reason"):
-                logger.debug(f"Skipping restricted episode: {ep.get('name')} - Reason: {restrictions.get('reason')}")
-                continue
-
-            # Check resume_point for playback status
-            resume_point = ep.get("resume_point") or {}
-            fully_played = resume_point.get("fully_played", False)
-
-            if not fully_played:
-                unplayed.append(
-                    Episode(
-                        id=ep["id"],
-                        uri=ep.get("uri") or f"spotify:episode:{ep['id']}",
-                        name=ep.get("name", ""),
-                        release_date=ep.get("release_date", ""),
-                        duration_ms=ep.get("duration_ms", 0),
-                        fully_played=False,
-                        show_id=podcast.spotify_id,
-                        show_name=podcast.name,
-                    )
-                )
-
-        # Record the real count as a by-product. `sync_podcasts` used to
-        # extrapolate this from the newest 50 episodes and store the guess;
-        # here we have the actual episode list, so the number is exact —
-        # bounded only by `max_episodes` (issue #155).
-        if len(episodes_data) < max_episodes:
+        # Record the real count as a by-product, but only when the walk saw
+        # the whole catalogue (issue #155). A limited rule reads a slice and
+        # must not overwrite the count with a partial number.
+        if complete:
             podcast.unplayed_episodes = len(unplayed)
 
         return unplayed
 
-    def _sort_episodes(self, episodes: list[Episode], sequential: bool) -> list[Episode]:
-        """Sort episodes based on podcast settings.
-
-        Args:
-            episodes: List of episodes to sort.
-            sequential: If True, sort oldest to newest. Otherwise, newest to oldest.
-
-        Returns:
-            Sorted list of episodes.
-        """
-        return sorted(
-            episodes,
-            key=lambda e: e.release_date_key,
-            reverse=not sequential,  # sequential = oldest first, non-sequential = newest first
-        )
+    @staticmethod
+    def sort_within_show(episodes: list[Episode], pick_from: PickFrom) -> list[Episode]:
+        """Order one show's episodes the way its rule says they are listened to."""
+        return sorted(episodes, key=lambda e: e.release_date_key, reverse=pick_from == PickFrom.NEWEST)
 
     @staticmethod
-    def _order_chronologically(
-        episodes: list[Episode],
-        podcasts: list[Podcast],
-        *,
-        descending: bool,
+    def assemble(
+        contributions: list[ShowContribution],
+        arrangement: str,
+        date_direction: str,
     ) -> list[Episode]:
-        """Sort episodes by release date, keeping sequential shows oldest-first.
+        """Assemble per-show contributions into the final playlist order.
 
-        A sequential podcast keeps whichever slots it won in the global
-        date ordering — so non-sequential shows still interleave around it —
-        but those slots are filled oldest-first rather than following the
-        global direction.
+        ``by_position`` concatenates the groups as given (assignment order).
+        ``by_date`` merges everything by release date in ``date_direction``;
+        a show whose rule resolved to ``oldest`` then keeps the slots it won
+        in the merge but fills them oldest-first, so a serial is never played
+        out of order. ``newest`` is only a preference and follows the
+        playlist direction.
 
-        This used to be attempted with :func:`itertools.groupby`, which only
-        groups *consecutive* runs. After a global date sort a show's episodes
-        are rarely adjacent, so the grouping silently collapsed to size-1
-        groups and ``is_sequential`` was ignored in ``chronological_desc``
-        (issue #146).
-
-        Args:
-            episodes: Episodes to order.
-            podcasts: Podcasts assigned to the playlist, for the
-                ``is_sequential`` lookup.
-            descending: True for newest-first, False for oldest-first.
-
-        Returns:
-            Ordered list of episodes.
+        The slot refill is done explicitly rather than by grouping a sorted
+        list — a show's episodes are rarely adjacent after a date merge, which
+        is what silently broke ``itertools.groupby`` before (issue #146).
         """
-        ordered = sorted(episodes, key=lambda e: (e.release_date_key, e.show_id), reverse=descending)
+        if arrangement == Arrangement.BY_POSITION.value:
+            return [episode for group in contributions for episode in group.episodes]
 
-        sequential_shows = {p.spotify_id for p in podcasts if p.is_sequential}
-        if not sequential_shows:
+        descending = date_direction == DateDirection.NEWEST_FIRST.value
+        ordered = sorted(
+            (episode for group in contributions for episode in group.episodes),
+            key=lambda e: (e.release_date_key, e.show_id),
+            reverse=descending,
+        )
+        if not descending:
             return ordered
 
-        for show_id in sequential_shows:
-            slots = [i for i, episode in enumerate(ordered) if episode.show_id == show_id]
+        for group in contributions:
+            if group.rule.pick_from != PickFrom.OLDEST:
+                continue
+            slots = [i for i, episode in enumerate(ordered) if episode.show_id == group.show_id]
             if len(slots) < 2:
                 continue
-            chronological = sorted((ordered[i] for i in slots), key=lambda e: e.release_date_key)
-            for slot, episode in zip(slots, chronological, strict=True):
+            oldest_first = sorted((ordered[i] for i in slots), key=lambda e: e.release_date_key)
+            for slot, episode in zip(slots, oldest_first, strict=True):
                 ordered[slot] = episode
-
         return ordered
-
-    def _apply_ordering(
-        self, episodes: list[Episode], ordering_mode: str, podcast_entries: list[PodcastWithPosition] | None = None
-    ) -> list[Episode]:
-        """Apply ordering based on playlist configuration.
-
-        CRITICAL: This method respects the podcast.is_sequential flag.
-        Sequential podcasts ALWAYS have their episodes sorted oldest-to-newest,
-        regardless of the ordering_mode. Other podcasts can be interleaved between
-        sequential podcast episodes.
-
-        Args:
-            episodes: Episodes to order
-            ordering_mode: Ordering strategy to use
-            podcast_entries: Optional PodcastWithPosition list for PODCAST_ORDER mode
-
-        Returns:
-            Ordered list of episodes
-        """
-        podcasts = [entry.podcast for entry in podcast_entries] if podcast_entries else []
-
-        if ordering_mode == PlaylistOrderingMode.CHRONOLOGICAL_ASC.value:
-            return self._order_chronologically(episodes, podcasts, descending=False)
-
-        elif ordering_mode == PlaylistOrderingMode.CHRONOLOGICAL_DESC.value:
-            return self._order_chronologically(episodes, podcasts, descending=True)
-
-        elif ordering_mode == PlaylistOrderingMode.PODCAST_ORDER.value and podcast_entries:
-            # Order by position from PodcastWithPosition entries
-            podcast_order_map = {
-                entry.podcast.spotify_id: (
-                    entry.position if entry.position is not None else float("inf"),
-                    entry.podcast.is_sequential,
-                )
-                for entry in podcast_entries
-            }
-
-            # Group by show explicitly rather than relying on the sort making a
-            # show's episodes adjacent — that assumption is what broke the
-            # chronological modes (issue #146).
-            by_show: dict[str, list[Episode]] = defaultdict(list)
-            for episode in episodes:
-                by_show[episode.show_id].append(episode)
-
-            result = []
-            for show_id in sorted(by_show, key=lambda s: (podcast_order_map.get(s, (float("inf"), False))[0], s)):
-                _position, is_sequential = podcast_order_map.get(show_id, (float("inf"), False))
-                # Sequential shows play oldest-first; everything else newest-first.
-                result.extend(sorted(by_show[show_id], key=lambda e: e.release_date_key, reverse=not is_sequential))
-
-            return result
-
-        else:
-            # DEFAULT mode - no reordering
-            return episodes
 
     async def build_playlist(self, playlist: Playlist) -> list[str]:
         """Build playlist content based on assigned podcasts and episode mode.
@@ -393,65 +423,49 @@ class PlaylistBuilder:
                 one of them failed to fetch. Writing the resulting empty list
                 would clear the playlist on Spotify (issue #145).
         """
-        podcast_entries = await self._get_playlist_podcasts(playlist.id)
+        entries = await self._get_playlist_podcasts(playlist.id)
 
-        if not podcast_entries:
+        if not entries:
             return [], []
 
-        all_episodes: list[Episode] = []
+        contributions: list[ShowContribution] = []
         failed_podcasts: list[str] = []
 
-        for entry in podcast_entries:
+        for entry in entries:
             podcast = entry.podcast
+            rule = resolve_rule(playlist, podcast, entry.assignment)
             try:
-                if playlist.episode_mode == "all_unplayed":
-                    # Get all unplayed episodes
-                    episodes = await self._get_unplayed_episodes(podcast)
-                    sorted_episodes = self._sort_episodes(episodes, podcast.is_sequential)
-                    all_episodes.extend(sorted_episodes)
-                elif playlist.episode_mode == "latest_only":
-                    # Get latest unplayed episode only
-                    episodes = await self._get_unplayed_episodes(podcast, max_episodes=10)
-                    if episodes:
-                        sorted_eps = self._sort_episodes(episodes, sequential=False)
-                        all_episodes.append(sorted_eps[0])
+                episodes = await self._fetch_unplayed(
+                    podcast,
+                    need=None if rule.unlimited else rule.episode_limit,
+                    from_oldest=rule.pick_from == PickFrom.OLDEST,
+                )
             except EpisodeFetchError:
                 # Keep going: one permanently-broken show (region-locked,
                 # delisted) shouldn't block the rest of the playlist forever.
                 failed_podcasts.append(podcast.name)
+                continue
 
-        if failed_podcasts and len(failed_podcasts) == len(podcast_entries):
+            episodes = self.sort_within_show(episodes, rule.pick_from)
+            if not rule.unlimited:
+                episodes = episodes[: rule.episode_limit]
+            contributions.append(ShowContribution(show_id=podcast.spotify_id, rule=rule, episodes=episodes))
+
+        if failed_podcasts and len(failed_podcasts) == len(entries):
             # Nothing fetched. An empty write here would wipe the playlist,
             # so refuse it and let the next run retry (issue #145).
             raise PlaylistBuildError(
-                f"All {len(podcast_entries)} podcast(s) failed to fetch; "
-                f"refusing to overwrite '{playlist.name}' with an empty list"
+                f"All {len(entries)} podcast(s) failed to fetch; refusing to overwrite '{playlist.name}' with an empty list"
             )
 
         if failed_podcasts:
             logger.warning(
                 f"Playlist '{playlist.name}' built without {len(failed_podcasts)} "
-                f"of {len(podcast_entries)} podcast(s): {', '.join(failed_podcasts)}"
+                f"of {len(entries)} podcast(s): {', '.join(failed_podcasts)}"
             )
 
-        # Apply ordering
-        ordering = (
-            str(playlist.ordering_mode.value)
-            if hasattr(playlist.ordering_mode, "value")
-            else str(playlist.ordering_mode)
-        )
-
-        if ordering == PlaylistOrderingMode.DEFAULT.value:
-            if playlist.episode_mode == "latest_only":
-                # Default for latest_only: newest first
-                all_episodes.sort(key=lambda e: e.release_date_key, reverse=True)
-            else:
-                # Default for all_unplayed: oldest first
-                all_episodes.sort(key=lambda e: e.release_date_key)
-        else:
-            all_episodes = self._apply_ordering(all_episodes, ordering, podcast_entries)
-
-        return [ep.uri for ep in all_episodes], failed_podcasts
+        ordered = self.assemble(contributions, playlist.arrangement, playlist.date_direction)
+        return [ep.uri for ep in ordered], failed_podcasts
 
     async def _ensure_spotify_playlist(self, playlist: Playlist) -> str:
         """Ensure a Spotify playlist exists, creating one if needed.
