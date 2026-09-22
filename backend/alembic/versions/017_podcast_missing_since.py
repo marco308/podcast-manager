@@ -1,7 +1,7 @@
 """Track how long a podcast has been gone from the Spotify library (issue #155)
 
-Revision ID: 016_podcast_missing_since
-Revises: 015_unplayed_episodes_nullable
+Revision ID: 017_podcast_missing_since
+Revises: 016_unplayed_episodes_nullable
 Create Date: 2026-09-22
 
 ``POST /podcasts/sync`` deletes podcasts that have left the library, which
@@ -17,8 +17,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "016_podcast_missing_since"
-down_revision: str | None = "015_unplayed_episodes_nullable"
+revision: str = "017_podcast_missing_since"
+down_revision: str | None = "016_unplayed_episodes_nullable"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

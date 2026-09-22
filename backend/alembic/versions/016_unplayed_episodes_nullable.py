@@ -1,7 +1,7 @@
 """Make podcasts.unplayed_episodes nullable ("not counted yet") (issue #155)
 
-Revision ID: 015_unplayed_episodes_nullable
-Revises: 014_assignment_rules
+Revision ID: 016_unplayed_episodes_nullable
+Revises: 015_podcast_is_archived
 Create Date: 2026-09-22
 
 ``unplayed_episodes`` used to be written by ``POST /podcasts/sync``, which
@@ -20,8 +20,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "015_unplayed_episodes_nullable"
-down_revision: str | None = "014_assignment_rules"
+revision: str = "016_unplayed_episodes_nullable"
+down_revision: str | None = "015_podcast_is_archived"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -167,6 +167,22 @@ async def test_resubscribing_clears_the_mark(maker, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_archived_show_still_in_the_library_is_untouched(maker, monkeypatch):
+    """Archiving only hides a show in the app (issue #247); it stays followed
+    on Spotify, so it is still in the walk and must never be marked."""
+    _spotify(monkeypatch, [{"items": [_show("hidden")], "total": 1}])
+    async with maker() as db:
+        await _seed(db, Podcast(spotify_id="hidden", name="hidden", is_archived=True))
+
+        result = await _sync(db)
+
+        assert (result["missing"], result["removed"]) == (0, 0)
+        hidden = (await db.execute(select(Podcast).where(Podcast.spotify_id == "hidden"))).scalar_one()
+        assert hidden.missing_since is None
+        assert hidden.is_archived is True
+
+
+@pytest.mark.asyncio
 async def test_walk_seeing_every_page_still_marks(maker, monkeypatch):
     first = {"items": [_show(f"s{i}") for i in range(50)], "total": 51}
     second = {"items": [_show("s50")], "total": 51}
