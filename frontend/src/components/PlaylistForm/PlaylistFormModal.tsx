@@ -11,6 +11,7 @@ import {
   Switch,
   Typography,
 } from 'antd';
+import { ExportOutlined } from '@ant-design/icons';
 import {
   useAddPodcastsToPlaylist,
   useCreatePlaylist,
@@ -32,6 +33,7 @@ import type {
   Podcast,
 } from '../../types';
 import { EPISODE_LIMIT_MAX } from '../../types';
+import { spotifyPlaylistUrl } from '../../utils/playlistLabels';
 import { PlaylistPodcastsEditor, type EditorRow } from './PlaylistPodcastsEditor';
 
 const { Text } = Typography;
@@ -168,6 +170,8 @@ export function PlaylistFormModal({ open, playlist, onClose, onSaved }: Playlist
   const episodeLimitMode = Form.useWatch('episode_limit_mode', form);
   const customLimit = Form.useWatch('custom_episode_limit', form);
   const watchedPick = Form.useWatch('default_pick_from', form);
+
+  const spotifyUrl = spotifyPlaylistUrl(playlist?.spotify_playlist_id);
 
   const handleClose = () => {
     setDraft(null);
@@ -307,7 +311,19 @@ export function PlaylistFormModal({ open, playlist, onClose, onSaved }: Playlist
           <Form.Item
             name="spotify_playlist_id"
             label="Spotify Playlist ID"
-            extra="The ID of an existing Spotify playlist to update, or leave blank to create a new one"
+            extra={
+              spotifyUrl ? (
+                <span>
+                  Linked to{' '}
+                  <a href={spotifyUrl} target="_blank" rel="noopener noreferrer">
+                    this Spotify playlist <ExportOutlined />
+                  </a>
+                  . Every rebuild fully replaces its contents.
+                </span>
+              ) : (
+                'Leave blank and a Spotify playlist is created on the first run, or paste the ID of an existing one to take it over (its contents will be fully replaced on every rebuild)'
+              )
+            }
           >
             <Input placeholder="e.g., 37i9dQZF1DX..." />
           </Form.Item>

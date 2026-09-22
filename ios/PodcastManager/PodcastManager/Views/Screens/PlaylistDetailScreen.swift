@@ -89,6 +89,14 @@ struct PlaylistDetailScreen: View {
                 LabeledContent("Weekend Only", value: "Yes")
             }
             LabeledContent("Status", value: playlist.isEnabled ? "Enabled" : "Disabled")
+            if let url = playlist.spotifyURL {
+                // Universal link: opens the Spotify app when installed.
+                Link(destination: url) {
+                    Label("Open in Spotify", systemImage: "arrow.up.right.square")
+                }
+            } else {
+                LabeledContent("Spotify playlist", value: "Created on first run")
+            }
         }
     }
 

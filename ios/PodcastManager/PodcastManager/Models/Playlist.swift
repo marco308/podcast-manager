@@ -23,6 +23,12 @@ struct Playlist: Codable, Identifiable, Hashable {
         episodeRuleSummary(limit: defaultEpisodeLimit, pickFrom: defaultPickFrom)
     }
 
+    /// Public Spotify URL, or nil until the first run has created the playlist.
+    var spotifyURL: URL? {
+        guard let id = spotifyPlaylistId, !id.isEmpty else { return nil }
+        return URL(string: "https://open.spotify.com/playlist/\(id)")
+    }
+
     var arrangementLabel: String {
         switch arrangement {
         case "by_date":

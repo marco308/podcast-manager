@@ -6,6 +6,7 @@ import {
   ThunderboltOutlined,
   DeleteOutlined,
   EditOutlined,
+  ExportOutlined,
 } from '@ant-design/icons';
 import type { TableProps } from 'antd';
 import { Link } from 'react-router';
@@ -13,7 +14,7 @@ import dayjs from 'dayjs';
 import { usePlaylists, useDeletePlaylist, useRunPlaylist, useRunAllPlaylists } from '../hooks';
 import { LoadingSpinner, PlaylistFormModal } from '../components';
 import { getErrorMessage } from '../api';
-import { arrangementLabel, ruleSummary } from '../utils/playlistLabels';
+import { arrangementLabel, ruleSummary, spotifyPlaylistUrl } from '../utils/playlistLabels';
 import type { Playlist } from '../types';
 
 const { Title, Text } = Typography;
@@ -114,6 +115,16 @@ export function Playlists() {
               </Tag>
               {record.is_enabled ? <Tag color="success">On</Tag> : <Tag color="default">Off</Tag>}
               {record.is_weekend_only && <Tag color="orange">Weekend</Tag>}
+              {spotifyPlaylistUrl(record.spotify_playlist_id) && (
+                <a
+                  href={spotifyPlaylistUrl(record.spotify_playlist_id) ?? undefined}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ fontSize: 12 }}
+                >
+                  Spotify <ExportOutlined />
+                </a>
+              )}
             </div>
           )}
         </div>
@@ -151,18 +162,18 @@ export function Playlists() {
       dataIndex: 'spotify_playlist_id',
       key: 'spotify_playlist_id',
       responsive: ['lg'] as const,
-      render: (id: string | null) =>
-        id ? (
-          <a
-            href={`https://open.spotify.com/playlist/${id}`}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Open in Spotify
+      render: (id: string | null) => {
+        const url = spotifyPlaylistUrl(id);
+        return url ? (
+          <a href={url} target="_blank" rel="noopener noreferrer">
+            Open in Spotify <ExportOutlined />
           </a>
         ) : (
-          <Text type="secondary">Not linked</Text>
-        ),
+          <Tooltip title="Created on the first run">
+            <Text type="secondary">Not created yet</Text>
+          </Tooltip>
+        );
+      },
     },
     {
       title: 'Enabled',

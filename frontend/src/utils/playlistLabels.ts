@@ -45,3 +45,9 @@ export function ruleSourceLabel(rule: AssignmentRule): RuleSourceLabel {
   if (rule.pick_from_source === 'sequential') return 'sequential';
   return 'playlist default';
 }
+
+// Public Spotify URL for a managed playlist, or null until the first run has
+// created one (or an existing ID was linked).
+export function spotifyPlaylistUrl(spotifyPlaylistId: string | null | undefined): string | null {
+  return spotifyPlaylistId ? `https://open.spotify.com/playlist/${spotifyPlaylistId}` : null;
+}
