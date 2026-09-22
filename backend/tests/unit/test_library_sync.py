@@ -8,18 +8,21 @@ longer follow). It now stamps ``unfollowed_at`` on anything missing from
 the whole thing so nobody has to press Sync.
 """
 
+import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from apscheduler.triggers.cron import CronTrigger
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 import app.routers.podcasts as podcasts_module
 from app.database import Base
-from app.jobs import scheduler
+from app.jobs import locks, scheduler
 from app.models import Playlist, PlaylistPodcast, Podcast, User
 from app.models.sync_log import SyncLog, SyncStatus
 from app.rate_limit import limiter
@@ -35,6 +38,17 @@ def _limiter_disabled():
     limiter.enabled = False
     yield
     limiter.enabled = True
+
+
+@pytest.fixture(autouse=True)
+def _fresh_lock():
+    """Fresh sync lock per test — asyncio primitives bind to the running loop."""
+    original = locks.library_sync_lock
+    locks.library_sync_lock = asyncio.Lock()
+    try:
+        yield
+    finally:
+        locks.library_sync_lock = original
 
 
 async def _make_db():
@@ -253,7 +267,30 @@ class TestSyncEndpoint:
 
                 assert result["synced"] == 1
                 assert result["unfollowed"] == 1
+                assert result["unfollow_check_skipped"] is False
                 assert await _unfollowed_at(db, "gone") is not None
+        finally:
+            await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_skipped_unfollow_check_is_reported(self, monkeypatch):
+        """"0 synced" alone would read as a clean sync of an empty library."""
+        engine, maker = await _make_db()
+        monkeypatch.setattr(podcasts_module, "SpotifyService", MagicMock(return_value=_spotify_returning([])))
+        try:
+            async with maker() as db:
+                db.add(_user())
+                db.add(_podcast("still-here"))
+                await db.commit()
+
+                result = await sync_podcasts(
+                    request=MagicMock(),
+                    session=SimpleNamespace(user_id=1),
+                    db=db,
+                )
+
+                assert result["unfollow_check_skipped"] is True
+                assert result["unfollowed"] == 0
         finally:
             await engine.dispose()
 
@@ -313,6 +350,168 @@ class TestLibrarySyncJob:
                 assert await _unfollowed_at(db, "kept") is None
         finally:
             await engine.dispose()
+
+
+class TestConcurrentSyncsAreSerialised:
+    @pytest.mark.asyncio
+    async def test_manual_sync_is_rejected_while_another_holds_the_lock(self, monkeypatch):
+        """Two concurrent walks both insert a new show; the loser's commit dies
+        on the unique constraint and sinks the whole sync."""
+        engine, maker = await _make_db()
+        monkeypatch.setattr(podcasts_module, "SYNC_LOCK_WAIT_SECONDS", 0.05)
+        monkeypatch.setattr(podcasts_module, "SpotifyService", MagicMock(return_value=_spotify_returning([])))
+        try:
+            async with maker() as db:
+                db.add(_user())
+                await db.commit()
+
+                await locks.library_sync_lock.acquire()
+                try:
+                    with pytest.raises(HTTPException) as exc_info:
+                        await sync_podcasts(
+                            request=MagicMock(),
+                            session=SimpleNamespace(user_id=1),
+                            db=db,
+                        )
+                finally:
+                    locks.library_sync_lock.release()
+
+                assert exc_info.value.status_code == 409
+        finally:
+            await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_manual_sync_releases_the_lock_on_failure(self, monkeypatch):
+        engine, maker = await _make_db()
+        client = MagicMock()
+        client.get_user_shows = AsyncMock(side_effect=RuntimeError("Spotify fell over"))
+        monkeypatch.setattr(podcasts_module, "SpotifyService", MagicMock(return_value=client))
+        try:
+            async with maker() as db:
+                db.add(_user())
+                await db.commit()
+
+                with pytest.raises(RuntimeError):
+                    await sync_podcasts(
+                        request=MagicMock(),
+                        session=SimpleNamespace(user_id=1),
+                        db=db,
+                    )
+
+                assert not locks.library_sync_lock.locked()
+        finally:
+            await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_job_holds_the_lock_across_the_walk(self):
+        engine, maker = await _make_db()
+        token_manager = MagicMock()
+        token_manager.get_token = AsyncMock(return_value="token")
+        held: list[bool] = []
+
+        client = MagicMock()
+
+        async def observe_lock(*_a, **_kw):
+            held.append(locks.library_sync_lock.locked())
+            return {"items": []}
+
+        client.get_user_shows = observe_lock
+        try:
+            async with maker() as db:
+                db.add(_user())
+                await db.commit()
+
+            with (
+                patch("app.jobs.scheduler.async_session_maker", maker),
+                patch("app.jobs.scheduler.TokenManager", MagicMock(return_value=token_manager)),
+                patch("app.jobs.scheduler.SpotifyService", MagicMock(return_value=client)),
+            ):
+                await scheduler.sync_all_libraries()
+
+            assert held == [True]
+            assert not locks.library_sync_lock.locked()
+        finally:
+            await engine.dispose()
+
+
+class TestJobStatusFoldsInTheSyncStep:
+    """The UI shows one line for the daily job, which now runs two steps."""
+
+    @staticmethod
+    def _daily_job_info(jobs: list[dict]) -> dict:
+        return next(j for j in jobs if j["id"] == "daily_playlist_update")
+
+    @pytest.mark.asyncio
+    async def test_failed_sync_under_a_successful_rebuild_is_reported(self):
+        engine, maker = await _make_db()
+        try:
+            async with maker() as db:
+                db.add_all(
+                    [
+                        SyncLog(
+                            job_type="library_sync",
+                            status=SyncStatus.FAILED,
+                            started_at=datetime(2026, 9, 22, 3, 0, tzinfo=UTC),
+                        ),
+                        SyncLog(
+                            job_type="playlist_update",
+                            status=SyncStatus.SUCCESS,
+                            started_at=datetime(2026, 9, 22, 3, 5, tzinfo=UTC),
+                        ),
+                    ]
+                )
+                await db.commit()
+
+            with patch("app.jobs.scheduler.async_session_maker", maker):
+                info = self._daily_job_info(await _job_status_with_daily_job())
+
+            assert info["last_run_status"] == "failed"
+            assert info["last_run_failed_steps"] == ["library_sync"]
+            # The rebuild is the later step, so it still dates the run.
+            assert info["last_run"].startswith("2026-09-22T03:05")
+        finally:
+            await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_both_steps_succeeding_reports_success(self):
+        engine, maker = await _make_db()
+        try:
+            async with maker() as db:
+                db.add_all(
+                    [
+                        SyncLog(
+                            job_type="library_sync",
+                            status=SyncStatus.SUCCESS,
+                            started_at=datetime(2026, 9, 22, 3, 0, tzinfo=UTC),
+                        ),
+                        SyncLog(
+                            job_type="playlist_update",
+                            status=SyncStatus.SUCCESS,
+                            started_at=datetime(2026, 9, 22, 3, 5, tzinfo=UTC),
+                        ),
+                    ]
+                )
+                await db.commit()
+
+            with patch("app.jobs.scheduler.async_session_maker", maker):
+                info = self._daily_job_info(await _job_status_with_daily_job())
+
+            assert info["last_run_status"] == "success"
+            assert "last_run_failed_steps" not in info
+        finally:
+            await engine.dispose()
+
+
+async def _job_status_with_daily_job() -> list[dict]:
+    """Run get_job_status against a scheduler holding just the daily job."""
+    job = SimpleNamespace(
+        id="daily_playlist_update",
+        name="Daily Library Sync & Playlist Update",
+        next_run_time=None,
+        trigger=CronTrigger(hour=3, minute=0),
+    )
+    with patch.object(scheduler.scheduler, "get_jobs", MagicMock(return_value=[job])):
+        return await scheduler.get_job_status()
 
 
 class TestDailyJobRunsTheSync:

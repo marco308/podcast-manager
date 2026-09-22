@@ -21,3 +21,14 @@ serialises against scheduled work too (issue #89, AC #3).
 import asyncio
 
 playlist_write_lock = asyncio.Lock()
+
+# Serialises the library sync (``services/library_sync.sync_library``) between
+# the daily job and ``POST /podcasts/sync`` (issue #240). Two concurrent walks
+# of ``GET /me/shows`` both see "no row" for a newly-followed show and both
+# insert it; the second commit then dies on the ``spotify_id`` unique
+# constraint and takes the whole sync with it — the cross-request twin of the
+# intra-request duplicate fixed in issue #182. Serialising also stops two full
+# library walks from spending the same rate-limit budget twice over.
+#
+# Same single-replica assumption as ``playlist_write_lock`` above.
+library_sync_lock = asyncio.Lock()

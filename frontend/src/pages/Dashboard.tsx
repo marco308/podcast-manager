@@ -28,7 +28,12 @@ export function Dashboard() {
 
   const handleSync = async () => {
     try {
-      message.success(syncResultSummary(await syncPodcasts.mutateAsync()));
+      const { text, warn } = syncResultSummary(await syncPodcasts.mutateAsync());
+      if (warn) {
+        message.warning(text);
+      } else {
+        message.success(text);
+      }
     } catch {
       message.error('Failed to sync podcasts');
     }

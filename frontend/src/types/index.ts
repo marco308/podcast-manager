@@ -136,6 +136,10 @@ export interface SyncResult {
   // Podcasts newly flagged as gone from / back in the Spotify library
   unfollowed: number;
   refollowed: number;
+  // True when the backend deliberately skipped the unfollow check because
+  // Spotify returned an empty library. The upserts still happened, so this
+  // isn't an error — but it isn't a clean sync either (issue #240).
+  unfollow_check_skipped: boolean;
 }
 
 // Podcast list response
@@ -178,6 +182,10 @@ export interface Job {
   // covers runs interrupted by a restart, which the backend closes out at
   // startup, so an interrupted run never looks like a good one.
   last_run_status?: 'running' | 'success' | 'failed' | null;
+  // SyncLog job types that failed on the last run. The daily job runs two
+  // steps under one row here, so this names which of them went wrong
+  // (issue #240).
+  last_run_failed_steps?: string[];
   type: 'cron' | 'interval';
   is_configurable: boolean;
   schedule?: JobSchedule;

@@ -1,5 +1,6 @@
 """Podcasts router for managing podcast metadata."""
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 
@@ -8,6 +9,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.jobs import locks
 from app.models.playlist_podcast import PlaylistPodcast
 from app.models.podcast import Podcast
 from app.models.session import Session
@@ -26,6 +28,12 @@ from app.services.spotify import SpotifyService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/podcasts", tags=["Podcasts"])
+
+# How long a manual sync waits for library_sync_lock before giving up. The
+# daily job can hold it for the length of a full /me/shows walk, and the
+# client times out long before that — so fail fast with a 409 the UI can
+# explain, matching the playlist write lock's treatment (issue #153).
+SYNC_LOCK_WAIT_SECONDS = 5
 
 
 async def get_user_with_token(
@@ -241,13 +249,31 @@ async def sync_podcasts(
     :func:`app.services.library_sync.sync_library`, shared with the daily
     job so a manual sync and an automatic one do exactly the same thing
     (issue #240).
+
+    Serialised against the daily job's sync through ``library_sync_lock``:
+    two concurrent walks can both insert a newly-followed show and the
+    loser's commit dies on the ``spotify_id`` unique constraint. The lock is
+    held across the commit — that is what makes the insert visible to the
+    other walk — and a sync already in flight is rejected rather than queued,
+    because the second walk would do the same work twice.
     """
     user, access_token = await get_user_with_token(session.user_id, db)
 
-    spotify = SpotifyService(access_token=access_token)
-    result = await sync_library(db, spotify)
+    try:
+        await asyncio.wait_for(locks.library_sync_lock.acquire(), timeout=SYNC_LOCK_WAIT_SECONDS)
+    except TimeoutError:
+        logger.info("Manual sync rejected — library_sync_lock held by another sync")
+        raise HTTPException(
+            status_code=409,
+            detail="A library sync is already running. Please try again shortly.",
+        ) from None
 
-    await db.commit()  # persist before the response is sent (see get_db)
+    try:
+        spotify = SpotifyService(access_token=access_token)
+        result = await sync_library(db, spotify)
+        await db.commit()  # persist before the response is sent (see get_db)
+    finally:
+        locks.library_sync_lock.release()
 
     return {
         "message": "Sync completed",
@@ -255,4 +281,9 @@ async def sync_podcasts(
         "new": result.new,
         "unfollowed": result.unfollowed,
         "refollowed": result.refollowed,
+        # True when the unfollow reconciliation was deliberately skipped
+        # because Spotify returned an empty library (see _reconcile_unfollows).
+        # The upserts still happened, so this isn't an error — but it isn't a
+        # clean sync either, and the client shouldn't render it as one.
+        "unfollow_check_skipped": not result.reconciled,
     }
