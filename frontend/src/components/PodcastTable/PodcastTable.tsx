@@ -54,7 +54,11 @@ type ViewMode = 'cards' | 'table';
 function UnplayedTag({ count, style }: { count: number | null; style?: CSSProperties }) {
   if (count === null) {
     return (
-      <Tag color="default" style={style} title="Counted when a playlist build reads this podcast's full episode list">
+      <Tag
+        color="default"
+        style={style}
+        title="Counted when a playlist build reads this podcast's full episode list"
+      >
         unplayed: not counted
       </Tag>
     );
