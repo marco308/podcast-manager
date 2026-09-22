@@ -1,5 +1,6 @@
-# Optional local overrides (signing team, default server URL): copy
+# Local overrides (signing team, bundle ID, default server URL): copy
 # Local.yml.example to Local.yml (gitignored) and run `xcodegen generate`.
+# xcodegen 2.46 fails if Local.yml is missing, despite `optional: true`.
 include:
   - path: Local.yml
     optional: true
@@ -19,6 +20,8 @@ configs:
 settings:
   base:
     SWIFT_VERSION: "6.0"
+    # Override per target in Local.yml to sign under your own bundle ID.
+    APP_BUNDLE_ID: com.marcuslab.podcastmanager
     IPHONEOS_DEPLOYMENT_TARGET: "18.0"
     TARGETED_DEVICE_FAMILY: "1,2"
 
@@ -54,7 +57,7 @@ targets:
               - podcastmanager
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.marcuslab.podcastmanager
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID)
         PRODUCT_NAME: PodcastManager
         CODE_SIGN_STYLE: Automatic
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -76,7 +79,7 @@ targets:
       - target: PodcastManager
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.marcuslab.podcastmanager.tests
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID).tests
         GENERATE_INFOPLIST_FILE: YES
 
 schemes:

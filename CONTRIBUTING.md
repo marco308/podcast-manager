@@ -19,7 +19,7 @@ npm install
 npm run dev
 ```
 
-For the iOS app, see [ios/CLAUDE.md](ios/CLAUDE.md) — it covers the XcodeGen workflow and the `Local.yml` signing/config overrides you'll need for your own builds.
+For the iOS app, see [ios/README.md](ios/README.md) for the XcodeGen workflow and the `Local.yml` signing overrides, and [ios/CLAUDE.md](ios/CLAUDE.md) for implementation notes.
 
 ## Before opening a PR
 

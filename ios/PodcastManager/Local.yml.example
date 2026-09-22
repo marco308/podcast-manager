@@ -1,5 +1,6 @@
 # Local, gitignored build overrides. Copy to Local.yml, fill in your values,
-# then run `xcodegen generate`. project.yml picks it up as an optional include.
+# then run `xcodegen generate`. project.yml includes it; xcodegen needs the file
+# to exist even if you only build for the simulator.
 targets:
   PodcastManager:
     settings:
@@ -7,6 +8,13 @@ targets:
         # Your Apple Developer Team ID — required for device/TestFlight builds
         # (simulator builds work without it).
         DEVELOPMENT_TEAM: YOUR_TEAM_ID
+        # Optional: sign under your own bundle ID (the default belongs to the
+        # project owner's team). Set the same value on the tests target below.
+        # APP_BUNDLE_ID: com.yourname.podcastmanager
         # Optional: bake a default backend URL into the build. Users can still
         # change the server on the login screen; leave unset to always ask.
         SERVER_URL_DEFAULT: https://your-api.example.com
+  # PodcastManagerTests:
+  #   settings:
+  #     base:
+  #       APP_BUNDLE_ID: com.yourname.podcastmanager
