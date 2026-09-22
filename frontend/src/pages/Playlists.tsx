@@ -1,5 +1,17 @@
 import { useState } from 'react';
-import { App, Typography, Button, Table, Space, Tag, Popconfirm, Alert, Grid, Tooltip } from 'antd';
+import {
+  App,
+  Typography,
+  Button,
+  Table,
+  Space,
+  Tag,
+  Popconfirm,
+  Alert,
+  Grid,
+  Tooltip,
+  Checkbox,
+} from 'antd';
 import {
   PlusOutlined,
   PlayCircleOutlined,
@@ -32,6 +44,9 @@ export function Playlists() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingPlaylist, setEditingPlaylist] = useState<Playlist | null>(null);
   const [runningPlaylistId, setRunningPlaylistId] = useState<number | null>(null);
+  // "Also delete on Spotify" checkbox in the delete confirm; reset each time
+  // a confirm opens so it never carries over to another playlist.
+  const [removeFromSpotify, setRemoveFromSpotify] = useState(false);
 
   const openCreateModal = () => {
     setEditingPlaylist(null);
@@ -43,12 +58,15 @@ export function Playlists() {
     setIsModalOpen(true);
   };
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (playlist: Playlist) => {
+    const alsoSpotify = removeFromSpotify && !!playlist.spotify_playlist_id;
     try {
-      await deletePlaylist.mutateAsync(id);
-      message.success('Playlist deleted');
-    } catch {
-      message.error('Failed to delete playlist');
+      await deletePlaylist.mutateAsync({ id: playlist.id, removeFromSpotify: alsoSpotify });
+      message.success(
+        alsoSpotify ? 'Playlist deleted from the app and Spotify' : 'Playlist deleted'
+      );
+    } catch (err: unknown) {
+      message.error(getErrorMessage(err));
     }
   };
 
@@ -222,8 +240,27 @@ export function Playlists() {
           </Tooltip>
           <Popconfirm
             title="Delete playlist"
-            description="Are you sure you want to delete this playlist mapping?"
-            onConfirm={() => handleDelete(record.id)}
+            description={
+              <Space direction="vertical" size={8} style={{ maxWidth: 280 }}>
+                <Text>
+                  {record.spotify_playlist_id
+                    ? 'Stop managing this playlist? The Spotify playlist is kept (and no longer updated) unless you remove it too.'
+                    : 'Delete this playlist? It has not been created on Spotify yet.'}
+                </Text>
+                {record.spotify_playlist_id && (
+                  <Checkbox
+                    checked={removeFromSpotify}
+                    onChange={(e) => setRemoveFromSpotify(e.target.checked)}
+                  >
+                    Also delete it on Spotify
+                  </Checkbox>
+                )}
+              </Space>
+            }
+            onOpenChange={(open) => {
+              if (open) setRemoveFromSpotify(false);
+            }}
+            onConfirm={() => handleDelete(record)}
             okText="Delete"
             okButtonProps={{ danger: true }}
           >

@@ -24,6 +24,7 @@ class PodcastResponse(PodcastBase):
 
     id: int
     is_sequential: bool
+    is_archived: bool = False
     playlist_ids: list[int] = []
     last_synced_at: datetime | None
     created_at: datetime
@@ -34,6 +35,7 @@ class PodcastUpdate(BaseModel):
     """Schema for updating podcast metadata."""
 
     is_sequential: bool | None = None
+    is_archived: bool | None = None
 
 
 class PodcastListResponse(BaseModel):

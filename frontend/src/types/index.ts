@@ -20,6 +20,8 @@ export interface Podcast {
   // null = not counted yet; set by a playlist build that read the whole show
   unplayed_episodes: number | null;
   is_sequential: boolean;
+  // Hidden from the app but still followed on Spotify (issue #247)
+  is_archived: boolean;
   playlist_ids: number[];
   last_synced_at: string | null;
   created_at: string;
@@ -28,6 +30,7 @@ export interface Podcast {
 
 export interface PodcastUpdate {
   is_sequential?: boolean;
+  is_archived?: boolean;
 }
 
 // Playlist types (see docs/design/assignment-rules.md)

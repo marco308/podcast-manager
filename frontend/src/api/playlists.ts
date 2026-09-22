@@ -36,9 +36,12 @@ export const playlistsApi = {
     return response.data;
   },
 
-  // Delete a playlist mapping
-  async delete(id: number): Promise<void> {
-    await apiClient.delete(`/playlists/${id}`);
+  // Delete a playlist mapping. With removeFromSpotify the Spotify playlist is
+  // deleted (unfollowed) too; otherwise it is left in place.
+  async delete(id: number, removeFromSpotify = false): Promise<void> {
+    await apiClient.delete(`/playlists/${id}`, {
+      params: removeFromSpotify ? { remove_from_spotify: true } : undefined,
+    });
   },
 
   // Manually trigger a single playlist update

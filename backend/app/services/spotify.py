@@ -417,6 +417,72 @@ class SpotifyService:
             )
             return response.json()
 
+    async def update_playlist_details(
+        self,
+        playlist_id: str,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        on_unauthorized: Callable[[], Awaitable[str]] | None = None,
+    ) -> None:
+        """Change a playlist's name and/or description (``PUT /playlists/{id}``).
+
+        Args:
+            playlist_id: Spotify playlist ID.
+            name: New name, or None to leave it unchanged.
+            description: New description, or None to leave it unchanged.
+            on_unauthorized: Optional callback to recover from 401 by
+                refreshing the bearer token and retrying once.
+
+        Raises:
+            httpx.HTTPStatusError: If the request fails.
+        """
+        body: dict[str, Any] = {}
+        if name is not None:
+            body["name"] = name
+        if description is not None:
+            body["description"] = description
+        if not body:
+            return
+
+        async with self._get_client_contextmanager() as client:
+            await self._request_with_retry(
+                client,
+                "PUT",
+                f"{SPOTIFY_API_BASE}/playlists/{playlist_id}",
+                headers=self._headers,
+                json=body,
+                on_unauthorized=on_unauthorized,
+            )
+
+    async def unfollow_playlist(
+        self,
+        playlist_id: str,
+        *,
+        on_unauthorized: Callable[[], Awaitable[str]] | None = None,
+    ) -> None:
+        """Unfollow a playlist (``DELETE /playlists/{id}/followers``).
+
+        Spotify has no "delete playlist" endpoint — unfollowing a playlist
+        you own is how it is deleted from your library.
+
+        Args:
+            playlist_id: Spotify playlist ID.
+            on_unauthorized: Optional callback to recover from 401 by
+                refreshing the bearer token and retrying once.
+
+        Raises:
+            httpx.HTTPStatusError: If the request fails.
+        """
+        async with self._get_client_contextmanager() as client:
+            await self._request_with_retry(
+                client,
+                "DELETE",
+                f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/followers",
+                headers=self._headers,
+                on_unauthorized=on_unauthorized,
+            )
+
     async def replace_playlist_items(
         self,
         playlist_id: str,

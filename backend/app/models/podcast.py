@@ -28,6 +28,9 @@ class Podcast(Base):
 
     # Podcast attributes
     is_sequential: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Hidden from the app (lists, dashboard counts, assignment selects) but
+    # still followed on Spotify. Unfollowing is a separate action (issue #247).
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Sync tracking
     # First sync that found the show gone from the Spotify library; cleared if

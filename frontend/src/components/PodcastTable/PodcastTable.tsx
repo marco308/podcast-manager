@@ -20,6 +20,7 @@ import {
   Button,
   Popconfirm,
   Select,
+  Tooltip,
 } from 'antd';
 import type { TableProps } from 'antd';
 import {
@@ -28,6 +29,8 @@ import {
   UnorderedListOutlined,
   SearchOutlined,
   UserDeleteOutlined,
+  InboxOutlined,
+  UndoOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import type { Podcast } from '../../types';
@@ -136,7 +139,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
   // the table Select reflects a change immediately (and a second change diffs
   // against fresh data instead of stale props).
   const setCachedPlaylistIds = (podcastId: number, playlistIds: number[]) => {
-    queryClient.setQueryData<Podcast[]>(podcastKeys.list(), (old) =>
+    queryClient.setQueriesData<Podcast[]>({ queryKey: podcastKeys.lists() }, (old) =>
       old?.map((p) => (p.id === podcastId ? { ...p, playlist_ids: playlistIds } : p))
     );
   };
@@ -200,6 +203,63 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
     }
   };
 
+  // Archive hides the podcast from the app but keeps it followed on Spotify.
+  // The backend drops its playlist assignments when archiving.
+  const handleArchiveChange = async (podcast: Podcast, archived: boolean) => {
+    setUpdatingId(podcast.spotify_id);
+    try {
+      await updatePodcast.mutateAsync({
+        spotifyId: podcast.spotify_id,
+        data: { is_archived: archived },
+      });
+      message.success(archived ? `Archived "${podcast.name}"` : `Restored "${podcast.name}"`);
+      closePodcastDrawer();
+    } catch {
+      message.error(archived ? 'Failed to archive podcast' : 'Failed to restore podcast');
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const archiveDescription = (podcast: Podcast) =>
+    `Hide "${podcast.name}" from this app? It stays followed on Spotify` +
+    (podcast.playlist_ids.length > 0
+      ? ` and will be removed from ${podcast.playlist_ids.length} playlist${podcast.playlist_ids.length === 1 ? '' : 's'}.`
+      : '.') +
+    ' You can restore it with "Show archived".';
+
+  const renderArchiveButton = (podcast: Podcast, block = false) =>
+    podcast.is_archived ? (
+      <Button
+        icon={<UndoOutlined />}
+        onClick={() => handleArchiveChange(podcast, false)}
+        loading={updatingId === podcast.spotify_id}
+        size={block ? 'middle' : 'small'}
+        block={block}
+        aria-label="Restore podcast"
+      >
+        {block && 'Restore to App'}
+      </Button>
+    ) : (
+      <Popconfirm
+        title="Archive podcast"
+        description={archiveDescription(podcast)}
+        onConfirm={() => handleArchiveChange(podcast, true)}
+        okText="Archive"
+        cancelText="Cancel"
+      >
+        <Button
+          icon={<InboxOutlined />}
+          loading={updatingId === podcast.spotify_id}
+          size={block ? 'middle' : 'small'}
+          block={block}
+          aria-label="Archive podcast"
+        >
+          {block && 'Archive (keep following on Spotify)'}
+        </Button>
+      </Popconfirm>
+    );
+
   const handleUnfollow = async (spotifyId: string, podcastName: string) => {
     setUpdatingId(spotifyId);
     try {
@@ -244,6 +304,11 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
             <Text type="secondary" style={{ fontSize: 12 }}>
               {record.publisher}
             </Text>
+            {record.is_archived && (
+              <Tag color="default" style={{ marginLeft: 8 }}>
+                Archived
+              </Tag>
+            )}
           </div>
         </Space>
       ),
@@ -271,8 +336,9 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
           value={record.playlist_ids}
           onChange={(value) => handlePlaylistsChange(record, value)}
           loading={updatingId === record.spotify_id}
+          disabled={record.is_archived}
           style={{ width: 200 }}
-          placeholder="Unassigned"
+          placeholder={record.is_archived ? 'Archived' : 'Unassigned'}
           allowClear
           maxTagCount="responsive"
           options={playlistOptions}
@@ -325,24 +391,29 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
       title: 'Actions',
       key: 'actions',
       align: 'center',
-      width: 100,
+      width: 110,
       render: (_, record) => (
-        <Popconfirm
-          title="Unfollow podcast"
-          description={`Are you sure you want to unfollow "${record.name}"? This will remove it from Spotify and delete it from this app.`}
-          onConfirm={() => handleUnfollow(record.spotify_id, record.name)}
-          okText="Unfollow"
-          cancelText="Cancel"
-          okButtonProps={{ danger: true }}
-        >
-          <Button
-            danger
-            icon={<UserDeleteOutlined />}
-            loading={updatingId === record.spotify_id}
-            size="small"
-            aria-label="Unfollow podcast"
-          />
-        </Popconfirm>
+        <Space size={8}>
+          <Tooltip title={record.is_archived ? 'Restore to app' : 'Archive (keep following)'}>
+            <span>{renderArchiveButton(record)}</span>
+          </Tooltip>
+          <Popconfirm
+            title="Unfollow podcast"
+            description={`Are you sure you want to unfollow "${record.name}"? This will remove it from Spotify and delete it from this app.`}
+            onConfirm={() => handleUnfollow(record.spotify_id, record.name)}
+            okText="Unfollow"
+            cancelText="Cancel"
+            okButtonProps={{ danger: true }}
+          >
+            <Button
+              danger
+              icon={<UserDeleteOutlined />}
+              loading={updatingId === record.spotify_id}
+              size="small"
+              aria-label="Unfollow podcast"
+            />
+          </Popconfirm>
+        </Space>
       ),
     },
   ];
@@ -419,6 +490,11 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
                   {podcast.is_sequential && (
                     <Tag color="orange" style={{ margin: 0 }}>
                       Seq
+                    </Tag>
+                  )}
+                  {podcast.is_archived && (
+                    <Tag color="default" style={{ margin: 0 }}>
+                      Archived
                     </Tag>
                   )}
                 </Space>
@@ -531,8 +607,11 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
                     setSelectedPodcast((prev) => (prev ? { ...prev, playlist_ids: value } : prev));
                   }}
                   loading={updatingId === selectedPodcast.spotify_id}
+                  disabled={selectedPodcast.is_archived}
                   style={{ width: '100%' }}
-                  placeholder="No playlists assigned"
+                  placeholder={
+                    selectedPodcast.is_archived ? 'Restore to assign' : 'No playlists assigned'
+                  }
                   allowClear
                   options={playlistOptions}
                 />
@@ -571,23 +650,26 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
 
               <Divider style={{ margin: '16px 0' }} />
 
-              <Popconfirm
-                title="Unfollow podcast"
-                description={`Are you sure you want to unfollow "${selectedPodcast.name}"? This will remove it from Spotify and delete it from this app.`}
-                onConfirm={() => handleUnfollow(selectedPodcast.spotify_id, selectedPodcast.name)}
-                okText="Unfollow"
-                cancelText="Cancel"
-                okButtonProps={{ danger: true }}
-              >
-                <Button
-                  danger
-                  icon={<UserDeleteOutlined />}
-                  loading={updatingId === selectedPodcast.spotify_id}
-                  block
+              <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                {renderArchiveButton(selectedPodcast, true)}
+                <Popconfirm
+                  title="Unfollow podcast"
+                  description={`Are you sure you want to unfollow "${selectedPodcast.name}"? This will remove it from Spotify and delete it from this app.`}
+                  onConfirm={() => handleUnfollow(selectedPodcast.spotify_id, selectedPodcast.name)}
+                  okText="Unfollow"
+                  cancelText="Cancel"
+                  okButtonProps={{ danger: true }}
                 >
-                  Unfollow Podcast
-                </Button>
-              </Popconfirm>
+                  <Button
+                    danger
+                    icon={<UserDeleteOutlined />}
+                    loading={updatingId === selectedPodcast.spotify_id}
+                    block
+                  >
+                    Unfollow on Spotify
+                  </Button>
+                </Popconfirm>
+              </Space>
             </Form>
           </div>
         )}
