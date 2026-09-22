@@ -17,7 +17,8 @@ export interface Podcast {
   image_url: string | null;
   publisher: string | null;
   total_episodes: number;
-  unplayed_episodes: number;
+  // null = not counted yet; set by a playlist build that read the whole show
+  unplayed_episodes: number | null;
   is_sequential: boolean;
   playlist_ids: number[];
   last_synced_at: string | null;
@@ -112,7 +113,7 @@ export interface PlaylistPodcast {
   image_url: string | null;
   publisher: string | null;
   total_episodes: number;
-  unplayed_episodes: number;
+  unplayed_episodes: number | null;
   is_sequential: boolean;
   position: number | null;
   rule: AssignmentRule;
@@ -124,6 +125,7 @@ export interface SyncResult {
   message: string;
   synced: number;
   new: number;
+  removed: number;
 }
 
 // Podcast list response

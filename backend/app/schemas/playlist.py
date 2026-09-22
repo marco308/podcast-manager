@@ -116,7 +116,7 @@ class PlaylistPodcastResponse(BaseModel):
     image_url: str | None = None
     publisher: str | None = None
     total_episodes: int = 0
-    unplayed_episodes: int = 0
+    unplayed_episodes: int | None = None
     is_sequential: bool
     position: int | None = None
     rule: AssignmentRule

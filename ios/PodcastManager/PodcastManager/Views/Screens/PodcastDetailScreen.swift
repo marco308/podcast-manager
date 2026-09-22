@@ -94,7 +94,7 @@ struct PodcastDetailScreen: View {
 
             statCard(
                 title: "Unplayed",
-                value: "\(podcast.unplayedEpisodes)",
+                value: podcast.unplayedEpisodes.map { "\($0)" } ?? "–",
                 icon: "play.circle",
                 color: Color.accentColor
             )

@@ -127,7 +127,10 @@ struct PodcastsScreen: View {
         isSyncing = true
         do {
             let response = try await APIClient.shared.syncPodcasts()
-            let message = "Synced \(response.synced) podcasts (\(response.new) new)"
+            var message = "Synced \(response.synced) podcasts (\(response.new) new)"
+            if let removed = response.removed, removed > 0 {
+                message += ", removed \(removed) unsubscribed"
+            }
             withAnimation {
                 syncResult = message
             }

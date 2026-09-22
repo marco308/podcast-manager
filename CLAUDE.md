@@ -80,7 +80,9 @@ Registered in `app/jobs/scheduler.py`, started from the FastAPI lifespan context
 - `is_weekend_only`: on a day that isn't Fri/Sat/Sun or a UK public holiday, the playlist is **skipped entirely** — `update_playlist` returns early with `skipped=True` before any Spotify call, so the previous contents survive untouched. Holiday lookup is in `utils/holidays.py`. Note the gate lives in `update_playlist`, not `build_playlist`: an earlier version gated the build, which returned an empty list and — because `replace_playlist_items` is a full replace — *blanked* the playlist on weekdays (issue #150).
 - `is_enabled`: jobs skip disabled playlists
 
-**Fetching is proportional to the rule** (`PlaylistBuilder._fetch_unplayed`): a `newest` rule walks pages from offset 0 and stops once it has enough unplayed; an `oldest` rule reads `total` from the first page and walks backwards from the tail; an unlimited rule reads up to `MAX_EPISODES_PER_SHOW`. `podcast.unplayed_episodes` is only written when the walk saw the whole catalogue.
+**Fetching is proportional to the rule** (`PlaylistBuilder._fetch_unplayed`): a `newest` rule walks pages from offset 0 and stops once it has enough unplayed; an `oldest` rule reads `total` from the first page and walks backwards from the tail; an unlimited rule reads up to `MAX_EPISODES_PER_SHOW`. `podcast.unplayed_episodes` is only written when the walk saw the whole catalogue. It is `NULL` ("not counted") until then; `POST /podcasts/sync` never writes it and makes no per-show episode calls (issue #155).
+
+**Podcast sync** (`POST /podcasts/sync`) upserts from `GET /me/shows` and deletes podcasts no longer in the library (cascading their assignments), but only when the walk saw at least Spotify's reported `total` distinct shows; otherwise it skips the prune rather than risk deleting a still-subscribed show.
 
 **Podcast attribute:**
 - `is_sequential`: story-based. A hint that resolves `pick_from` to `oldest` on every assignment unless the row overrides it.

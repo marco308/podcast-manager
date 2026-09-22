@@ -241,11 +241,14 @@ async def sync_podcasts(
     # can't see the first pending insert, so a repeat would 500 the whole
     # sync on the unique constraint — skip anything already seen (issue #182).
     seen_spotify_ids: set[str] = set()
+    reported_total: int | None = None
 
     while True:
         # Fetch shows from Spotify
         shows_data = await spotify.get_user_shows(limit=limit, offset=offset)
         items = shows_data.get("items", [])
+        if isinstance(shows_data.get("total"), int):
+            reported_total = shows_data["total"]
 
         if not items:
             break
@@ -285,8 +288,8 @@ async def sync_podcasts(
                 podcast.total_episodes = show.get("total_episodes", 0)
                 podcast.last_synced_at = datetime.now(UTC)
             else:
-                # Create new podcast. unplayed_episodes starts at 0 and is
-                # filled in by the next playlist build.
+                # Create new podcast. unplayed_episodes stays NULL ("not
+                # counted") until a playlist build reads the whole show.
                 podcast = Podcast(
                     spotify_id=spotify_id,
                     name=show.get("name", "Unknown"),
@@ -294,7 +297,6 @@ async def sync_podcasts(
                     image_url=image_url,
                     publisher=show.get("publisher"),
                     total_episodes=show.get("total_episodes", 0),
-                    unplayed_episodes=0,
                     last_synced_at=datetime.now(UTC),
                 )
                 db.add(podcast)
@@ -308,10 +310,39 @@ async def sync_podcasts(
         if len(items) < limit:
             break
 
+    removed_count = await _prune_unsubscribed(db, seen_spotify_ids, reported_total)
+
     await db.commit()  # persist before the response is sent (see get_db)
 
     return {
         "message": "Sync completed",
         "synced": synced_count,
         "new": new_count,
+        "removed": removed_count,
     }
+
+
+async def _prune_unsubscribed(db: AsyncSession, seen_spotify_ids: set[str], reported_total: int | None) -> int:
+    """Delete podcasts no longer in the user's Spotify library (issue #155).
+
+    Deleting a podcast also drops its playlist assignments (cascade), so this
+    only runs when the walk demonstrably saw the whole library: at least as
+    many distinct shows as Spotify's ``total``. If the list shifted under
+    pagination and a show fell between pages, or Spotify answered with an
+    empty page, pruning would destroy assignments for a show that's still
+    subscribed. Skipping is harmless: the next sync tries again.
+    """
+    if reported_total is None or not seen_spotify_ids or len(seen_spotify_ids) < reported_total:
+        logger.warning(
+            "Skipping podcast prune: saw %d shows, Spotify reported %s",
+            len(seen_spotify_ids),
+            reported_total,
+        )
+        return 0
+
+    result = await db.execute(select(Podcast).where(Podcast.spotify_id.not_in(seen_spotify_ids)))
+    stale = result.scalars().all()
+    for podcast in stale:
+        logger.info("Removing podcast %s (%s): no longer subscribed", podcast.name, podcast.spotify_id)
+        await db.delete(podcast)
+    return len(stale)
