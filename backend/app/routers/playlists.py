@@ -47,6 +47,10 @@ router = APIRouter(prefix="/playlists", tags=["Playlists"])
 # blocking until the client times out (issue #153).
 WRITE_LOCK_WAIT_SECONDS = 5
 
+# Refusal for a manual run of a disabled playlist (issue #239). Checked twice:
+# once up front, and again once the write lock is held.
+DISABLED_PLAYLIST_DETAIL = "This playlist is disabled. Enable it to run it."
+
 
 @asynccontextmanager
 async def _playlist_write_lock() -> AsyncIterator[None]:
@@ -532,8 +536,11 @@ async def run_playlist_update(
 ) -> dict:
     """Manually trigger a playlist update.
 
-    Disabled playlists are refused with a 409 — see the ``is_enabled`` gate
-    below (issue #239).
+    Disabled playlists are refused with a 409 — see the ``is_enabled`` gates
+    below (issue #239): once up front, and again under the write lock.
+
+    ``/run-all`` needs no such re-read: ``update_all_playlists`` runs its
+    ``is_enabled`` query inside the lock, as the daily job does.
     """
     # Get the playlist
     playlist_result = await db.execute(
@@ -549,10 +556,7 @@ async def run_playlist_update(
     # rather than silently skipping, so a client that offers the button at
     # all gets told why nothing happened.
     if not playlist.is_enabled:
-        raise HTTPException(
-            status_code=409,
-            detail="This playlist is disabled. Enable it to run it.",
-        )
+        raise HTTPException(status_code=409, detail=DISABLED_PLAYLIST_DETAIL)
 
     # Get the user
     user_result = await db.execute(select(User).where(User.id == session.user_id))
@@ -567,6 +571,14 @@ async def run_playlist_update(
     # Take the shared write lock so a manual run serialises against
     # the daily rebuild and the cleanup job (issue #89, PR3, AC #3).
     async with _playlist_write_lock():
+        # The check above ran before the wait, and PATCH /playlists/{id}
+        # doesn't take this lock — so re-read the row now. A playlist
+        # disabled while this request queued behind the daily rebuild must
+        # not be written either (issue #239).
+        await db.refresh(playlist)
+        if not playlist.is_enabled:
+            raise HTTPException(status_code=409, detail=DISABLED_PLAYLIST_DETAIL)
+
         builder = PlaylistBuilder(db, user, token_manager=TokenManager(user.id))
         result = await builder.update_playlist(playlist)
 

@@ -223,13 +223,27 @@ export function Playlists() {
           {/* Disabled playlists are never written to on Spotify, manual runs
               included (issue #239) — the backend refuses them with a 409.
               The span is the tooltip's trigger: antd 6 no longer wraps a
-              disabled child, and a disabled <button> fires no mouse events. */}
-          <Tooltip title={record.is_enabled ? 'Run playlist' : 'Disabled — enable it to run it'}>
+              disabled child, and a disabled <button> fires no mouse events.
+              When it is disabled the span is focusable and carries the
+              explanation, and the tooltip opens on focus too, so the reason
+              reaches keyboard and screen-reader users as well as hover. */}
+          <Tooltip
+            title={record.is_enabled ? 'Run playlist' : 'Disabled — enable it to run it'}
+            trigger={['hover', 'focus']}
+          >
             <span
               style={{
                 display: 'inline-block',
                 cursor: record.is_enabled ? undefined : 'not-allowed',
               }}
+              tabIndex={record.is_enabled ? undefined : 0}
+              role={record.is_enabled ? undefined : 'button'}
+              aria-disabled={record.is_enabled ? undefined : true}
+              aria-label={
+                record.is_enabled
+                  ? undefined
+                  : `Run ${record.name}: unavailable, this playlist is disabled`
+              }
             >
               <Button
                 size="small"
@@ -238,6 +252,7 @@ export function Playlists() {
                 loading={runningPlaylistId === record.id}
                 disabled={!record.is_enabled}
                 style={record.is_enabled ? undefined : { pointerEvents: 'none' }}
+                aria-hidden={record.is_enabled ? undefined : true}
               >
                 {!isMobile && 'Run'}
               </Button>

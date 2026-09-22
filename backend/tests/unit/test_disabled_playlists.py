@@ -9,18 +9,20 @@ Spotify playlist keeps whatever it last had until it is re-enabled.
 """
 
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 import app.routers.playlists as playlists_module
 from app.database import Base
-from app.jobs import locks
+from app.jobs import locks, scheduler
 from app.models import Playlist, User
 from app.models.playlist import ALL_EPISODES, Arrangement, DateDirection
 from app.rate_limit import limiter
@@ -90,6 +92,82 @@ def _builder_with_spotify():
     builder._get_spotify_client = AsyncMock(return_value=spotify)
     builder._build_playlist_content = AsyncMock(return_value=(["spotify:episode:1"], []))
     return builder, spotify
+
+
+def _patch_cleanup_boundaries(monkeypatch, *, still_enabled: set[int]):
+    """Wire the cleanup job's boundaries to fakes, as tests/integration does.
+
+    The job is given one user with one enabled playlist by its phase-1 read;
+    ``still_enabled`` is what the re-read under the write lock finds. Returns
+    a callable for the number of Spotify clients constructed, and the client
+    itself.
+    """
+    playlist = SimpleNamespace(id=1, name="Playlist", spotify_playlist_id="sp1", user_id=1)
+
+    class _FakeResult:
+        def __init__(self, value):
+            self._value = value
+
+        def scalar_one_or_none(self):
+            return self._value
+
+        def scalars(self):
+            rows = MagicMock()
+            rows.all.return_value = self._value if isinstance(self._value, list) else []
+            return rows
+
+    class _FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def execute(self, stmt):
+            # Collapse whitespace first: SQLAlchemy renders "...\nFROM users",
+            # so matching on " from <table>" needs the newline normalised.
+            sql = " ".join(str(stmt).lower().split())
+            if " from playlists" in sql:
+                return _FakeResult([playlist])
+            if " from users" in sql:
+                return _FakeResult([SimpleNamespace(id=1)])
+            # sync_logs recency gate and the app_settings cursor: nothing stored.
+            return _FakeResult(None)
+
+        async def commit(self):
+            return None
+
+        async def rollback(self):
+            return None
+
+        def add(self, _obj):
+            return None
+
+    monkeypatch.setattr(scheduler, "async_session_maker", lambda: _FakeSession())
+    monkeypatch.setattr(scheduler, "_still_enabled_playlist_ids", AsyncMock(return_value=still_enabled))
+
+    token_manager = MagicMock()
+    token_manager.get_token = AsyncMock(return_value="token")
+    token_manager.force_refresh = AsyncMock(return_value="token")
+    monkeypatch.setattr(scheduler, "TokenManager", MagicMock(return_value=token_manager))
+
+    client = MagicMock()
+    client.api_calls_used = 0
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=None)
+    client.get_playlist_tracks = AsyncMock(return_value={"items": []})
+    client.remove_tracks_from_playlist = AsyncMock()
+
+    instances = 0
+
+    def _ctor(*_args, **_kwargs):
+        nonlocal instances
+        instances += 1
+        return client
+
+    monkeypatch.setattr(scheduler, "SpotifyService", MagicMock(side_effect=_ctor))
+
+    return (lambda: instances), client
 
 
 class TestUpdatePlaylistDisabledGate:
@@ -220,3 +298,94 @@ class TestManualRunRefusesDisabled:
                 builder.update_playlist.assert_awaited_once()
         finally:
             await engine.dispose()
+
+
+class TestManualRunRechecksUnderTheLock:
+    """The first check runs before the wait for ``playlist_write_lock``.
+
+    ``PATCH /playlists/{id}`` doesn't take that lock, so a playlist disabled
+    while a manual run queued behind the daily rebuild would otherwise be
+    written anyway.
+    """
+
+    @pytest.mark.asyncio
+    async def test_disabled_while_waiting_for_the_lock_is_refused(self, monkeypatch):
+        engine, maker = await _make_db()
+        builder_factory = MagicMock()
+        monkeypatch.setattr(playlists_module, "PlaylistBuilder", builder_factory)
+        monkeypatch.setattr(playlists_module, "TokenManager", MagicMock())
+
+        @asynccontextmanager
+        async def _lock_that_disables_the_playlist():
+            # Stand in for the wait: someone flips the flag, in their own
+            # session, while this request is queued.
+            async with maker() as other:
+                playlist = (await other.execute(select(Playlist))).scalar_one()
+                playlist.is_enabled = False
+                await other.commit()
+            yield
+
+        monkeypatch.setattr(playlists_module, "_playlist_write_lock", _lock_that_disables_the_playlist)
+
+        try:
+            async with maker() as db:
+                db.add(_user())
+                db.add(Playlist(user_id=1, name="On", is_enabled=True, spotify_playlist_id="sp1"))
+                await db.commit()
+
+                with pytest.raises(HTTPException) as exc_info:
+                    await run_playlist_update(request=MagicMock(), playlist_id=1, session=SESSION, db=db)
+
+                assert exc_info.value.status_code == 409
+                assert "disabled" in exc_info.value.detail.lower()
+                builder_factory.assert_not_called()
+        finally:
+            await engine.dispose()
+
+
+class TestCleanupRechecksUnderTheLock:
+    """Cleanup reads its playlists before it takes the lock, so it re-reads."""
+
+    @pytest.mark.asyncio
+    async def test_helper_returns_only_enabled_ids(self, monkeypatch):
+        engine, maker = await _make_db()
+        try:
+            async with maker() as db:
+                db.add(_user())
+                db.add(Playlist(user_id=1, name="On", is_enabled=True))
+                db.add(Playlist(user_id=1, name="Off", is_enabled=False))
+                await db.commit()
+
+            monkeypatch.setattr(scheduler, "async_session_maker", maker)
+            assert await scheduler._still_enabled_playlist_ids() == {1}
+        finally:
+            await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_failed_reread_falls_back_to_the_earlier_read(self, monkeypatch):
+        """A DB hiccup must not silently skip every playlist."""
+
+        def _boom():
+            raise RuntimeError("db gone")
+
+        monkeypatch.setattr(scheduler, "async_session_maker", _boom)
+        assert await scheduler._still_enabled_playlist_ids() is None
+
+    @pytest.mark.asyncio
+    async def test_playlist_disabled_before_the_lock_is_not_cleaned(self, monkeypatch):
+        spotify_instances, client = _patch_cleanup_boundaries(monkeypatch, still_enabled=set())
+
+        await scheduler.remove_played_episodes_from_playlists()
+
+        assert spotify_instances() == 0, "a disabled playlist must not even open a Spotify client"
+        client.get_playlist_tracks.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_still_enabled_playlist_is_cleaned(self, monkeypatch):
+        """Control: the same wiring cleans a playlist that is still enabled."""
+        spotify_instances, client = _patch_cleanup_boundaries(monkeypatch, still_enabled={1})
+
+        await scheduler.remove_played_episodes_from_playlists()
+
+        assert spotify_instances() == 1
+        client.get_playlist_tracks.assert_awaited()

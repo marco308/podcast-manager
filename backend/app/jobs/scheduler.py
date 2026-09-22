@@ -555,6 +555,27 @@ def _classify_failure(
     return "unknown"
 
 
+async def _still_enabled_playlist_ids() -> set[int] | None:
+    """Playlist IDs that are still enabled, re-read at the write boundary.
+
+    Cleanup reads its playlists before it takes ``playlist_write_lock``, and
+    ``PATCH /playlists/{id}`` doesn't take that lock — so a playlist disabled
+    while cleanup queued would otherwise still be written to, and a disabled
+    playlist is never written to (issue #239).
+
+    Returns ``None`` if the re-read itself failed: cleanup then falls back to
+    the earlier read rather than skipping every playlist.
+    """
+    try:
+        async with async_session_maker() as db:
+            # Same query shape as the phase-1 read, minus the user filter.
+            result = await db.execute(select(Playlist).where(Playlist.is_enabled.is_(True)))
+            return {p.id for p in result.scalars().all()}
+    except Exception as e:
+        logger.error(f"Cleanup could not re-check is_enabled (using the earlier read): {e}")
+        return None
+
+
 def _played_uris_from_items(items: list[dict]) -> list[str]:
     """Extract URIs of fully-played episodes from a playlist-items page.
 
@@ -664,6 +685,8 @@ async def remove_played_episodes_from_playlists() -> None:
             for user in users:
                 # Disabled playlists are never written to, cleanup included
                 # (issue #239) — they keep whatever they had until re-enabled.
+                # Re-checked under the write lock in phase 2, since this read
+                # happens before the lock is taken.
                 playlists_result = await db.execute(
                     select(Playlist).where((Playlist.user_id == user.id) & (Playlist.is_enabled == True))
                 )
@@ -714,6 +737,21 @@ async def remove_played_episodes_from_playlists() -> None:
         if locks.playlist_write_lock.locked():
             logger.info("Waiting on playlist_write_lock — another job is holding it")
         async with locks.playlist_write_lock:
+            # Phase 1 read is_enabled without the lock; re-check it now that
+            # we hold it (issue #239). Dropping the rows here rather than
+            # inside the loop keeps the rotation bookkeeping counting the
+            # list it actually walks — the cursor is best-effort anyway, and
+            # the next run rebuilds the list from scratch.
+            still_enabled = await _still_enabled_playlist_ids()
+            if still_enabled is not None:
+                user_playlists = [
+                    (user_id, kept)
+                    for user_id, playlists in user_playlists
+                    # A user left with nothing drops out, as in phase 1 — no
+                    # point fetching a token and opening a client for them.
+                    if (kept := [p for p in playlists if p[0] in still_enabled])
+                ]
+
             for user_id, playlists in user_playlists:
                 if aborted_for_rate_limit:
                     break
