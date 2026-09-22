@@ -56,7 +56,10 @@ struct PlaylistRow: View {
                 }
             }
             .buttonStyle(.plain)
+            // A disabled playlist is never written to on Spotify, manual runs
+            // included (issue #239) — the backend refuses them with a 409.
             .disabled(isRunning || !playlist.isEnabled)
+            .accessibilityLabel(playlist.isEnabled ? "Run playlist" : "Run playlist, disabled")
         }
         .padding(.vertical, 4)
     }

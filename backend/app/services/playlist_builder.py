@@ -116,10 +116,13 @@ class PlaylistUpdateResult:
     # podcasts failed to fetch. Distinguishes "degraded" from "didn't run",
     # which callers report differently (issue #145).
     partial: bool = False
-    # True when the playlist was deliberately left untouched — currently only
-    # a weekend-only playlist on a non-qualifying day (issue #150). Not a
-    # failure: `success` stays True.
+    # True when the playlist was deliberately left untouched: it is disabled
+    # (issue #239) or it is weekend-only on a non-qualifying day (issue #150).
+    # Not a failure: `success` stays True.
     skipped: bool = False
+    # Which gate skipped it — "disabled" or "weekend_only" — so callers can
+    # word the message they show. None when the playlist ran.
+    skip_reason: str | None = None
 
 
 @dataclass
@@ -527,6 +530,21 @@ class PlaylistBuilder:
         Returns:
             Result of the update operation.
         """
+        # A disabled playlist is never written to, by any path — scheduled
+        # rebuild, cleanup or a manual run (issue #239). The gate lives here,
+        # next to the weekend one, so no caller can write one by accident;
+        # the routers refuse a manual run before they get this far.
+        if not playlist.is_enabled:
+            logger.info(f"Skipping disabled playlist '{playlist.name}'")
+            return PlaylistUpdateResult(
+                playlist_id=playlist.id,
+                playlist_name=playlist.name,
+                success=True,
+                episode_count=0,
+                skipped=True,
+                skip_reason="disabled",
+            )
+
         # Weekend-only playlists are left completely untouched on a
         # non-qualifying day (issue #150). The gate is here rather than in
         # build_playlist deliberately: an earlier version returned an empty
@@ -541,6 +559,7 @@ class PlaylistBuilder:
                 success=True,
                 episode_count=0,
                 skipped=True,
+                skip_reason="weekend_only",
             )
 
         try:
@@ -605,6 +624,10 @@ class PlaylistBuilder:
 
     async def update_all_playlists(self) -> list[PlaylistUpdateResult]:
         """Update all enabled playlists.
+
+        Disabled playlists are filtered out here as well as gated in
+        ``update_playlist`` (issue #239), so a skipped result from this
+        method is always a weekend-only one.
 
         Returns:
             List of results for each playlist update.

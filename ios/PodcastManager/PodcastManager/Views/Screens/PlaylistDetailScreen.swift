@@ -82,7 +82,7 @@ struct PlaylistDetailScreen: View {
     }
 
     private var settingsSection: some View {
-        Section("Playlist Settings") {
+        Section {
             LabeledContent("Arrangement", value: playlist.arrangementLabel)
             LabeledContent("Episodes per podcast", value: playlist.ruleSummary)
             if playlist.isWeekendOnly {
@@ -96,6 +96,18 @@ struct PlaylistDetailScreen: View {
                 }
             } else {
                 LabeledContent("Spotify playlist", value: "Created on first run")
+            }
+        } header: {
+            Text("Playlist Settings")
+        } footer: {
+            // One rule, defined by the backend (issue #239): a disabled
+            // playlist is never written to on Spotify — not by the daily
+            // rebuild, not by cleanup, and not by a manual run either.
+            if !playlist.isEnabled {
+                Text(
+                    "Disabled playlists are never written to on Spotify: no daily rebuild, "
+                        + "no cleanup of played episodes, and Run is unavailable."
+                )
             }
         }
     }
