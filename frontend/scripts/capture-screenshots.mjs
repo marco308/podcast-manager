@@ -46,13 +46,26 @@ const extraMask = (process.env.SCREENSHOT_MASK ?? '')
 const GLOBAL_MASK = ['.header-username'];
 
 // One entry per screen. `mask` selectors are blacked out in the image, in
-// addition to GLOBAL_MASK.
+// addition to GLOBAL_MASK. A route can be a function of the browser context
+// for pages keyed by an ID; returning null skips the page.
 const PAGES = [
   { slug: 'dashboard', route: '/', mask: [] },
   { slug: 'podcasts', route: '/podcasts', mask: [] },
   { slug: 'playlists', route: '/playlists', mask: [] },
+  { slug: 'playlist-detail', route: playlistDetailRoute, mask: [] },
   { slug: 'settings', route: '/settings', mask: ['.ant-descriptions-item-content'] },
 ];
+
+// The detail page of the playlist with the most podcasts, so the rules table
+// has something to show.
+async function playlistDetailRoute(context) {
+  const res = await context.request.get(`${BASE_URL}/api/playlists`, { failOnStatusCode: false });
+  if (!res.ok()) return null;
+  const { items } = await res.json();
+  if (!items?.length) return null;
+  const best = items.reduce((a, b) => (b.podcast_count > a.podcast_count ? b : a));
+  return `/playlists/${best.id}`;
+}
 
 const THEMES = ['light', 'dark'];
 
@@ -123,7 +136,12 @@ async function capture() {
       }
 
       const page = await context.newPage();
-      for (const { slug, route, mask } of PAGES) {
+      for (const { slug, route: routeOrFn, mask } of PAGES) {
+        const route = typeof routeOrFn === 'function' ? await routeOrFn(context) : routeOrFn;
+        if (!route) {
+          console.warn(`skipped ${slug}: nothing to show (create a playlist first)`);
+          continue;
+        }
         await page.goto(`${BASE_URL}${route}`, { waitUntil: 'networkidle' });
         if (new URL(page.url()).pathname === '/login') {
           throw new Error(`Redirected to /login while opening ${route}; session expired?`);

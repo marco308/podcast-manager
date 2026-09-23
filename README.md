@@ -72,9 +72,13 @@ Each installation serves one Spotify account: registration closes once the first
 
 ![Podcasts](docs/screenshots/podcasts-light.png)
 
-**Playlists.** Create playlists and set their defaults and arrangement. Each playlist's detail page handles ordering, rule overrides and adding or removing shows.
+**Playlists.** Every playlist with its default rule, arrangement, Spotify link and status, and one-click runs.
 
 ![Playlists](docs/screenshots/playlists-light.png)
+
+**Playlist detail.** A playlist's settings and the rule each show will follow on the next rebuild: the playlist default, the sequential hint, or a custom override. Editing podcasts, order and overrides starts here.
+
+![Playlist detail](docs/screenshots/playlist-detail-light.png)
 
 **Settings.** Spotify account, theme, and the scheduled jobs with their last-run status.
 
@@ -86,6 +90,7 @@ Each installation serves one Spotify account: registration closes once the first
 ![Dashboard, dark](docs/screenshots/dashboard-dark.png)
 ![Podcasts, dark](docs/screenshots/podcasts-dark.png)
 ![Playlists, dark](docs/screenshots/playlists-dark.png)
+![Playlist detail, dark](docs/screenshots/playlist-detail-dark.png)
 ![Settings, dark](docs/screenshots/settings-dark.png)
 
 </details>
@@ -105,7 +110,7 @@ The saved session lives in the gitignored `frontend/.screenshots-auth.json`. Acc
 
 ### What you need
 
-- A Spotify account and your own Spotify Developer application (see below)
+- A Spotify **Premium** account and your own Spotify Developer application (see below)
 - For deployment: a machine that runs Docker, and a public HTTPS URL for it
 - For local development: Python 3.11+ (CI tests 3.11 and 3.14; the Docker image runs 3.14), Node.js, and [mkcert](https://github.com/FiloSottile/mkcert)
 
@@ -120,6 +125,7 @@ Every installation needs its **own** Spotify Developer application. There is no 
 
 #### Spotify Development Mode constraints
 
+- Since March 2026, Dev Mode needs **Spotify Premium** on the account that owns the developer app, and allows **one Dev Mode app per developer**. A lapsed Premium subscription or a second Dev Mode app can make Spotify refuse sign-in, sometimes with the unhelpful `temporarily_unavailable` error.
 - Dev Mode apps are capped at **5 allowlisted users**, and extended quota is effectively unavailable to hobby projects. Podcast Manager is personal software, not something to open to the public.
 - The app is built for Dev Mode's reduced API. Spotify removed the batch "Get Several X" endpoints for Dev Mode apps in early 2026, so the app uses single-item requests at low concurrency.
 - Spotify OAuth rejects plain-HTTP and `localhost` redirect URIs, hence the HTTPS and `127.0.0.1` requirements below.
