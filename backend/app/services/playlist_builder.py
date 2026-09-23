@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
 
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -575,6 +576,10 @@ class PlaylistBuilder:
                 skipped=True,
             )
 
+        # Read before anything can fail: after a failed flush the row is
+        # expired and unreadable until the session is rolled back.
+        playlist_id, playlist_name = playlist.id, playlist.name
+
         try:
             # Ensure Spotify playlist exists (create if needed)
             spotify_playlist_id = await self._ensure_spotify_playlist(playlist)
@@ -599,9 +604,14 @@ class PlaylistBuilder:
                 on_unauthorized=self._token_manager.force_refresh,
             )
 
-            # Update last_updated_at
+            # Update last_updated_at — and commit, together with any unplayed
+            # counts recorded during the fetch. A flush would open SQLite's
+            # single write transaction and hold it across the *next*
+            # playlist's Spotify calls, so every other writer (a rotated
+            # refresh token, any request) timed out with "database is
+            # locked" until the whole run finished.
             playlist.last_updated_at = datetime.now(UTC)
-            await self._db.flush()
+            await self._db.commit()
 
             logger.info(f"Updated playlist '{playlist.name}' with {len(episode_uris)} episodes")
 
@@ -626,10 +636,19 @@ class PlaylistBuilder:
             )
 
         except Exception as e:
-            logger.error(f"Failed to update playlist '{playlist.name}': {e}")
+            logger.error(f"Failed to update playlist '{playlist_name}': {e}")
+            # Roll back so a failed flush/commit doesn't leave the session
+            # unusable (PendingRollbackError) for the rest of the run, then
+            # reload the row the rollback expired: callers keep reading it,
+            # and a lazy load can't run under asyncio.
+            await self._db.rollback()
+            try:
+                await self._db.refresh(playlist)
+            except Exception as refresh_error:
+                logger.warning(f"Could not reload playlist '{playlist_name}' after rollback: {refresh_error}")
             return PlaylistUpdateResult(
-                playlist_id=playlist.id,
-                playlist_name=playlist.name,
+                playlist_id=playlist_id,
+                playlist_name=playlist_name,
                 success=False,
                 episode_count=0,
                 error=str(e),
@@ -651,6 +670,14 @@ class PlaylistBuilder:
 
         results = []
         for playlist in playlists:
+            # A failed update rolls the session back, which expires every
+            # loaded row; reload before touching it rather than lazy-loading.
+            if sa_inspect(playlist).expired_attributes:
+                try:
+                    await self._db.refresh(playlist)
+                except Exception as e:
+                    logger.warning(f"Skipping playlist {sa_inspect(playlist).identity}: could not reload it: {e}")
+                    continue
             result = await self.update_playlist(playlist)
             results.append(result)
 
