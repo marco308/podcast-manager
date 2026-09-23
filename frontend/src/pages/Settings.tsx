@@ -44,6 +44,13 @@ function failedStepsLabel(job: Job): string {
   return `The last run failed: ${names.join(', ')}`;
 }
 
+// The hint under the switch describes whichever option is selected.
+const THEME_OPTIONS: { value: ThemePreference; label: string; hint: string }[] = [
+  { value: 'light', label: 'Light', hint: 'Always use the light theme' },
+  { value: 'dark', label: 'Dark', hint: 'Always use the dark theme' },
+  { value: 'system', label: 'System', hint: "Follows your device's appearance setting" },
+];
+
 export function Settings() {
   const { message, modal } = App.useApp();
   const { user, logout, deleteAccount } = useAuth();
@@ -234,16 +241,12 @@ export function Settings() {
               <Segmented
                 value={themePreference}
                 onChange={(value) => setThemePreference(value as ThemePreference)}
-                options={[
-                  { label: 'Light', value: 'light' },
-                  { label: 'Dark', value: 'dark' },
-                  { label: 'System', value: 'system' },
-                ]}
+                options={THEME_OPTIONS.map(({ value, label }) => ({ value, label }))}
               />
             </div>
             <Paragraph style={{ marginTop: 8, marginBottom: 0 }}>
               <Text type="secondary" style={{ fontSize: 12 }}>
-                <Text strong>System</Text> — Follows your device's appearance setting
+                {THEME_OPTIONS.find((option) => option.value === themePreference)?.hint}
               </Text>
             </Paragraph>
           </div>
