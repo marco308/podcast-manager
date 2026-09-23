@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy · Podcast Manager</title>
+<meta name="description" content="What the Podcast Manager app and server do with your data.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* Same tokens as index.html so the two pages read as one site. */
+:root {
+  --paper: #EEF1F6;
+  --surface: #FFFFFF;
+  --ink: #1B2340;
+  --muted: #56607F;
+  --line: #CBD2E1;
+  --focus: #2F6FEB;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #121831;
+    --surface: #1B2342;
+    --ink: #E8ECF5;
+    --muted: #A2ABC6;
+    --line: #2E3860;
+    --focus: #8AB0FF;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #121831;
+  --surface: #1B2342;
+  --ink: #E8ECF5;
+  --muted: #A2ABC6;
+  --line: #2E3860;
+  --focus: #8AB0FF;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 17px/1.6 "Familjen Grotesk", system-ui, sans-serif;
+}
+main { max-width: 42rem; margin: 0 auto; padding: 48px 16px 64px; }
+a { color: var(--focus); }
+h1 { font-size: 2rem; line-height: 1.2; margin: 0 0 8px; }
+h2 { font-size: 1.2rem; margin: 32px 0 8px; }
+.meta { color: var(--muted); margin: 0 0 32px; }
+ul { padding-left: 1.2em; }
+footer { border-top: 1px solid var(--line); margin-top: 48px; padding-top: 16px; color: var(--muted); font-size: 15px; }
+</style>
+</head>
+<body>
+<main>
+  <p><a href="./">← Podcast Manager</a></p>
+  <h1>Privacy Policy</h1>
+  <p class="meta">Last updated 23 September 2026</p>
+
+  <p>Podcast Manager is a self-hosted app. The iOS app talks only to a Podcast Manager server that you (or someone you trust) run. The developer of the app does not operate that server and never receives your data.</p>
+
+  <h2>What the iOS app stores on your device</h2>
+  <ul>
+    <li>The server address you type on the sign-in screen.</li>
+    <li>A session token for that server, kept in the iOS Keychain. It is never synced to iCloud and is deleted when you sign out.</li>
+  </ul>
+
+  <h2>What the iOS app sends, and where</h2>
+  <ul>
+    <li>Everything it does goes to the server address you entered, over HTTPS.</li>
+    <li>Signing in opens Spotify's own sign-in page in the system browser. Spotify's <a href="https://www.spotify.com/legal/privacy-policy/">privacy policy</a> covers that step.</li>
+    <li>Podcast artwork is loaded from the image links Spotify provides.</li>
+  </ul>
+  <p>The app contains no analytics, advertising or crash-reporting code and does not track you.</p>
+
+  <h2>What the server stores</h2>
+  <p>The server keeps what it needs to manage your playlists: your Spotify display name, email address and user ID, encrypted Spotify access tokens, the podcasts you follow, and the playlists you set up. It uses them only to talk to Spotify on your behalf. That data lives on the server you run, under your control. To remove it, delete the server's database.</p>
+
+  <h2>Notifications</h2>
+  <p>If you allow notifications, the app shows a local notification when a sync or playlist run you started finishes while the app is in the background. No push service is involved.</p>
+
+  <h2>Children</h2>
+  <p>The app is not aimed at children and collects nothing beyond what is described above.</p>
+
+  <h2>Changes and contact</h2>
+  <p>Any change to this policy will be published on this page. Questions can go to the project's <a href="https://github.com/marco308/podcast-manager/issues">GitHub issues</a>.</p>
+
+  <footer>Podcast Manager is an independent project. It isn't made, endorsed or supported by Spotify. Spotify is a trademark of Spotify AB.</footer>
+</main>
+</body>
+</html>

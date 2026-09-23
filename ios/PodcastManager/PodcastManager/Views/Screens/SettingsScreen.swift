@@ -156,7 +156,7 @@ struct SettingsScreen: View {
                     HStack {
                         Text("Version")
                         Spacer()
-                        Text("1.0.0")
+                        Text(appVersion)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -172,6 +172,14 @@ struct SettingsScreen: View {
                 await loadJobs()
             }
         }
+    }
+
+    /// "1.0 (6)", read from the bundle so it can't drift from the build.
+    private var appVersion: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        return "\(version) (\(build))"
     }
 
     private func loadJobs() async {

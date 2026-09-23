@@ -44,6 +44,8 @@ targets:
         ITSAppUsesNonExemptEncryption: false
         UILaunchScreen: {}
         CFBundleName: $(PRODUCT_NAME)
+        # Home-screen label; PRODUCT_NAME has no space.
+        CFBundleDisplayName: Podcast Manager
         CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
         CFBundleShortVersionString: "1.0"
         CFBundleVersion: "6"

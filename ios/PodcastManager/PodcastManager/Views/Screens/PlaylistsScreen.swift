@@ -111,6 +111,7 @@ struct PlaylistsScreen: View {
     }
 
     private func runPlaylist(_ playlist: Playlist) async {
+        await NotificationService.shared.requestAuthorization()
         do {
             let response = try await APIClient.shared.runPlaylist(id: playlist.id)
             // Use the server's message: it distinguishes skips
@@ -140,6 +141,7 @@ struct PlaylistsScreen: View {
 
     private func runAllPlaylists() async {
         isRunningAll = true
+        await NotificationService.shared.requestAuthorization()
         do {
             let response = try await APIClient.shared.runAllPlaylists()
             withAnimation {

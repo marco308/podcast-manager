@@ -9,6 +9,16 @@
     <key>NSPrivacyCollectedDataTypes</key>
     <array/>
     <key>NSPrivacyAccessedAPITypes</key>
-    <array/>
+    <array>
+        <!-- ServerConfig stores the backend URL the user entered. -->
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>CA92.1</string>
+            </array>
+        </dict>
+    </array>
 </dict>
 </plist>

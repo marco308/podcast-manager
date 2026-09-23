@@ -24,6 +24,11 @@ struct Podcast: Identifiable, Hashable {
     /// Resolved per-assignment rule; only present on rows from
     /// `/api/playlists/{id}/podcasts`.
     let rule: AssignmentRule?
+
+    /// Public Spotify URL for the show; opens the Spotify app when installed.
+    var spotifyURL: URL? {
+        spotifyId.isEmpty ? nil : URL(string: "https://open.spotify.com/show/\(spotifyId)")
+    }
 }
 
 /// What a build applies to one playlist assignment, and where each part came

@@ -78,6 +78,15 @@ struct PodcastDetailScreen: View {
                     .lineLimit(6)
                     .padding(.top, 4)
             }
+
+            // Spotify's terms ask that its metadata links back to it.
+            if let url = podcast.spotifyURL {
+                Link(destination: url) {
+                    Label("Open in Spotify", systemImage: "arrow.up.right.square")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .padding(.top, 4)
+            }
         }
     }
 

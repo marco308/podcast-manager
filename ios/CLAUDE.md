@@ -57,3 +57,6 @@ If one of these is ever wanted on iOS, it is a plain addition to `APIClient` (th
 - After building, wipe DerivedData if the simulator runs stale code: `rm -rf ~/Library/Developer/Xcode/DerivedData/PodcastManager-*`
 - App icon must have no alpha channel (App Store rejects it)
 - `ITSAppUsesNonExemptEncryption: false` is set to skip the export compliance prompt
+- `PrivacyInfo.xcprivacy` must declare every required-reason API the app itself calls (currently `UserDefaults`, reason `CA92.1`, for the server URL). Update it if you add another (file timestamps, disk space, boot time…)
+- Notification permission is requested when the user starts a sync or run, not at launch — keep it that way so the prompt has context
+- The App Store privacy policy lives at `site/privacy.html`; keep it in step if the app starts storing or sending anything new
