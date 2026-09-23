@@ -9,6 +9,9 @@ class AuthService {
     var currentUser: User?
     var isLoading = false
     var error: String?
+    /// Signed in to the built-in sample library rather than a server
+    /// (issue #264). Not persisted: a relaunch returns to the login screen.
+    var isDemo = false
 
     // Must retain these or the auth session gets deallocated
     private var authSession: ASWebAuthenticationSession?
@@ -124,6 +127,14 @@ class AuthService {
         }
     }
 
+    /// Explore the app with sample data: no server, no Spotify account.
+    func startDemo() async {
+        error = nil
+        await APIClient.shared.setDemo(DemoBackend())
+        isDemo = true
+        isAuthenticated = true
+    }
+
     func fetchUser() async {
         do {
             currentUser = try await APIClient.shared.fetchCurrentUser()
@@ -140,6 +151,12 @@ class AuthService {
     /// Local state is cleared regardless of the outcome — a network failure
     /// must not strand the user in a signed-in-looking state (issue #148).
     func logout() async {
+        if isDemo {
+            await APIClient.shared.setDemo(nil)
+            isDemo = false
+            clearLocalSession()
+            return
+        }
         do {
             try await APIClient.shared.logout()
         } catch {

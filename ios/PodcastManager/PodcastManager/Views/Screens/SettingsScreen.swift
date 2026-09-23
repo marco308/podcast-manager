@@ -13,6 +13,18 @@ struct SettingsScreen: View {
     var body: some View {
         NavigationStack {
             List {
+                if authService.isDemo {
+                    Section {
+                        Label("Demo mode", systemImage: "sparkles")
+                            .font(.headline)
+                    } footer: {
+                        Text(
+                            "You're exploring sample data. Nothing here touches Spotify, and changes "
+                                + "reset when the app restarts. Exit the demo to connect your own server."
+                        )
+                    }
+                }
+
                 if let user = authService.currentUser {
                     Section("Account") {
                         HStack {
@@ -148,7 +160,7 @@ struct SettingsScreen: View {
                     HStack {
                         Text("Server")
                         Spacer()
-                        Text(ServerConfig.baseURL?.absoluteString ?? "Not configured")
+                        Text(serverLabel)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
@@ -162,7 +174,7 @@ struct SettingsScreen: View {
                 }
 
                 Section {
-                    Button("Sign Out", role: .destructive) {
+                    Button(authService.isDemo ? "Exit Demo" : "Sign Out", role: .destructive) {
                         Task { await authService.logout() }
                     }
                 }
@@ -172,6 +184,11 @@ struct SettingsScreen: View {
                 await loadJobs()
             }
         }
+    }
+
+    private var serverLabel: String {
+        if authService.isDemo { return "Demo (sample data)" }
+        return ServerConfig.baseURL?.absoluteString ?? "Not configured"
     }
 
     /// "1.0 (6)", read from the bundle so it can't drift from the build.

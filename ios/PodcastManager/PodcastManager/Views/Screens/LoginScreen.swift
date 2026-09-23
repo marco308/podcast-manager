@@ -75,6 +75,14 @@ struct LoginScreen: View {
                     || authService.isLoading
             )
 
+            // For anyone without a server yet, including App Review
+            // (issue #264): the whole app against sample data.
+            Button("Try the demo") {
+                Task { await authService.startDemo() }
+            }
+            .font(.subheadline.weight(.semibold))
+            .disabled(authService.isLoading)
+
             if let error = authService.error {
                 Text(error)
                     .font(.caption)
