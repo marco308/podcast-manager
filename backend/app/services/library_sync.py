@@ -15,6 +15,7 @@ the grace period (issue #240).
 """
 
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -60,7 +61,12 @@ class LibrarySyncResult:
         return ", ".join(parts)
 
 
-async def sync_library(db: AsyncSession, spotify: SpotifyService) -> LibrarySyncResult:
+async def sync_library(
+    db: AsyncSession,
+    spotify: SpotifyService,
+    *,
+    on_unauthorized: Callable[[str | None], Awaitable[str]] | None = None,
+) -> LibrarySyncResult:
     """Sync the ``podcasts`` table from the user's subscribed Spotify shows.
 
     Upserts every show in ``GET /me/shows``, then marks or retires the local
@@ -69,6 +75,8 @@ async def sync_library(db: AsyncSession, spotify: SpotifyService) -> LibrarySync
     Args:
         db: Database session. Left uncommitted on return.
         spotify: Authenticated Spotify client.
+        on_unauthorized: Optional 401-recovery callback (usually
+            ``TokenManager.force_refresh``), passed to every page request.
 
     Returns:
         Counts for the pass. ``reconciled`` is False if the walk was not
@@ -95,7 +103,9 @@ async def sync_library(db: AsyncSession, spotify: SpotifyService) -> LibrarySync
     offset = 0
 
     while True:
-        shows_data = await spotify.get_user_shows(limit=SHOWS_PAGE_LIMIT, offset=offset)
+        shows_data = await spotify.get_user_shows(
+            limit=SHOWS_PAGE_LIMIT, offset=offset, on_unauthorized=on_unauthorized
+        )
         items = shows_data.get("items", [])
         page_total = shows_data.get("total")
         if isinstance(page_total, int):

@@ -69,12 +69,10 @@ def spotify(monkeypatch):
     client = MagicMock()
     client.unfollow_playlist = AsyncMock()
     client.update_playlist_details = AsyncMock()
-    monkeypatch.setattr(playlists_module, "SpotifyService", MagicMock(return_value=client))
 
     token_manager = MagicMock()
-    token_manager.get_token = AsyncMock(return_value="token")
     token_manager.force_refresh = AsyncMock(return_value="token")
-    monkeypatch.setattr(playlists_module, "TokenManager", MagicMock(return_value=token_manager))
+    monkeypatch.setattr(playlists_module, "spotify_client", AsyncMock(return_value=(client, token_manager)))
     return client
 
 

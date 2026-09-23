@@ -22,6 +22,7 @@ import logging
 from datetime import UTC, datetime
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.database import async_session_maker
 from app.models.user import User
@@ -30,14 +31,22 @@ from app.services.spotify import SpotifyService
 
 logger = logging.getLogger(__name__)
 
+# Saving a rotated refresh token is retried this many times in total, with a
+# linearly growing pause, before the failure is logged as unrecoverable.
+TOKEN_COMMIT_ATTEMPTS = 3
+TOKEN_COMMIT_RETRY_DELAY_SECONDS = 0.5
+
 
 class TokenManager:
     """Manages a single user's Spotify access token with just-in-time refresh.
 
-    The manager is scoped to a ``user_id`` and uses short-lived DB sessions —
-    it does NOT hold a session across the Spotify ``POST /api/token`` call.
-    Concurrent ``get_token`` calls for the same user share a single refresh
-    via a class-level per-user ``asyncio.Lock``.
+    The manager is scoped to a ``user_id`` and opens its own short-lived DB
+    session per call. A refresh keeps that session open across the Spotify
+    ``POST /api/token`` call (it reads the refresh token, calls Spotify, then
+    writes the rotated tokens back on the same session), so at most one such
+    session per user is open at a time — the per-user ``asyncio.Lock`` that
+    makes concurrent ``get_token`` / ``force_refresh`` calls share a single
+    refresh also serialises the sessions.
     """
 
     # Class-level so two TokenManager instances for the same user serialize
@@ -114,13 +123,21 @@ class TokenManager:
 
             return await self._refresh_locked(db, user)
 
-    async def force_refresh(self) -> str:
-        """Refresh unconditionally and return the new bearer token.
+    async def force_refresh(self, rejected_token: str | None = None) -> str:
+        """Refresh after a 401 and return the new bearer token.
 
         Intended as the ``on_unauthorized`` callback for
-        :func:`SpotifyService._request_with_retry` — when Spotify returns 401
-        we want a refresh even if the cached expiry says we should still be
-        valid (clock skew, revoked token, etc.).
+        :func:`SpotifyService._request_with_retry`, which passes the token
+        Spotify just rejected. When Spotify returns 401 we want a refresh even
+        if the cached expiry says we should still be valid (clock skew,
+        revoked token, etc.) — unless another caller already refreshed while
+        this one was waiting: if the stored token is no longer the rejected
+        one, it is returned as-is. Every needless refresh rotates the refresh
+        token, so a burst of concurrent 401s must share one refresh.
+
+        Args:
+            rejected_token: The bearer token that got the 401. ``None``
+                refreshes unconditionally.
         """
         lock = self._lock_for(self._user_id)
         async with lock, async_session_maker() as db:
@@ -128,6 +145,13 @@ class TokenManager:
             user = result.scalar_one_or_none()
             if user is None:
                 raise RuntimeError(f"User {self._user_id} not found")
+
+            if rejected_token is not None:
+                current = self._encryption.decrypt(user.access_token)
+                if current != rejected_token and self._seconds_remaining(user.token_expires_at) > 0:
+                    logger.info("Token for user %s was already refreshed; skipping refresh", self._user_id)
+                    return current
+
             return await self._refresh_locked(db, user)
 
     async def _refresh_locked(self, db, user: User) -> str:
@@ -136,15 +160,45 @@ class TokenManager:
         The DB session ``db`` is short-lived (created by the caller); we
         commit it before returning so the new token is durable even if the
         caller crashes immediately after.
+
+        Once Spotify has answered, the old refresh token is already dead —
+        Spotify rotates it on every refresh — so failing to store the new one
+        loses the user's credentials for good. The commit is therefore retried
+        a few times (a busy SQLite is the likely cause), and a final failure
+        is logged at CRITICAL before it propagates.
         """
         refresh_token = self._encryption.decrypt(user.refresh_token)
         spotify = SpotifyService()
         token_data = await spotify.refresh_access_token(refresh_token)
 
-        user.access_token = self._encryption.encrypt(token_data["access_token"])
-        user.refresh_token = self._encryption.encrypt(token_data["refresh_token"])
-        user.token_expires_at = token_data["expires_at"]
-        await db.commit()
+        encrypted_access = self._encryption.encrypt(token_data["access_token"])
+        encrypted_refresh = self._encryption.encrypt(token_data["refresh_token"])
+        for attempt in range(1, TOKEN_COMMIT_ATTEMPTS + 1):
+            try:
+                user.access_token = encrypted_access
+                user.refresh_token = encrypted_refresh
+                user.token_expires_at = token_data["expires_at"]
+                await db.commit()
+                break
+            except SQLAlchemyError as e:
+                await db.rollback()
+                if attempt == TOKEN_COMMIT_ATTEMPTS:
+                    logger.critical(
+                        "Spotify rotated the refresh token for user %s but saving it failed %d times (%s). "
+                        "The stored refresh token is now invalid; the user must sign in again.",
+                        self._user_id,
+                        attempt,
+                        e,
+                    )
+                    raise
+                logger.warning(
+                    "Saving refreshed Spotify token for user %s failed (attempt %d/%d): %s — retrying",
+                    self._user_id,
+                    attempt,
+                    TOKEN_COMMIT_ATTEMPTS,
+                    e,
+                )
+                await asyncio.sleep(TOKEN_COMMIT_RETRY_DELAY_SECONDS * attempt)
 
         logger.info("Refreshed Spotify token for user %s", self._user_id)
         return token_data["access_token"]

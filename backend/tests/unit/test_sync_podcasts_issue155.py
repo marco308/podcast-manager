@@ -50,7 +50,11 @@ def _spotify(monkeypatch, pages):
     spotify = MagicMock()
     spotify.get_user_shows = AsyncMock(side_effect=pages)
     spotify.get_show_episodes = AsyncMock(side_effect=AssertionError("sync must not fetch episodes"))
-    monkeypatch.setattr(podcasts_module, "SpotifyService", MagicMock(return_value=spotify))
+    monkeypatch.setattr(
+        podcasts_module,
+        "spotify_client",
+        AsyncMock(return_value=(spotify, MagicMock(force_refresh=AsyncMock()))),
+    )
     return spotify
 
 

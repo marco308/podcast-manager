@@ -62,6 +62,8 @@ Log in through the browser once against the local server. After that, `python -m
 4. On 401 the interceptor redirects to `/login`; on 403 CSRF failure it re-reads the cookie and retries once.
 5. Cookies can be scoped cross-subdomain via `COOKIE_DOMAIN` env (e.g. `.example.com`).
 
+**Spotify tokens in routes:** every route that calls Spotify gets its client from `routers/_deps.py::spotify_client(db, user_id)` — a `TokenManager.get_token()` token plus the manager, whose `force_refresh` is passed as `on_unauthorized`. `SpotifyService` hands the callback the token that got the 401 and keeps the new one on the instance; `force_refresh` skips the refresh when the stored token has already moved on (another caller refreshed), because every refresh rotates the refresh token. If the stored credentials can't be decrypted, the helper deletes all the user's sessions and raises `ReauthRequired`, a 401 whose handler (registered in `main.py`) also clears the `session_id` / `csrf_token` cookies — otherwise `/auth/status` would still say "authenticated" and the login page would bounce straight back.
+
 The iOS app does OAuth via `ASWebAuthenticationSession` and a `redirect_scheme=podcastmanager` query param; backend redirects to `podcastmanager://auth/callback?code=...` with a single-use exchange code, which the app trades for real credentials via `POST /api/auth/mobile-exchange`. Session ID and CSRF token are stored in Keychain and sent as `Cookie` + `X-CSRF-Token` headers.
 
 ### Background Jobs (APScheduler)
