@@ -1,6 +1,7 @@
 """Playlist Pydantic schemas."""
 
 from datetime import datetime
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -16,6 +17,11 @@ SPOTIFY_ID_PATTERN = r"^[A-Za-z0-9]+$"
 NAME_MAX_LENGTH = 255
 # Sanity cap on bulk assignment/reorder payloads.
 PODCAST_IDS_MAX_LENGTH = 500
+# Largest value SQLite's INTEGER can hold. A bigger int reaches the driver
+# and raises OverflowError (a 500) instead of simply matching no row.
+DB_ID_MAX = 2**63 - 1
+# A row ID taken from a request body.
+DbId = Annotated[int, Field(ge=1, le=DB_ID_MAX)]
 # ``episode_limit`` is 0 (all) or 1..N; N is bounded by the per-show fetch cap.
 EPISODE_LIMIT_MAX = 500
 
@@ -96,7 +102,7 @@ class PlaylistListResponse(BaseModel):
 class PlaylistPodcastAdd(BaseModel):
     """Schema for adding podcasts to a playlist."""
 
-    podcast_ids: list[int] = Field(max_length=PODCAST_IDS_MAX_LENGTH)
+    podcast_ids: list[DbId] = Field(max_length=PODCAST_IDS_MAX_LENGTH)
 
 
 class AssignmentRule(BaseModel):
@@ -157,9 +163,13 @@ class PlaylistPodcastListResponse(BaseModel):
 
 
 class PlaylistPodcastReorder(BaseModel):
-    """Schema for reordering podcasts within a playlist."""
+    """Schema for reordering podcasts within a playlist.
 
-    podcast_ids: list[int] = Field(max_length=PODCAST_IDS_MAX_LENGTH)
+    Must list every assigned podcast exactly once — the router refuses a
+    partial or repeated list, which would leave two rows on one position.
+    """
+
+    podcast_ids: list[DbId] = Field(max_length=PODCAST_IDS_MAX_LENGTH)
 
 
 class SpotifyPlaylistOption(BaseModel):
@@ -179,3 +189,6 @@ class SpotifyPlaylistOptionListResponse(BaseModel):
 
     items: list[SpotifyPlaylistOption]
     total: int
+    # True when the listing stopped at the page cap with more playlists left
+    # on Spotify, so the picker can say the list is incomplete.
+    truncated: bool = False
