@@ -359,6 +359,35 @@ async def test_unfollow_spotify_failure_is_502_and_keeps_podcast(maker, monkeypa
     assert len(remaining) == 1
 
 
+@pytest.mark.asyncio
+async def test_daily_library_sync_recovers_from_401(maker, monkeypatch):
+    """The daily job's sync gets the same 401 recovery as the manual one."""
+    await _seed(maker)
+    token_manager = MagicMock()
+    token_manager.get_token = AsyncMock(return_value="old")
+    token_manager.force_refresh = AsyncMock(return_value="new")
+    handler = _expired_old_token(
+        lambda _r: httpx.Response(
+            200,
+            json={"items": [{"show": {"id": "s1", "name": "Show", "images": [], "publisher": "p"}}], "total": 1},
+        )
+    )
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(scheduler, "async_session_maker", maker)
+    monkeypatch.setattr(scheduler, "TokenManager", MagicMock(return_value=token_manager))
+    monkeypatch.setattr(
+        scheduler,
+        "SpotifyService",
+        lambda access_token: SpotifyService(access_token=access_token, client=client),
+    )
+
+    await scheduler.sync_all_libraries()
+
+    token_manager.force_refresh.assert_awaited_once_with("old")
+    async with maker() as db:
+        assert [p.spotify_id for p in (await db.execute(select(Podcast))).scalars()] == ["s1"]
+
+
 # --- Unreadable credentials sign the user out --------------------------------
 
 

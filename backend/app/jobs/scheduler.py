@@ -271,9 +271,10 @@ async def sync_all_libraries() -> None:
         for user_id in user_ids:
             async with async_session_maker() as db:
                 try:
-                    access_token = await TokenManager(user_id).get_token(min_remaining_seconds=300)
+                    token_manager = TokenManager(user_id)
+                    access_token = await token_manager.get_token(min_remaining_seconds=300)
                     spotify = SpotifyService(access_token=access_token)
-                    result = await sync_library(db, spotify)
+                    result = await sync_library(db, spotify, on_unauthorized=token_manager.force_refresh)
                     await db.commit()
                     summaries.append(f"User {user_id}: {result.summary}")
                 except Exception as e:
