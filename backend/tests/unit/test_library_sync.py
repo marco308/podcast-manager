@@ -88,10 +88,22 @@ def _page(*show_ids, total=None):
     return {"items": items, "total": len(items) if total is None else total}
 
 
+def _as_context_manager(client):
+    """Let a mocked SpotifyService be used as ``async with SpotifyService(...)``."""
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    return client
+
+
 def _spotify_returning(*pages):
     client = MagicMock()
     client.get_user_shows = AsyncMock(side_effect=list(pages))
-    return client
+    return _as_context_manager(client)
+
+
+def _stub_client(client):
+    """Stand-in for ``spotify_client``: the client plus a token manager."""
+    return AsyncMock(return_value=(client, MagicMock(force_refresh=AsyncMock())))
 
 
 class TestMarkedShowStopsContributing:
@@ -161,8 +173,8 @@ class TestSyncEndpoint:
         engine, maker = await _make_db()
         monkeypatch.setattr(
             podcasts_module,
-            "SpotifyService",
-            MagicMock(return_value=_spotify_returning(_page("a", total=9))),
+            "spotify_client",
+            _stub_client(_spotify_returning(_page("a", total=9))),
         )
         try:
             async with maker() as db:
@@ -186,8 +198,8 @@ class TestSyncEndpoint:
         engine, maker = await _make_db()
         monkeypatch.setattr(
             podcasts_module,
-            "SpotifyService",
-            MagicMock(return_value=_spotify_returning(_page("a"))),
+            "spotify_client",
+            _stub_client(_spotify_returning(_page("a"))),
         )
         try:
             async with maker() as db:
@@ -215,8 +227,8 @@ class TestConcurrentSyncsAreSerialised:
         monkeypatch.setattr(podcasts_module, "SYNC_LOCK_WAIT_SECONDS", 0.05)
         monkeypatch.setattr(
             podcasts_module,
-            "SpotifyService",
-            MagicMock(return_value=_spotify_returning(_page())),
+            "spotify_client",
+            _stub_client(_spotify_returning(_page())),
         )
         try:
             async with maker() as db:
@@ -243,7 +255,7 @@ class TestConcurrentSyncsAreSerialised:
         engine, maker = await _make_db()
         client = MagicMock()
         client.get_user_shows = AsyncMock(side_effect=RuntimeError("Spotify fell over"))
-        monkeypatch.setattr(podcasts_module, "SpotifyService", MagicMock(return_value=client))
+        monkeypatch.setattr(podcasts_module, "spotify_client", _stub_client(client))
         try:
             async with maker() as db:
                 db.add(_user())
@@ -274,6 +286,7 @@ class TestConcurrentSyncsAreSerialised:
             return _page()
 
         client.get_user_shows = observe_lock
+        _as_context_manager(client)
         try:
             async with maker() as db:
                 db.add(_user())

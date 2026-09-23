@@ -59,7 +59,7 @@ def spotify(monkeypatch):
     client.get_user_playlists = AsyncMock()
     monkeypatch.setattr(
         playlists_module,
-        "_spotify_client",
+        "spotify_client",
         AsyncMock(return_value=(client, SimpleNamespace(force_refresh=AsyncMock()))),
     )
     return client
