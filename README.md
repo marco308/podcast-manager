@@ -145,6 +145,7 @@ FRONTEND_URL=https://127.0.0.1:3000
 COOKIE_DOMAIN=            # e.g. .example.com when the API and frontend are on sibling subdomains
 PLAYLIST_UPDATE_HOUR=4    # initial daily-update time; later changes made in the UI take precedence
 PLAYLIST_UPDATE_MINUTE=0
+TIMEZONE=UTC              # IANA zone the run times are in, e.g. Europe/London (follows daylight saving)
 ```
 
 Spotify tokens are stored encrypted with `ENCRYPTION_KEY`. Keep it stable: changing it means signing in again.
