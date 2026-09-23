@@ -94,13 +94,24 @@ OLDEST_FIRST = ["day_prev_year", "year_only", "day_feb", "month_march", "day_mar
 
 
 class TestSortEpisodes:
-    def test_equal_keys_keep_input_order(self):
-        # Year-only and explicit Jan 1 tie; the sort must be stable so the
-        # result is deterministic rather than depending on string luck.
+    def test_equal_keys_follow_catalogue_order(self):
+        # Year-only and explicit Jan 1 tie; the result must be deterministic
+        # rather than depending on string luck. Input is Spotify's
+        # newest-first order, so a tie is read backwards for oldest-first.
         a = _episode("a", "2024-01-01")
         b = _episode("b", "2024")
-        assert _names(PlaylistBuilder.sort_within_show([a, b], PickFrom.OLDEST)) == ["a", "b"]
-        assert _names(PlaylistBuilder.sort_within_show([b, a], PickFrom.OLDEST)) == ["b", "a"]
+        assert _names(PlaylistBuilder.sort_within_show([a, b], PickFrom.OLDEST)) == ["b", "a"]
+        assert _names(PlaylistBuilder.sort_within_show([b, a], PickFrom.OLDEST)) == ["a", "b"]
+        assert _names(PlaylistBuilder.sort_within_show([a, b], PickFrom.NEWEST)) == ["a", "b"]
+
+    def test_same_day_serial_parts_play_in_order(self):
+        # A serial dropping parts 1 and 2 on one day: Spotify lists part 2
+        # first. Oldest-first with a limit must pick part 1, not part 2.
+        catalogue = [_episode("part2", "2024-10-29"), _episode("part1", "2024-10-29"), _episode("intro", "2024-02-14")]
+        oldest = PlaylistBuilder.sort_within_show(catalogue, PickFrom.OLDEST)
+        assert _names(oldest) == ["intro", "part1", "part2"]
+        assert _names(oldest[:2]) == ["intro", "part1"]
+        assert _names(PlaylistBuilder.sort_within_show(catalogue, PickFrom.NEWEST)) == ["part2", "part1", "intro"]
 
     def test_sequential_is_oldest_first_across_precisions(self):
         result = PlaylistBuilder.sort_within_show(list(MIXED), PickFrom.OLDEST)
@@ -141,6 +152,21 @@ class TestAssembly:
         # Merge newest-first: s_day (Mar), n_day (Feb), s_year (Jan 1).
         # The serial holds slots 0 and 2, filled oldest-first.
         assert _names(result) == ["s_year", "n_day", "s_day"]
+
+    def test_same_day_ties_survive_the_date_merge(self):
+        serial = PlaylistBuilder.sort_within_show(
+            [_episode("s2", "2024-10-29", "seq"), _episode("s1", "2024-10-29", "seq")], PickFrom.OLDEST
+        )
+        news = PlaylistBuilder.sort_within_show(
+            [_episode("n2", "2024-10-29", "news"), _episode("n1", "2024-10-29", "news")], PickFrom.NEWEST
+        )
+        groups = [_contribution("seq", serial, PickFrom.OLDEST), _contribution("news", news)]
+        asc = PlaylistBuilder.assemble(groups, Arrangement.BY_DATE.value, DateDirection.OLDEST_FIRST.value)
+        desc = PlaylistBuilder.assemble(groups, Arrangement.BY_DATE.value, DateDirection.NEWEST_FIRST.value)
+        # show_id breaks the cross-show tie ("news" < "seq"); within a show the
+        # catalogue order holds, and the serial is oldest-first either way.
+        assert _names(asc) == ["n1", "n2", "s1", "s2"]
+        assert _names(desc) == ["s1", "s2", "n2", "n1"]
 
     def test_by_position_keeps_the_within_show_order_it_is_given(self):
         ordered = PlaylistBuilder.sort_within_show(list(MIXED), PickFrom.OLDEST)
