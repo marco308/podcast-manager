@@ -59,6 +59,23 @@ function formatTime({ hour, minute }: JobSchedule): string {
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }
 
+// The run times are wall-clock times in the server's TIMEZONE, not the
+// browser's, so they are labelled with it and never converted. Servers from
+// before the setting don't send it.
+function formatTimes(job: Job): string {
+  const times = scheduleTimes(job).map(formatTime).join(', ');
+  return job.schedule_timezone ? `${times} (${job.schedule_timezone})` : times;
+}
+
+// The TimePicker needs a dayjs value, but only its hour and minute are read
+// back. Pin the date so a daylight-saving jump in the *browser's* zone can't
+// shift the hour (dayjs().hour(1) on a spring-forward day comes out as 02:00).
+const PICKER_DATE = '2000-01-01';
+
+function pickerTime({ hour, minute }: JobSchedule): dayjs.Dayjs {
+  return dayjs(PICKER_DATE).hour(hour).minute(minute);
+}
+
 // The hint under the switch describes whichever option is selected.
 const THEME_OPTIONS: { value: ThemePreference; label: string; hint: string }[] = [
   { value: 'light', label: 'Light', hint: 'Always use the light theme' },
@@ -141,7 +158,7 @@ export function Settings() {
             <Text type="secondary">every {record.interval_minutes} min</Text>
           )}
           {record.type === 'cron' && scheduleTimes(record).length > 0 && (
-            <Text type="secondary">{scheduleTimes(record).map(formatTime).join(', ')}</Text>
+            <Text type="secondary">{formatTimes(record)}</Text>
           )}
         </Space>
       ),
@@ -191,9 +208,7 @@ export function Settings() {
           return <Text type="secondary">Not configurable</Text>;
         }
 
-        const times =
-          editingTimes ??
-          scheduleTimes(record).map(({ hour, minute }) => dayjs().hour(hour).minute(minute));
+        const times = editingTimes ?? scheduleTimes(record).map(pickerTime);
         const maxTimes = record.max_schedule_times ?? 1;
 
         const setTimeAt = (index: number, time: dayjs.Dayjs) =>
@@ -203,7 +218,10 @@ export function Settings() {
         // Start a new run eight hours after the last one, a sensible spread
         // for up to three a day; the user adjusts it before saving.
         const addTime = () =>
-          setEditingTimes([...times, (times[times.length - 1] ?? dayjs()).add(8, 'hour')]);
+          setEditingTimes([
+            ...times,
+            (times[times.length - 1] ?? pickerTime({ hour: 0, minute: 0 })).add(8, 'hour'),
+          ]);
 
         return (
           <Space wrap>
@@ -224,6 +242,11 @@ export function Settings() {
                 )}
               </Space.Compact>
             ))}
+            {record.schedule_timezone && (
+              <Tooltip title="Run times are in the server's time zone (its TIMEZONE setting), not your device's">
+                <Text type="secondary">{record.schedule_timezone}</Text>
+              </Tooltip>
+            )}
             {times.length < maxTimes && (
               <Tooltip title={`Run up to ${maxTimes} times a day`}>
                 <Button icon={<PlusOutlined />} onClick={addTime}>

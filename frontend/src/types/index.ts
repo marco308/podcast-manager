@@ -214,6 +214,9 @@ export interface Job {
   // update can run up to `max_schedule_times` times a day.
   schedule_times?: JobSchedule[];
   max_schedule_times?: number;
+  // IANA zone the schedule's hours and minutes are wall-clock times in (the
+  // server's TIMEZONE setting), not the browser's. Absent on older servers.
+  schedule_timezone?: string;
   interval_minutes?: number;
 }
 
