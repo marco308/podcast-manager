@@ -8,10 +8,13 @@ docs/design/assignment-rules.md.
 
 import logging
 import random
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
 
+import httpx
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -120,6 +123,10 @@ class PlaylistUpdateResult:
     # True when the playlist was deliberately left untouched because it is
     # disabled (issue #239). Not a failure: `success` stays True.
     skipped: bool = False
+    # The exception behind a failed update, so the scheduler can classify
+    # the failure from its type and HTTP status rather than from ``error``,
+    # whose text includes user-chosen names like the playlist's.
+    exception: BaseException | None = None
 
 
 @dataclass
@@ -166,6 +173,28 @@ class PlaylistBuilder:
         self._user = user
         self._token_manager = token_manager if token_manager is not None else TokenManager(user.id)
         self._spotify: SpotifyService | None = None
+        # One httpx client per build (see ``_shared_http_client``), so the
+        # dozens of page reads reuse a connection instead of each opening one.
+        self._http_client: httpx.AsyncClient | None = None
+
+    @asynccontextmanager
+    async def _shared_http_client(self) -> AsyncIterator[None]:
+        """Share one httpx client across every Spotify call made inside.
+
+        Re-entrant: a nested use (``update_all_playlists`` → ``update_playlist``)
+        keeps the outer client, which the outermost use closes.
+        """
+        if self._http_client is not None:
+            yield
+            return
+        async with httpx.AsyncClient() as client:
+            self._http_client = client
+            try:
+                yield
+            finally:
+                self._http_client = None
+                if self._spotify is not None:
+                    self._spotify._client = None
 
     async def _get_spotify_client(self) -> SpotifyService:
         """Get authenticated Spotify client with a freshly-checked token.
@@ -177,11 +206,12 @@ class PlaylistBuilder:
         """
         access_token = await self._token_manager.get_token(min_remaining_seconds=300)
         if self._spotify is None:
-            self._spotify = SpotifyService(access_token=access_token)
+            self._spotify = SpotifyService(access_token=access_token, client=self._http_client)
         else:
             # Refresh the cached client's token so any subsequent reads
             # (and future shared-client write paths) see the new value.
             self._spotify._access_token = access_token
+            self._spotify._client = self._http_client
         return self._spotify
 
     async def _get_playlist_podcasts(self, playlist_id: int) -> list[AssignmentEntry]:
@@ -267,6 +297,11 @@ class PlaylistBuilder:
         unread middle is older than every head episode, so the head must not
         compete for "oldest" — it would be trimmed in ahead of episodes we
         never looked at.
+
+        An empty tail page means ``total`` overstated the catalogue (episodes
+        counted but not returnable, e.g. outside the user's market); the walk
+        then falls back to reading from the head (``_walk_from_head_fallback``)
+        rather than returning nothing.
         """
         first = await spotify.get_show_episodes(show_id, limit=PAGE_SIZE, offset=0)
         head: list[dict[str, Any]] = list(first.get("items", []))
@@ -283,7 +318,11 @@ class PlaylistBuilder:
             data = await spotify.get_show_episodes(show_id, limit=end - start, offset=start)
             page = data.get("items", [])
             if not page:
-                break
+                # ``total`` promised episodes this offset doesn't return —
+                # typically ones not available in the user's market. The
+                # tail can't be located from ``total``, so read forwards
+                # instead of letting the show silently contribute nothing.
+                return await self._walk_from_head_fallback(spotify, show_id)
             tail = page + tail  # keep newest-first overall
             unplayed += sum(1 for ep in page if self._is_unplayed(ep))
             end = start
@@ -304,6 +343,26 @@ class PlaylistBuilder:
             seen.add(ep_id)
             merged.append(ep)
         return merged, complete
+
+    async def _walk_from_head_fallback(
+        self, spotify: SpotifyService, show_id: str
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Tail-walk fallback: read the catalogue forwards, up to the cap.
+
+        Used when a tail page came back empty, i.e. ``total`` overstates what
+        Spotify will actually return. Reading from the head until ``next`` runs
+        out finds the real end. Past the cap the result is the newest
+        :data:`MAX_EPISODES_PER_SHOW` episodes, the best available.
+
+        Raises:
+            EpisodeFetchError: nothing came back at all, so the show is
+                reported as failed rather than as having no episodes.
+        """
+        logger.warning(f"Show {show_id}: tail page empty below the reported total; reading from the head instead")
+        items, complete = await self._walk_from_head(spotify, show_id, None)
+        if not items:
+            raise EpisodeFetchError(f"show {show_id} returned no episodes despite a non-zero total")
+        return items, complete
 
     async def _fetch_unplayed(self, podcast: Podcast, *, need: int | None, from_oldest: bool) -> list[Episode]:
         """Fetch a show's unplayed episodes, reading only as much as the rule needs.
@@ -552,6 +611,11 @@ class PlaylistBuilder:
         return playlist.spotify_playlist_id
 
     async def update_playlist(self, playlist: Playlist) -> PlaylistUpdateResult:
+        """Update a single playlist, sharing one HTTP connection for the build."""
+        async with self._shared_http_client():
+            return await self._update_playlist(playlist)
+
+    async def _update_playlist(self, playlist: Playlist) -> PlaylistUpdateResult:
         """Update a single playlist based on its assigned podcasts.
 
         If the playlist doesn't have a Spotify playlist ID, one will be created.
@@ -652,6 +716,7 @@ class PlaylistBuilder:
                 success=False,
                 episode_count=0,
                 error=str(e),
+                exception=e,
             )
 
     async def update_all_playlists(self) -> list[PlaylistUpdateResult]:
@@ -669,16 +734,17 @@ class PlaylistBuilder:
         playlists = result.scalars().all()
 
         results = []
-        for playlist in playlists:
-            # A failed update rolls the session back, which expires every
-            # loaded row; reload before touching it rather than lazy-loading.
-            if sa_inspect(playlist).expired_attributes:
-                try:
-                    await self._db.refresh(playlist)
-                except Exception as e:
-                    logger.warning(f"Skipping playlist {sa_inspect(playlist).identity}: could not reload it: {e}")
-                    continue
-            result = await self.update_playlist(playlist)
-            results.append(result)
+        async with self._shared_http_client():
+            for playlist in playlists:
+                # A failed update rolls the session back, which expires every
+                # loaded row; reload before touching it rather than lazy-loading.
+                if sa_inspect(playlist).expired_attributes:
+                    try:
+                        await self._db.refresh(playlist)
+                    except Exception as e:
+                        logger.warning(f"Skipping playlist {sa_inspect(playlist).identity}: could not reload it: {e}")
+                        continue
+                result = await self.update_playlist(playlist)
+                results.append(result)
 
         return results
