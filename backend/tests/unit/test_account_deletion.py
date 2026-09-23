@@ -21,7 +21,6 @@ from app.database import Base
 from app.jobs import locks
 from app.models import AppSetting, Playlist, PlaylistPodcast, Podcast, Session, SyncLog, User
 from app.models.sync_log import SyncStatus
-from app.routers.auth import delete_me
 from app.services.account import delete_account
 
 
@@ -135,7 +134,7 @@ class TestDeleteMeEndpoint:
         user, _ = await _seed(db)
         response = Response()
 
-        body = await delete_me(response=response, session=MagicMock(user_id=user.id), db=db)
+        body = await auth_module.delete_me(response=response, session=MagicMock(user_id=user.id), db=db)
 
         assert "deleted" in body["message"]
         assert await _count(db, User) == 0
@@ -152,7 +151,7 @@ class TestDeleteMeEndpoint:
         await lock.acquire()
         try:
             with pytest.raises(HTTPException) as exc_info:
-                await delete_me(response=Response(), session=MagicMock(user_id=user.id), db=db)
+                await auth_module.delete_me(response=Response(), session=MagicMock(user_id=user.id), db=db)
         finally:
             lock.release()
 
@@ -174,7 +173,7 @@ class TestAccountWriteGate:
 
         async with locks.account_write_gate.shared():
             with pytest.raises(HTTPException) as exc_info:
-                await delete_me(response=Response(), session=MagicMock(user_id=user.id), db=db)
+                await auth_module.delete_me(response=Response(), session=MagicMock(user_id=user.id), db=db)
 
         assert exc_info.value.status_code == 409
         assert await _count(db, User) == 1
