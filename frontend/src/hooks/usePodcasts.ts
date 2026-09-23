@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { podcastsApi } from '../api';
 import type { PodcastUpdate } from '../types';
 import { playlistKeys } from './usePlaylists';
@@ -18,6 +18,10 @@ export function usePodcasts({ includeArchived = false }: { includeArchived?: boo
   return useQuery({
     queryKey: podcastKeys.list(includeArchived),
     queryFn: () => podcastsApi.list({ includeArchived }),
+    // Toggling "Show archived" changes the key; keep showing the previous
+    // list until the new one lands instead of dropping back to a loading
+    // state, which would unmount the table (search, page, open drawer).
+    placeholderData: keepPreviousData,
   });
 }
 

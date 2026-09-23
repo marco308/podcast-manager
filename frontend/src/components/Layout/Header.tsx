@@ -47,11 +47,21 @@ export function Header() {
           aria-label={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
         />
         {user && (
-          <Dropdown menu={{ items: menuItems }} placement="bottomRight">
-            <Space style={{ cursor: 'pointer' }}>
-              <Avatar icon={<UserOutlined />} />
-              <Text className="header-username">{user.display_name || user.spotify_id}</Text>
-            </Space>
+          <Dropdown menu={{ items: menuItems }} placement="bottomRight" trigger={['click']}>
+            {/* A real button so the menu is reachable by keyboard (Tab, then
+                Enter/Space) and announced as one; hover-only on a Space was
+                mouse-only. */}
+            <Button
+              type="text"
+              aria-label={`Account menu for ${user.display_name || user.spotify_id}`}
+              aria-haspopup="menu"
+              style={{ height: 'auto', padding: '4px 8px' }}
+            >
+              <Space>
+                <Avatar icon={<UserOutlined />} />
+                <Text className="header-username">{user.display_name || user.spotify_id}</Text>
+              </Space>
+            </Button>
           </Dropdown>
         )}
       </Space>

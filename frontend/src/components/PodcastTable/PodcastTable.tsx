@@ -92,8 +92,14 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
   const { data: playlists } = usePlaylists();
   const addPodcastsToPlaylist = useAddPodcastsToPlaylist();
   const removePodcastFromPlaylist = useRemovePodcastFromPlaylist();
-  const [updatingId, setUpdatingId] = useState<number | null>(null);
-  const [selectedPodcast, setSelectedPodcast] = useState<Podcast | null>(null);
+  // Operations in flight per podcast. A count, not a single id: two rows (or
+  // two controls on one row) can be busy at once, and the first to finish
+  // must not clear the other's spinner.
+  const [inFlight, setInFlight] = useState<ReadonlyMap<number, number>>(() => new Map());
+  // The drawer tracks the podcast by id and reads it from the cached list, so
+  // optimistic writes and refetches show up there as they do in the table.
+  // The snapshot only covers a podcast that has just left the list.
+  const [selectedSnapshot, setSelectedSnapshot] = useState<Podcast | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [pageSize, setPageSize] = useState(20);
@@ -136,101 +142,121 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
     return playlist?.name || `Playlist ${playlistId}`;
   };
 
+  const selectedPodcast = selectedSnapshot
+    ? (podcasts.find((p) => p.id === selectedSnapshot.id) ?? selectedSnapshot)
+    : null;
+
+  const isUpdating = (podcastId: number) => (inFlight.get(podcastId) ?? 0) > 0;
+
+  // Run one operation on a podcast with its spinner shown for exactly as
+  // long as that operation is in flight.
+  const trackUpdate = async (podcastId: number, operation: () => Promise<void>) => {
+    setInFlight((prev) => new Map(prev).set(podcastId, (prev.get(podcastId) ?? 0) + 1));
+    try {
+      await operation();
+    } finally {
+      setInFlight((prev) => {
+        const next = new Map(prev);
+        const count = (next.get(podcastId) ?? 0) - 1;
+        if (count > 0) {
+          next.set(podcastId, count);
+        } else {
+          next.delete(podcastId);
+        }
+        return next;
+      });
+    }
+  };
+
   const openPodcastDrawer = (podcast: Podcast) => {
-    setSelectedPodcast(podcast);
+    setSelectedSnapshot(podcast);
     setDrawerOpen(true);
   };
 
   const closePodcastDrawer = () => {
     setDrawerOpen(false);
-    setSelectedPodcast(null);
+    setSelectedSnapshot(null);
   };
 
-  // Optimistically rewrite one podcast's playlist_ids in the cached list so
-  // the table Select reflects a change immediately (and a second change diffs
-  // against fresh data instead of stale props).
-  const setCachedPlaylistIds = (podcastId: number, playlistIds: number[]) => {
+  // Optimistically patch one podcast in every cached list so the table and
+  // drawer reflect a change immediately (and a second change diffs against
+  // it instead of stale props). In-flight list fetches are cancelled first:
+  // one that started before the write would otherwise land after it and put
+  // the old value back.
+  const patchCachedPodcast = async (podcastId: number, patch: Partial<Podcast>) => {
+    await queryClient.cancelQueries({ queryKey: podcastKeys.lists() });
     queryClient.setQueriesData<Podcast[]>({ queryKey: podcastKeys.lists() }, (old) =>
-      old?.map((p) => (p.id === podcastId ? { ...p, playlist_ids: playlistIds } : p))
+      old?.map((p) => (p.id === podcastId ? { ...p, ...patch } : p))
     );
   };
 
-  const handlePlaylistsChange = async (podcast: Podcast, newPlaylistIds: number[]) => {
-    setUpdatingId(podcast.id);
-    const previousIds = podcast.playlist_ids;
-    setCachedPlaylistIds(podcast.id, newPlaylistIds);
-    try {
-      const oldIds = new Set(previousIds);
-      const newIds = new Set(newPlaylistIds);
+  // After a failure, re-read the truth rather than restoring a snapshot: with
+  // several requests in parallel, some may have succeeded, and an earlier
+  // success's refetch may already hold newer data than the snapshot.
+  const refetchPodcasts = () => queryClient.invalidateQueries({ queryKey: podcastKeys.lists() });
 
-      // Find IDs to add and remove
-      const toAdd = newPlaylistIds.filter((id) => !oldIds.has(id));
-      const toRemove = previousIds.filter((id) => !newIds.has(id));
+  const handlePlaylistsChange = (podcast: Podcast, newPlaylistIds: number[]) =>
+    trackUpdate(podcast.id, async () => {
+      const previousIds = podcast.playlist_ids;
+      await patchCachedPodcast(podcast.id, { playlist_ids: newPlaylistIds });
+      try {
+        const oldIds = new Set(previousIds);
+        const newIds = new Set(newPlaylistIds);
 
-      // Process additions and removals in parallel
-      await Promise.all([
-        ...toAdd.map((playlistId) =>
-          addPodcastsToPlaylist.mutateAsync({
-            playlistId,
-            podcastIds: [podcast.id],
-          })
-        ),
-        ...toRemove.map((playlistId) =>
-          removePodcastFromPlaylist.mutateAsync({
-            playlistId,
-            podcastId: podcast.id,
-          })
-        ),
-      ]);
+        // Find IDs to add and remove
+        const toAdd = newPlaylistIds.filter((id) => !oldIds.has(id));
+        const toRemove = previousIds.filter((id) => !newIds.has(id));
 
-      message.success('Playlist assignments updated');
-    } catch {
-      // Roll back both optimistic copies (cached list and drawer state);
-      // successful sub-mutations trigger an invalidation that will settle
-      // any partial state from the server.
-      setCachedPlaylistIds(podcast.id, previousIds);
-      setSelectedPodcast((prev) =>
-        prev && prev.id === podcast.id ? { ...prev, playlist_ids: previousIds } : prev
-      );
-      message.error('Failed to update playlist assignments');
-    } finally {
-      setUpdatingId(null);
-    }
-  };
+        // Process additions and removals in parallel
+        await Promise.all([
+          ...toAdd.map((playlistId) =>
+            addPodcastsToPlaylist.mutateAsync({
+              playlistId,
+              podcastIds: [podcast.id],
+            })
+          ),
+          ...toRemove.map((playlistId) =>
+            removePodcastFromPlaylist.mutateAsync({
+              playlistId,
+              podcastId: podcast.id,
+            })
+          ),
+        ]);
 
-  const handleSequentialChange = async (podcastId: number, checked: boolean) => {
-    setUpdatingId(podcastId);
-    try {
-      await updatePodcast.mutateAsync({ podcastId, data: { is_sequential: checked } });
-      message.success(checked ? 'Marked as sequential' : 'Removed sequential flag');
-    } catch {
-      // Roll back the drawer's optimistic toggle to the pre-change value
-      setSelectedPodcast((prev) =>
-        prev && prev.id === podcastId ? { ...prev, is_sequential: !checked } : prev
-      );
-      message.error('Failed to update');
-    } finally {
-      setUpdatingId(null);
-    }
-  };
+        message.success('Playlist assignments updated');
+      } catch {
+        void refetchPodcasts();
+        message.error('Failed to update playlist assignments');
+      }
+    });
+
+  const handleSequentialChange = (podcastId: number, checked: boolean) =>
+    trackUpdate(podcastId, async () => {
+      await patchCachedPodcast(podcastId, { is_sequential: checked });
+      try {
+        await updatePodcast.mutateAsync({ podcastId, data: { is_sequential: checked } });
+        message.success(checked ? 'Marked as sequential' : 'Removed sequential flag');
+      } catch {
+        void refetchPodcasts();
+        message.error('Failed to update');
+      }
+    });
 
   // Archive hides the podcast from the app but keeps it followed on Spotify.
   // The backend drops its playlist assignments when archiving.
-  const handleArchiveChange = async (podcast: Podcast, archived: boolean) => {
-    setUpdatingId(podcast.id);
-    try {
-      await updatePodcast.mutateAsync({
-        podcastId: podcast.id,
-        data: { is_archived: archived },
-      });
-      message.success(archived ? `Archived "${podcast.name}"` : `Restored "${podcast.name}"`);
-      closePodcastDrawer();
-    } catch {
-      message.error(archived ? 'Failed to archive podcast' : 'Failed to restore podcast');
-    } finally {
-      setUpdatingId(null);
-    }
-  };
+  const handleArchiveChange = (podcast: Podcast, archived: boolean) =>
+    trackUpdate(podcast.id, async () => {
+      try {
+        await updatePodcast.mutateAsync({
+          podcastId: podcast.id,
+          data: { is_archived: archived },
+        });
+        message.success(archived ? `Archived "${podcast.name}"` : `Restored "${podcast.name}"`);
+        closePodcastDrawer();
+      } catch {
+        message.error(archived ? 'Failed to archive podcast' : 'Failed to restore podcast');
+      }
+    });
 
   // Marked by the sync when the show left the Spotify library (issue #155).
   // It contributes no episodes from that moment, and the row is deleted after
@@ -264,7 +290,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
       <Button
         icon={<UndoOutlined />}
         onClick={() => handleArchiveChange(podcast, false)}
-        loading={updatingId === podcast.id}
+        loading={isUpdating(podcast.id)}
         size={block ? 'middle' : 'small'}
         block={block}
         aria-label="Restore podcast"
@@ -281,7 +307,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
       >
         <Button
           icon={<InboxOutlined />}
-          loading={updatingId === podcast.id}
+          loading={isUpdating(podcast.id)}
           size={block ? 'middle' : 'small'}
           block={block}
           aria-label="Archive podcast"
@@ -291,18 +317,16 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
       </Popconfirm>
     );
 
-  const handleUnfollow = async (podcastId: number, podcastName: string) => {
-    setUpdatingId(podcastId);
-    try {
-      await unfollowPodcast.mutateAsync(podcastId);
-      message.success(`Unfollowed "${podcastName}"`);
-      closePodcastDrawer();
-    } catch {
-      message.error('Failed to unfollow podcast');
-    } finally {
-      setUpdatingId(null);
-    }
-  };
+  const handleUnfollow = (podcastId: number, podcastName: string) =>
+    trackUpdate(podcastId, async () => {
+      try {
+        await unfollowPodcast.mutateAsync(podcastId);
+        message.success(`Unfollowed "${podcastName}"`);
+        closePodcastDrawer();
+      } catch {
+        message.error('Failed to unfollow podcast');
+      }
+    });
 
   const columns: TableProps<Podcast>['columns'] = [
     {
@@ -366,7 +390,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
           mode="multiple"
           value={record.playlist_ids}
           onChange={(value) => handlePlaylistsChange(record, value)}
-          loading={updatingId === record.id}
+          loading={isUpdating(record.id)}
           disabled={record.is_archived}
           style={{ width: 200 }}
           placeholder={record.is_archived ? 'Archived' : 'Unassigned'}
@@ -393,7 +417,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
         <Switch
           checked={record.is_sequential}
           onChange={(checked) => handleSequentialChange(record.id, checked)}
-          loading={updatingId === record.id}
+          loading={isUpdating(record.id)}
           size="small"
         />
       ),
@@ -412,11 +436,11 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
           {record.last_synced_at ? dayjs(record.last_synced_at).fromNow() : 'Never'}
         </Text>
       ),
-      sorter: (a, b) => {
-        if (!a.last_synced_at) return 1;
-        if (!b.last_synced_at) return -1;
-        return new Date(a.last_synced_at).getTime() - new Date(b.last_synced_at).getTime();
-      },
+      // Never-synced rows count as oldest, so the comparator stays
+      // consistent (two nulls compare equal) in both sort directions.
+      sorter: (a, b) =>
+        (a.last_synced_at ? new Date(a.last_synced_at).getTime() : 0) -
+        (b.last_synced_at ? new Date(b.last_synced_at).getTime() : 0),
     },
     {
       title: 'Actions',
@@ -439,7 +463,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
             <Button
               danger
               icon={<UserDeleteOutlined />}
-              loading={updatingId === record.id}
+              loading={isUpdating(record.id)}
               size="small"
               aria-label="Unfollow podcast"
             />
@@ -635,11 +659,8 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
                 <Select
                   mode="multiple"
                   value={selectedPodcast.playlist_ids}
-                  onChange={(value) => {
-                    handlePlaylistsChange(selectedPodcast, value);
-                    setSelectedPodcast((prev) => (prev ? { ...prev, playlist_ids: value } : prev));
-                  }}
-                  loading={updatingId === selectedPodcast.id}
+                  onChange={(value) => handlePlaylistsChange(selectedPodcast, value)}
+                  loading={isUpdating(selectedPodcast.id)}
                   disabled={selectedPodcast.is_archived}
                   style={{ width: '100%' }}
                   placeholder={
@@ -657,13 +678,8 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
               >
                 <Switch
                   checked={selectedPodcast.is_sequential}
-                  onChange={(checked) => {
-                    handleSequentialChange(selectedPodcast.id, checked);
-                    setSelectedPodcast((prev) =>
-                      prev ? { ...prev, is_sequential: checked } : prev
-                    );
-                  }}
-                  loading={updatingId === selectedPodcast.id}
+                  onChange={(checked) => handleSequentialChange(selectedPodcast.id, checked)}
+                  loading={isUpdating(selectedPodcast.id)}
                 />
               </Form.Item>
 
@@ -696,7 +712,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
                   <Button
                     danger
                     icon={<UserDeleteOutlined />}
-                    loading={updatingId === selectedPodcast.id}
+                    loading={isUpdating(selectedPodcast.id)}
                     block
                   >
                     {selectedPodcast.missing_since ? 'Remove from App' : 'Unfollow on Spotify'}

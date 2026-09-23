@@ -24,5 +24,10 @@ export {
   useReorderPlaylistPodcasts,
   playlistKeys,
 } from './usePlaylists';
+export {
+  useSyncPodcastsWithFeedback,
+  useRunAllPlaylistsWithFeedback,
+  useRunPlaylistWithFeedback,
+} from './useActionFeedback';
 export { useJobs, useUpdateJobSchedule, jobKeys } from './useJobs';
 export { useHealth, healthKeys } from './useHealth';

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import {
   Alert,
   App,
+  Button,
   Divider,
   Form,
   Input,
@@ -182,7 +183,14 @@ function PlaylistFormModalContent({ open, playlist, onClose, onSaved }: Playlist
   const spotifyPlaylists = useSpotifyPlaylists(open);
   // Current members, only needed when editing. The body is not rendered
   // until they arrive so the editor can start from them.
-  const { data: members, isLoading: membersLoading } = usePlaylistPodcasts(playlist?.id ?? 0);
+  // A failed load gets an error with a retry instead of an endless spinner.
+  const {
+    data: members,
+    isLoading: membersLoading,
+    error: membersError,
+    refetch: refetchMembers,
+    isFetching: membersFetching,
+  } = usePlaylistPodcasts(playlist?.id ?? 0);
   const membersReady = !playlist || (!membersLoading && members !== undefined);
   const initialRows = playlist && members ? rowsFor(members) : [];
   const [draft, setDraft] = useState<EditorRow[] | null>(null);
@@ -323,7 +331,20 @@ function PlaylistFormModalContent({ open, playlist, onClose, onSaved }: Playlist
       // PlaylistFormModal; this just frees the closed form.
       destroyOnHidden
     >
-      {!membersReady ? (
+      {!membersReady && membersError ? (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginTop: 16 }}
+          message="Couldn't load this playlist's podcasts"
+          description={getErrorMessage(membersError)}
+          action={
+            <Button size="small" onClick={() => refetchMembers()} loading={membersFetching}>
+              Retry
+            </Button>
+          }
+        />
+      ) : !membersReady ? (
         <div style={{ textAlign: 'center', padding: 32 }}>
           <Spin />
         </div>

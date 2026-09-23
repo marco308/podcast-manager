@@ -181,8 +181,17 @@ export interface PlaylistPodcastListResponse {
 }
 
 // API Response types
+// One entry of a FastAPI 422 validation error.
+export interface ApiValidationErrorItem {
+  loc?: (string | number)[];
+  msg: string;
+  type?: string;
+}
+
+// `detail` is a string for HTTPException, a list for 422 validation errors,
+// and absent when the response isn't FastAPI's (e.g. a proxy error page).
 export interface ApiError {
-  detail: string;
+  detail?: string | ApiValidationErrorItem[];
 }
 
 // Job types

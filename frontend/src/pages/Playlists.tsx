@@ -23,7 +23,12 @@ import {
 import type { TableProps } from 'antd';
 import { Link } from 'react-router';
 import dayjs from 'dayjs';
-import { usePlaylists, useDeletePlaylist, useRunPlaylist, useRunAllPlaylists } from '../hooks';
+import {
+  usePlaylists,
+  useDeletePlaylist,
+  useRunPlaylistWithFeedback,
+  useRunAllPlaylistsWithFeedback,
+} from '../hooks';
 import { LoadingSpinner, PlaylistFormModal } from '../components';
 import { getErrorMessage } from '../api';
 import { arrangementLabel, ruleSummary, spotifyPlaylistUrl } from '../utils/playlistLabels';
@@ -36,14 +41,13 @@ export function Playlists() {
   const { message } = App.useApp();
   const { data: playlists, isLoading, error } = usePlaylists();
   const deletePlaylist = useDeletePlaylist();
-  const runPlaylist = useRunPlaylist();
-  const runAllPlaylists = useRunAllPlaylists();
+  const { run: handleRun, isRunning } = useRunPlaylistWithFeedback();
+  const { runAll: handleRunAll, isPending: runAllPending } = useRunAllPlaylistsWithFeedback();
   const screens = useBreakpoint();
   const isMobile = !screens.md;
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingPlaylist, setEditingPlaylist] = useState<Playlist | null>(null);
-  const [runningPlaylistId, setRunningPlaylistId] = useState<number | null>(null);
   // "Also delete on Spotify" checkbox in the delete confirm; reset each time
   // a confirm opens so it never carries over to another playlist.
   const [removeFromSpotify, setRemoveFromSpotify] = useState(false);
@@ -65,52 +69,6 @@ export function Playlists() {
       message.success(
         alsoSpotify ? 'Playlist deleted from the app and Spotify' : 'Playlist deleted'
       );
-    } catch (err: unknown) {
-      message.error(getErrorMessage(err));
-    }
-  };
-
-  const handleRun = async (id: number) => {
-    setRunningPlaylistId(id);
-    try {
-      const result = await runPlaylist.mutateAsync(id);
-      // A skipped (disabled) playlist and a partial rebuild both come back
-      // 200, but neither is a clean success — don't report them as one.
-      if (result.skipped || result.partial) {
-        message.warning(result.message);
-      } else {
-        message.success(result.message);
-      }
-    } catch (err: unknown) {
-      message.error(getErrorMessage(err));
-    } finally {
-      setRunningPlaylistId(null);
-    }
-  };
-
-  const handleRunAll = async () => {
-    try {
-      const result = await runAllPlaylists.mutateAsync();
-      // A 200 only means the batch ran — each playlist carries its own
-      // success/skipped/error status, so summarise rather than blanket-success.
-      const failed = result.results.filter((r) => !r.success);
-      const skipped = result.results.filter((r) => r.success && r.skipped);
-      const succeeded = result.results.filter((r) => r.success && !r.skipped);
-
-      let summary = `Updated ${succeeded.length} playlist${succeeded.length === 1 ? '' : 's'}`;
-      if (skipped.length > 0) {
-        summary += `, ${skipped.length} skipped (disabled)`;
-      }
-
-      if (failed.length > 0) {
-        message.error(
-          `${summary}, ${failed.length} failed: ${failed.map((r) => r.playlist_name).join(', ')}`
-        );
-      } else if (skipped.length > 0) {
-        message.warning(summary);
-      } else {
-        message.success(summary);
-      }
     } catch (err: unknown) {
       message.error(getErrorMessage(err));
     }
@@ -244,7 +202,7 @@ export function Playlists() {
                 size="small"
                 icon={<PlayCircleOutlined />}
                 onClick={() => handleRun(record.id)}
-                loading={runningPlaylistId === record.id}
+                loading={isRunning(record.id)}
                 disabled={!record.is_enabled}
                 style={record.is_enabled ? undefined : { pointerEvents: 'none' }}
                 aria-hidden={record.is_enabled ? undefined : true}
@@ -331,11 +289,7 @@ export function Playlists() {
         </div>
         <div>
           <Space wrap>
-            <Button
-              icon={<ThunderboltOutlined />}
-              onClick={handleRunAll}
-              loading={runAllPlaylists.isPending}
-            >
+            <Button icon={<ThunderboltOutlined />} onClick={handleRunAll} loading={runAllPending}>
               Update All
             </Button>
             <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>
