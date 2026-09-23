@@ -4,4 +4,4 @@ To review the app without a server, tap "Try the demo" on the sign-in screen. Th
 
 Account deletion: Settings > Delete Account. In the demo it runs the same confirmation flow and returns to the sign-in screen.
 
-The app is not affiliated with Spotify. The server uses Spotify's public Web API with the user's own developer credentials; the app itself never contacts Spotify except to open Spotify's own sign-in page in the system browser.
+The app is not affiliated with Spotify. The server uses Spotify's public Web API with the user's own developer credentials; the app itself never calls Spotify's API. It only opens Spotify's sign-in page in the system browser, opens "Open in Spotify" show and playlist links in Spotify or Safari, and loads podcast artwork from Spotify's image servers.
