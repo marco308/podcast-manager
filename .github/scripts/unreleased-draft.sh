@@ -49,8 +49,11 @@ IOS_CHANGED=$(changed ios | wc -l | tr -d ' ')
 
 NOW=$(date -u +%s)
 # Age of the oldest waiting app change (or of any change, when none is an app one).
-OLDEST_TS=$(git log --reverse --format=%ct "$LAST..$HEAD_SHA" -- "${APP_PATHS[@]}" | head -1)
-OLDEST_TS=${OLDEST_TS:-$(git log --reverse --format=%ct "$LAST..$HEAD_SHA" | head -1)}
+# git log lists newest first, so the oldest is the last line. Not `--reverse |
+# head -1`: head exits after one line, git's next write then dies of SIGPIPE,
+# and pipefail turns that into exit 141 (it did, on the first run on main).
+OLDEST_TS=$(git log --format=%ct "$LAST..$HEAD_SHA" -- "${APP_PATHS[@]}" | tail -1)
+OLDEST_TS=${OLDEST_TS:-$(git log --format=%ct "$LAST..$HEAD_SHA" | tail -1)}
 OLDEST_DAYS=$(( (NOW - OLDEST_TS) / 86400 ))
 LAST_DATE=$(git log -1 --format=%cs "$LAST^{commit}")
 
