@@ -43,6 +43,7 @@ from app.routers._deps import ReauthRequired, reauth_required_handler, spotify_c
 from app.routers.podcasts import sync_podcasts, unfollow_podcast
 from app.services import token_manager as token_manager_module
 from app.services.encryption import TokenDecryptionError
+from app.services.session import hash_session_id
 from app.services.spotify import SpotifyService
 from app.services.token_manager import TokenManager
 
@@ -396,8 +397,8 @@ async def test_decrypt_failure_deletes_sessions_and_requires_reauth(maker, monke
     now = datetime.now(UTC)
     await _seed(
         maker,
-        Session(session_id="web", user_id=1, csrf_token="c", expires_at=now + timedelta(days=1)),
-        Session(session_id="ios", user_id=1, csrf_token="c", expires_at=now + timedelta(days=1)),
+        Session(session_id_hash=hash_session_id("web"), user_id=1, csrf_token="c", expires_at=now + timedelta(days=1)),
+        Session(session_id_hash=hash_session_id("ios"), user_id=1, csrf_token="c", expires_at=now + timedelta(days=1)),
     )
     token_manager = MagicMock()
     token_manager.get_token = AsyncMock(side_effect=TokenDecryptionError("bad key"))
