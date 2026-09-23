@@ -8,6 +8,10 @@ final class NotificationService: Sendable {
     private init() {}
 
     /// Request notification permission from the user.
+    ///
+    /// Called when the user starts a sync or run — the only things that
+    /// notify — rather than at launch, where the prompt appeared on the
+    /// login screen with no context. The system only asks once.
     func requestAuthorization() async {
         do {
             let granted = try await UNUserNotificationCenter.current()

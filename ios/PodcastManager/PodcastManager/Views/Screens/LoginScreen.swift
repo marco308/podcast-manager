@@ -41,6 +41,12 @@ struct LoginScreen: View {
                         .font(.caption)
                         .foregroundStyle(.red)
                 }
+
+                // Without this the field is a dead end for anyone who
+                // installed the app without a server of their own.
+                Text("Podcast Manager runs on your own server. [How to set one up](https://marco308.github.io/podcast-manager/)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 32)
 

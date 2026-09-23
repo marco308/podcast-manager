@@ -125,6 +125,7 @@ struct PodcastsScreen: View {
 
     private func syncPodcasts() async {
         isSyncing = true
+        await NotificationService.shared.requestAuthorization()
         do {
             let response = try await APIClient.shared.syncPodcasts()
             var message = "Synced \(response.synced) podcasts (\(response.new) new)"
