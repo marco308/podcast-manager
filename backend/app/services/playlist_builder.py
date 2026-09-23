@@ -7,6 +7,7 @@ docs/design/assignment-rules.md.
 """
 
 import logging
+import random
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
@@ -369,6 +370,7 @@ class PlaylistBuilder:
         contributions: list[ShowContribution],
         arrangement: str,
         date_direction: str,
+        rng: random.Random | None = None,
     ) -> list[Episode]:
         """Assemble per-show contributions into the final playlist order.
 
@@ -378,6 +380,10 @@ class PlaylistBuilder:
         in the merge but fills them oldest-first, so a serial is never played
         out of order. ``newest`` is only a preference and follows the
         playlist direction.
+        ``shuffle`` interleaves the shows at random but keeps each show's
+        episodes in the order its rule set, so a serial still plays in
+        sequence; ``date_direction`` is ignored. Every call draws a fresh
+        order (``rng`` is injectable for tests).
 
         The slot refill is done explicitly rather than by grouping a sorted
         list — a show's episodes are rarely adjacent after a date merge, which
@@ -385,6 +391,16 @@ class PlaylistBuilder:
         """
         if arrangement == Arrangement.BY_POSITION.value:
             return [episode for group in contributions for episode in group.episodes]
+
+        if arrangement == Arrangement.SHUFFLE.value:
+            # Shuffle one token per episode, then take each show's next episode
+            # in token order: a uniformly random interleaving that never
+            # reorders episodes within a show.
+            rng = rng or random.Random()
+            queues = [iter(group.episodes) for group in contributions]
+            tokens = [i for i, group in enumerate(contributions) for _ in group.episodes]
+            rng.shuffle(tokens)
+            return [next(queues[i]) for i in tokens]
 
         descending = date_direction == DateDirection.NEWEST_FIRST.value
         ordered = sorted(

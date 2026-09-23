@@ -46,8 +46,9 @@ export interface PodcastUpdate {
 // are listened to.
 export type PickFrom = 'newest' | 'oldest';
 // How contributions are assembled: grouped per podcast in assignment order,
-// or merged across podcasts by release date.
-export type Arrangement = 'by_position' | 'by_date';
+// merged across podcasts by release date, or podcasts interleaved at random
+// (each podcast's own episodes still in order).
+export type Arrangement = 'by_position' | 'by_date' | 'shuffle';
 // Only used when `arrangement` is `by_date`.
 export type DateDirection = 'newest_first' | 'oldest_first';
 // Where a resolved rule field came from.

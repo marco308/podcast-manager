@@ -145,7 +145,11 @@ function PodcastsSection({ playlist, onEdit }: { playlist: Playlist; onEdit: () 
               type="info"
               showIcon
               style={{ marginBottom: 12 }}
-              message="This playlist is arranged by release date, so the order below is not used."
+              message={
+                playlist.arrangement === 'shuffle'
+                  ? 'This playlist is shuffled, so the order below is not used.'
+                  : 'This playlist is arranged by release date, so the order below is not used.'
+              }
             />
           )}
           <Table<PlaylistPodcast>
@@ -247,7 +251,11 @@ export function PlaylistDetail() {
           </Title>
           <Text type="secondary">
             {playlist.podcast_count} podcast{playlist.podcast_count !== 1 ? 's' : ''} ·{' '}
-            {arrangementLabel(playlist)}
+            {playlist.arrangement === 'by_position'
+              ? 'In podcast order'
+              : playlist.arrangement === 'shuffle'
+                ? 'Shuffled'
+                : 'By release date'}
           </Text>
         </div>
         <Space wrap>
@@ -305,7 +313,7 @@ export function PlaylistDetail() {
       <Card title="Settings" style={{ marginBottom: 24 }}>
         <Descriptions column={isMobile ? 1 : 2} size="small">
           <Descriptions.Item label="Arrangement">
-            {playlist.arrangement === 'by_position' ? 'In podcast order' : 'By release date'}
+            {arrangementLabel(playlist)}
           </Descriptions.Item>
           {playlist.arrangement === 'by_date' && (
             <Descriptions.Item label="Direction">

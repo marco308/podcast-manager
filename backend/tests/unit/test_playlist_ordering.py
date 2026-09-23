@@ -5,8 +5,11 @@
 and then refills the slots of any ``oldest`` show oldest-first, so a serial is
 never played out of order. That refill is done by explicit slot lookup: after
 a date merge a show's episodes are rarely adjacent, which is what silently
-broke ``itertools.groupby`` before.
+broke ``itertools.groupby`` before. ``shuffle`` interleaves shows at random
+but never reorders episodes within a show.
 """
+
+import random
 
 from app.models.playlist import Arrangement, DateDirection, PickFrom
 from app.services.assignment_rules import ResolvedRule
@@ -14,6 +17,7 @@ from app.services.playlist_builder import Episode, PlaylistBuilder, ShowContribu
 
 BY_POSITION = Arrangement.BY_POSITION.value
 BY_DATE = Arrangement.BY_DATE.value
+SHUFFLE = Arrangement.SHUFFLE.value
 NEWEST_FIRST = DateDirection.NEWEST_FIRST.value
 OLDEST_FIRST = DateDirection.OLDEST_FIRST.value
 
@@ -125,6 +129,42 @@ class TestByDateOldestFirst:
         assert _names(result) == ["story1", "chat1", "story2", "chat2", "story3"]
 
 
+class TestShuffle:
+    GROUPS = [
+        _contribution("seq", STORY, PickFrom.OLDEST),
+        _contribution("news", list(reversed(NEWS))),
+        _contribution("solo", [_episode("solo1", "solo", "2026-01-06")]),
+    ]
+
+    def _shuffled(self, seed):
+        return PlaylistBuilder.assemble(self.GROUPS, SHUFFLE, NEWEST_FIRST, rng=random.Random(seed))
+
+    def test_every_show_keeps_its_own_order(self):
+        for seed in range(200):
+            result = self._shuffled(seed)
+            assert sorted(_names(result)) == sorted(_names(e for g in self.GROUPS for e in g.episodes))
+            for group in self.GROUPS:
+                assert [e for e in result if e.show_id == group.show_id] == group.episodes
+
+    def test_shows_are_interleaved_not_just_reordered_as_blocks(self):
+        # Across many draws, some result must split a show's episodes apart
+        # with another show's episode in between.
+        def interleaved(result):
+            shows = [e.show_id for e in result]
+            runs = [s for i, s in enumerate(shows) if i == 0 or shows[i - 1] != s]
+            return len(runs) > len(set(shows))
+
+        assert any(interleaved(self._shuffled(seed)) for seed in range(50))
+
+    def test_order_varies_between_draws(self):
+        assert len({tuple(_names(self._shuffled(seed))) for seed in range(50)}) > 1
+
+    def test_date_direction_is_ignored(self):
+        a = PlaylistBuilder.assemble(self.GROUPS, SHUFFLE, NEWEST_FIRST, rng=random.Random(7))
+        b = PlaylistBuilder.assemble(self.GROUPS, SHUFFLE, OLDEST_FIRST, rng=random.Random(7))
+        assert a == b
+
+
 class TestSortWithinShow:
     def test_newest_and_oldest(self):
         assert _names(PlaylistBuilder.sort_within_show(STORY, PickFrom.NEWEST)) == ["story3", "story2", "story1"]
@@ -137,7 +177,7 @@ class TestSortWithinShow:
 
 class TestNoEpisodes:
     def test_empty_input_is_safe_in_every_mode(self):
-        for arrangement in (BY_POSITION, BY_DATE):
+        for arrangement in (BY_POSITION, BY_DATE, SHUFFLE):
             for direction in (NEWEST_FIRST, OLDEST_FIRST):
                 assert PlaylistBuilder.assemble([], arrangement, direction) == []
                 assert (

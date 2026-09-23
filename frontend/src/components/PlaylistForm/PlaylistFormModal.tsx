@@ -400,13 +400,14 @@ export function PlaylistFormModal({ open, playlist, onClose, onSaved }: Playlist
           <Form.Item
             name="arrangement"
             label="Arrangement"
-            extra="Group each podcast's episodes in the order you drag them, or merge every episode by release date"
+            extra="Group each podcast's episodes in the order you drag them, merge every episode by release date, or shuffle podcasts together (each podcast's own episodes stay in order)"
             rules={[{ required: true, message: 'Please choose an arrangement' }]}
           >
             <Select<Arrangement>
               options={[
                 { value: 'by_position', label: 'In podcast order' },
                 { value: 'by_date', label: 'By release date' },
+                { value: 'shuffle', label: 'Shuffled' },
               ]}
             />
           </Form.Item>

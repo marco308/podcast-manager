@@ -33,6 +33,7 @@ class Arrangement(str, PyEnum):
 
     BY_POSITION = "by_position"  # groups in assignment order
     BY_DATE = "by_date"  # everything merged by release date
+    SHUFFLE = "shuffle"  # shows interleaved at random, each show kept in order
 
 
 class DateDirection(str, PyEnum):
