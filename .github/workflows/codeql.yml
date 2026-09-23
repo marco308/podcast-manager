@@ -67,6 +67,13 @@ jobs:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
           queries: security-and-quality
+          # Every Alembic migration defines revision/down_revision/branch_labels
+          # for Alembic to read off the module; CodeQL can't see that and flags
+          # each one as unused (80 of them). Nothing else tripped this rule.
+          config: |
+            query-filters:
+              - exclude:
+                  id: py/unused-global-variable
 
       - name: Build iOS app
         if: matrix.language == 'swift'
