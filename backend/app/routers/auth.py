@@ -208,6 +208,10 @@ async def callback(
     Exchanges the authorization code for tokens, creates/updates user,
     creates a database session, sets cookies, then redirects to frontend.
     """
+    # `error` is attacker-controlled (anyone can hit this URL); strip line
+    # breaks so it can't forge extra log lines.
+    if error:
+        error = error.replace("\r", " ").replace("\n", " ")
     logger.info(f"Callback received: code={'present' if code else 'missing'}, error={error}")
 
     if error:

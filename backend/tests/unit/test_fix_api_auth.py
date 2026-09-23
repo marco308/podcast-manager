@@ -9,8 +9,11 @@
   fresh bucket to every forged cookie value.
 - Issue #182: ``secrets.compare_digest`` raises TypeError on non-ASCII str
   input, turning garbage in the CSRF header or OAuth state param into a 500.
+- CodeQL py/log-injection: the callback's ``error`` query param is
+  attacker-controlled, so CR/LF must not reach the log and forge extra lines.
 """
 
+import logging
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
@@ -133,6 +136,29 @@ class TestCallbackSchemeRevalidation:
         deletions = [c for c in set_cookies if c.startswith("mobile_redirect_scheme=")]
         assert deletions, "expected the planted cookie to be cleared"
         assert all("Max-Age=0" in c for c in deletions)
+
+
+class TestCallbackErrorLogInjection:
+    """CodeQL py/log-injection — the OAuth ``error`` param is logged, so strip line breaks."""
+
+    @pytest.mark.asyncio
+    async def test_crlf_in_error_param_does_not_reach_logs(self, caplog):
+        forged = "access_denied\r\nINFO forged log line"
+        with caplog.at_level(logging.DEBUG, logger="app.routers.auth"), pytest.raises(HTTPException) as exc_info:
+            await callback(
+                code=None,
+                state=None,
+                error=forged,
+                oauth_state=None,
+                oauth_verifier=None,
+                mobile_redirect_scheme=None,
+                db=MagicMock(),
+                session_service=MagicMock(),
+            )
+        assert exc_info.value.status_code == 400
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("access_denied" in m for m in messages)
+        assert not any("\r" in m or "\n" in m for m in messages)
 
 
 class TestMobileExchangeRateLimitKey:
