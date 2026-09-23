@@ -1,0 +1,83 @@
+name: CodeQL
+
+# Advanced setup (rather than the repo's "default setup" toggle) so the Swift
+# build is ours to control: the .xcodeproj is generated, not committed, and
+# default setup has no way to run xcodegen first. Keep default setup off in
+# Settings → Code security, or GitHub rejects this workflow's uploads.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, so new queries catch old code that no PR is touching.
+    - cron: "27 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: python
+            build-mode: none
+            runner: ubuntu-latest
+          - language: javascript-typescript
+            build-mode: none
+            runner: ubuntu-latest
+          # The workflows themselves (injection via PR titles, over-broad tokens).
+          - language: actions
+            build-mode: none
+            runner: ubuntu-latest
+          # Swift has to be compiled to be analysed, which needs macOS + Xcode.
+          - language: swift
+            build-mode: manual
+            runner: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Before init: under CodeQL's build tracer Homebrew thinks it is running
+      # under Rosetta and refuses to install. Only the compile needs tracing.
+      - name: Generate Xcode project
+        if: matrix.language == 'swift'
+        working-directory: ios/PodcastManager
+        run: |
+          brew install xcodegen
+          # project.yml includes the gitignored Local.yml and xcodegen fails
+          # when it is missing; an empty override is enough for an unsigned
+          # simulator build.
+          echo '{}' > Local.yml
+          xcodegen generate
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          queries: security-and-quality
+
+      - name: Build iOS app
+        if: matrix.language == 'swift'
+        working-directory: ios/PodcastManager
+        run: |
+          xcodebuild build \
+            -project PodcastManager.xcodeproj \
+            -scheme PodcastManager \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO
+
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"
