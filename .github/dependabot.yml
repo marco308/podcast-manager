@@ -33,7 +33,10 @@ updates:
     schedule:
       interval: "weekly"
 
-  # Keep GitHub Actions pinned to current major/minor too.
+  # Every action is pinned to a commit SHA with a `# vX.Y.Z` comment;
+  # Dependabot bumps both. These PRs are never auto-merged (see the
+  # dependabot-automerge job in ci.yml): a new SHA is new code that runs
+  # with write tokens, so a human reviews each one.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
