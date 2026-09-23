@@ -312,9 +312,7 @@ export function PlaylistDetail() {
 
       <Card title="Settings" style={{ marginBottom: 24 }}>
         <Descriptions column={isMobile ? 1 : 2} size="small">
-          <Descriptions.Item label="Arrangement">
-            {arrangementLabel(playlist)}
-          </Descriptions.Item>
+          <Descriptions.Item label="Arrangement">{arrangementLabel(playlist)}</Descriptions.Item>
           {playlist.arrangement === 'by_date' && (
             <Descriptions.Item label="Direction">
               {dateDirectionLabel(playlist.date_direction)}
