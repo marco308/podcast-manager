@@ -705,7 +705,10 @@ async def reschedule_playlist_update(times: list[tuple[int, int]]) -> str | None
         job = scheduler.get_job("daily_playlist_update")
         next_run = job.next_run_time.isoformat() if job and job.next_run_time else None
 
-        logger.info(f"Rescheduled daily playlist update to {_format_update_times(times)}, next run: {next_run}")
+        # Log what the live trigger now holds rather than the request's values:
+        # it is what will actually run, and it keeps request data out of the log.
+        scheduled = _format_update_times(_trigger_times(job.trigger)) if job else "nothing"
+        logger.info(f"Rescheduled daily playlist update to {scheduled}, next run: {next_run}")
         return next_run
     except Exception as e:
         logger.error(f"Failed to reschedule daily playlist update: {e}")
