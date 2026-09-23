@@ -47,6 +47,12 @@ actor DemoBackend {
         )
     }
 
+    /// Nothing is stored anywhere, so there is nothing to delete; the demo
+    /// still shows the flow a real account goes through (issue #266).
+    func deleteAccount() async {
+        await pause(0.6)
+    }
+
     // MARK: - Podcasts
 
     func fetchPodcasts(limit: Int, offset: Int) -> PodcastListResponse {

@@ -9,6 +9,9 @@ struct SettingsScreen: View {
     @State private var isSavingSchedule = false
     @State private var showScheduleSaved = false
     @State private var scheduleError: String?
+    @State private var showDeleteConfirmation = false
+    @State private var isDeletingAccount = false
+    @State private var deleteError: String?
 
     var body: some View {
         NavigationStack {
@@ -178,8 +181,55 @@ struct SettingsScreen: View {
                         Task { await authService.logout() }
                     }
                 }
+
+                // Required in-app by App Store Guideline 5.1.1(v) (issue #266).
+                Section {
+                    Button(role: .destructive) {
+                        showDeleteConfirmation = true
+                    } label: {
+                        HStack {
+                            Text("Delete Account")
+                            if isDeletingAccount {
+                                Spacer()
+                                ProgressView()
+                            }
+                        }
+                    }
+                    .disabled(isDeletingAccount)
+                    // Anchored on the button: attached to the List, iOS 26
+                    // never presented it.
+                    .confirmationDialog(
+                        "Delete your account?",
+                        isPresented: $showDeleteConfirmation,
+                        titleVisibility: .visible
+                    ) {
+                        Button("Delete Account", role: .destructive) {
+                            Task { await deleteAccount() }
+                        }
+                    } message: {
+                        Text(
+                            "This can't be undone. To also remove this app's access to Spotify, "
+                                + "go to the Apps page of your Spotify account."
+                        )
+                    }
+                } footer: {
+                    Text(
+                        "Deletes your account, playlists and podcast library from your server. "
+                            + "Playlists already on Spotify stay there."
+                    )
+                }
             }
             .navigationTitle("Settings")
+            .alert("Couldn't delete your account", isPresented: .init(
+                get: { deleteError != nil },
+                set: { if !$0 { deleteError = nil } }
+            )) {
+                Button("OK") { deleteError = nil }
+            } message: {
+                if let deleteError {
+                    Text(deleteError)
+                }
+            }
             .task {
                 await loadJobs()
             }
@@ -197,6 +247,16 @@ struct SettingsScreen: View {
         let version = info?["CFBundleShortVersionString"] as? String ?? "?"
         let build = info?["CFBundleVersion"] as? String ?? "?"
         return "\(version) (\(build))"
+    }
+
+    private func deleteAccount() async {
+        isDeletingAccount = true
+        defer { isDeletingAccount = false }
+        do {
+            try await authService.deleteAccount()
+        } catch {
+            deleteError = error.localizedDescription
+        }
     }
 
     private func loadJobs() async {

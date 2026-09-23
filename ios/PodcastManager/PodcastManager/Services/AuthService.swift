@@ -146,6 +146,19 @@ class AuthService {
         }
     }
 
+    /// Delete the account on the server, then drop local state.
+    ///
+    /// Unlike `logout`, a failure throws and leaves the user signed in: the
+    /// data is still on the server, so it must not look deleted.
+    func deleteAccount() async throws {
+        try await APIClient.shared.deleteAccount()
+        if isDemo {
+            await APIClient.shared.setDemo(nil)
+            isDemo = false
+        }
+        clearLocalSession()
+    }
+
     /// Sign out, invalidating the session on the server first.
     ///
     /// Local state is cleared regardless of the outcome — a network failure

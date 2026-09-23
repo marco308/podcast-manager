@@ -66,6 +66,13 @@ actor APIClient {
         let _: MessageResponse = try await post("/api/auth/logout")
     }
 
+    /// Delete the account and everything the server stores for it (issue
+    /// #266, App Store Guideline 5.1.1(v)). Spotify playlists are left alone.
+    func deleteAccount() async throws {
+        if let demo { return await demo.deleteAccount() }
+        let _: MessageResponse = try await delete("/api/auth/me")
+    }
+
     /// Ask the server for the CSRF token bound to the current session and
     /// persist it. Used to recover from a 403 CSRF rejection without
     /// forcing a re-login (the web client does the same via
