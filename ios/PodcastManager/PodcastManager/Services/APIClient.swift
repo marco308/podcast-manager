@@ -168,9 +168,9 @@ actor APIClient {
         return try await get("/api/jobs/status")
     }
 
-    func updateJobSchedule(hour: Int, minute: Int) async throws -> UpdateScheduleResponse {
-        if let demo { return await demo.updateSchedule(hour: hour, minute: minute) }
-        return try await put("/api/jobs/schedule", body: UpdateScheduleRequest(hour: hour, minute: minute))
+    func updateJobSchedule(times: [JobSchedule]) async throws -> UpdateScheduleResponse {
+        if let demo { return await demo.updateSchedule(times: times) }
+        return try await put("/api/jobs/schedule", body: UpdateScheduleRequest(times: times))
     }
 
     // MARK: - HTTP Methods

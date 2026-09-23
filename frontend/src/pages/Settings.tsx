@@ -15,13 +15,19 @@ import {
   Tooltip,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { LogoutOutlined, ClockCircleOutlined, DeleteOutlined } from '@ant-design/icons';
+import {
+  LogoutOutlined,
+  ClockCircleOutlined,
+  CloseOutlined,
+  DeleteOutlined,
+  PlusOutlined,
+} from '@ant-design/icons';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { useAuth, useTheme, useJobs, useUpdateJobSchedule, useHealth } from '../hooks';
 import { getErrorMessage } from '../api';
 import type { ThemePreference } from '../context';
-import type { Job } from '../types';
+import type { Job, JobSchedule } from '../types';
 
 dayjs.extend(relativeTime);
 
@@ -44,6 +50,15 @@ function failedStepsLabel(job: Job): string {
   return `The last run failed: ${names.join(', ')}`;
 }
 
+// Servers from before multiple run times only send `schedule`.
+function scheduleTimes(job: Job): JobSchedule[] {
+  return job.schedule_times ?? (job.schedule ? [job.schedule] : []);
+}
+
+function formatTime({ hour, minute }: JobSchedule): string {
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
 // The hint under the switch describes whichever option is selected.
 const THEME_OPTIONS: { value: ThemePreference; label: string; hint: string }[] = [
   { value: 'light', label: 'Light', hint: 'Always use the light theme' },
@@ -58,7 +73,8 @@ export function Settings() {
   const { data: jobsData, isLoading: jobsLoading } = useJobs();
   const { data: health } = useHealth();
   const updateSchedule = useUpdateJobSchedule();
-  const [editingTime, setEditingTime] = useState<dayjs.Dayjs | null>(null);
+  // Unsaved edits to the run times; null while showing what the server has.
+  const [editingTimes, setEditingTimes] = useState<dayjs.Dayjs[] | null>(null);
 
   const handleLogout = () => {
     // logout() swallows its own errors and always redirects to /login
@@ -93,14 +109,13 @@ export function Settings() {
   };
 
   const handleScheduleSave = () => {
-    const time = editingTime;
-    if (!time) return;
+    if (!editingTimes) return;
     updateSchedule.mutate(
-      { hour: time.hour(), minute: time.minute() },
+      editingTimes.map((time) => ({ hour: time.hour(), minute: time.minute() })),
       {
         onSuccess: (data) => {
           message.success(data.message);
-          setEditingTime(null);
+          setEditingTimes(null);
         },
         onError: () => {
           message.error('Failed to update schedule');
@@ -125,11 +140,8 @@ export function Settings() {
           {record.type === 'interval' && record.interval_minutes && (
             <Text type="secondary">every {record.interval_minutes} min</Text>
           )}
-          {record.type === 'cron' && record.schedule && (
-            <Text type="secondary">
-              {String(record.schedule.hour).padStart(2, '0')}:
-              {String(record.schedule.minute).padStart(2, '0')}
-            </Text>
+          {record.type === 'cron' && scheduleTimes(record).length > 0 && (
+            <Text type="secondary">{scheduleTimes(record).map(formatTime).join(', ')}</Text>
           )}
         </Space>
       ),
@@ -179,27 +191,51 @@ export function Settings() {
           return <Text type="secondary">Not configurable</Text>;
         }
 
-        const currentTime =
-          editingTime ??
-          (record.schedule
-            ? dayjs().hour(record.schedule.hour).minute(record.schedule.minute)
-            : null);
+        const times =
+          editingTimes ??
+          scheduleTimes(record).map(({ hour, minute }) => dayjs().hour(hour).minute(minute));
+        const maxTimes = record.max_schedule_times ?? 1;
+
+        const setTimeAt = (index: number, time: dayjs.Dayjs) =>
+          setEditingTimes(times.map((t, i) => (i === index ? time : t)));
+        const removeTimeAt = (index: number) =>
+          setEditingTimes(times.filter((_, i) => i !== index));
+        // Start a new run eight hours after the last one, a sensible spread
+        // for up to three a day; the user adjusts it before saving.
+        const addTime = () =>
+          setEditingTimes([...times, (times[times.length - 1] ?? dayjs()).add(8, 'hour')]);
 
         return (
-          <Space>
-            <TimePicker
-              value={currentTime}
-              format="HH:mm"
-              onChange={(time) => setEditingTime(time)}
-              suffixIcon={<ClockCircleOutlined />}
-              allowClear={false}
-              style={{ width: 100 }}
-            />
+          <Space wrap>
+            {times.map((time, index) => (
+              <Space.Compact key={index}>
+                <TimePicker
+                  value={time}
+                  format="HH:mm"
+                  onChange={(value) => value && setTimeAt(index, value)}
+                  suffixIcon={<ClockCircleOutlined />}
+                  allowClear={false}
+                  style={{ width: 100 }}
+                />
+                {times.length > 1 && (
+                  <Tooltip title="Remove this run time">
+                    <Button icon={<CloseOutlined />} onClick={() => removeTimeAt(index)} />
+                  </Tooltip>
+                )}
+              </Space.Compact>
+            ))}
+            {times.length < maxTimes && (
+              <Tooltip title={`Run up to ${maxTimes} times a day`}>
+                <Button icon={<PlusOutlined />} onClick={addTime}>
+                  Add time
+                </Button>
+              </Tooltip>
+            )}
             <Button
               type="primary"
               size="small"
               loading={updateSchedule.isPending}
-              disabled={!editingTime}
+              disabled={!editingTimes}
               onClick={() => handleScheduleSave()}
             >
               Save
@@ -257,9 +293,11 @@ export function Settings() {
       <Card title="Scheduled Jobs" style={{ marginBottom: 24 }}>
         <Paragraph style={{ marginBottom: 16 }}>
           <Text type="secondary" style={{ fontSize: 12 }}>
-            The daily run refreshes your Spotify library first — new subscriptions appear, and shows
-            you have unfollowed are flagged and stop contributing episodes — then rebuilds every
-            enabled playlist.
+            Each library sync &amp; playlist update refreshes your Spotify library first — new
+            subscriptions appear, and shows you have unfollowed are flagged and stop contributing
+            episodes — then rebuilds every enabled playlist. It runs once a day by default. You can
+            add up to three run times so episodes released during the day turn up sooner; each run
+            replaces the playlist, so pick times when you aren&apos;t usually listening.
           </Text>
         </Paragraph>
         {jobsLoading ? (

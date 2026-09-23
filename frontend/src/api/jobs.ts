@@ -1,5 +1,5 @@
 import apiClient from './client';
-import type { JobsStatusResponse, UpdateScheduleResponse } from '../types';
+import type { JobSchedule, JobsStatusResponse, UpdateScheduleResponse } from '../types';
 
 export const jobsApi = {
   async getStatus(): Promise<JobsStatusResponse> {
@@ -7,11 +7,8 @@ export const jobsApi = {
     return response.data;
   },
 
-  async updateSchedule(hour: number, minute: number): Promise<UpdateScheduleResponse> {
-    const response = await apiClient.put<UpdateScheduleResponse>('/jobs/schedule', {
-      hour,
-      minute,
-    });
+  async updateSchedule(times: JobSchedule[]): Promise<UpdateScheduleResponse> {
+    const response = await apiClient.put<UpdateScheduleResponse>('/jobs/schedule', { times });
     return response.data;
   },
 };

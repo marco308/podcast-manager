@@ -206,7 +206,12 @@ export interface Job {
   last_run_failed_steps?: string[];
   type: 'cron' | 'interval';
   is_configurable: boolean;
+  // First run time only — `schedule_times` has them all.
   schedule?: JobSchedule;
+  // Every time a cron job runs, in time order. The library sync + playlist
+  // update can run up to `max_schedule_times` times a day.
+  schedule_times?: JobSchedule[];
+  max_schedule_times?: number;
   interval_minutes?: number;
 }
 

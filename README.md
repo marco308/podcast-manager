@@ -16,7 +16,7 @@ Podcast Manager is source-available and free for personal and other non-commerci
 - **Per-assignment episode rules.** Each show in each playlist can contribute all unplayed episodes, only the latest, or up to *n*, taken from the newest or oldest end.
 - **Serials in order.** Mark a story podcast as sequential and it contributes its next unfinished episode instead of its newest.
 - **Two arrangements.** Keep shows grouped in a drag-and-drop order, or merge everything by release date.
-- **Hands-off upkeep.** A daily job syncs your Spotify library and rebuilds every enabled playlist. Played episodes are removed every 30 minutes.
+- **Hands-off upkeep.** A daily job syncs your Spotify library and rebuilds every enabled playlist. By default it runs once a day, and you can add up to three run times. Played episodes are removed every 30 minutes.
 - **Library housekeeping.** Archive shows you follow but don't want to see. Shows you unfollow on Spotify stop contributing immediately and are removed after a 7-day grace period.
 - **iOS companion app** for browsing, running playlists and quick edits.
 - Light, dark and system themes.
@@ -52,7 +52,7 @@ For example, a Morning playlist with defaults "latest only, newest" gets today's
 
 | Job | Schedule | What it does |
 |-----|----------|-------------|
-| **Daily update** | Daily (default 04:00, changeable on the Settings page) | Syncs your Spotify library, then rebuilds every enabled playlist from unplayed episodes. A failed sync doesn't stop the rebuild. |
+| **Daily update** | 1 to 3 times a day (default once, at 04:00; set the times on the Settings page) | Syncs your Spotify library, then rebuilds every enabled playlist from unplayed episodes. A failed sync doesn't stop the rebuild. |
 | **Played-episode cleanup** | Every 30 minutes | Removes fully played episodes from enabled playlists |
 | **Token refresh** | Every 45 minutes | Refreshes Spotify access tokens before they expire |
 | **Session cleanup** | Every hour | Removes expired login sessions |

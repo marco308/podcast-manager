@@ -17,7 +17,7 @@ actor DemoBackend {
     private var assignments: [Int: [Int]]
     /// Per-assignment episode-limit overrides, to show the "Custom" badge.
     private var limitOverrides: [AssignmentKey: Int]
-    private var schedule = JobSchedule(hour: 6, minute: 0)
+    private var scheduleTimes = [JobSchedule(hour: 6, minute: 0)]
     private var lastDailyRun: Date
 
     private struct AssignmentKey: Hashable {
@@ -193,7 +193,9 @@ actor DemoBackend {
                 lastRun: iso(lastDailyRun),
                 type: "cron",
                 isConfigurable: true,
-                schedule: schedule,
+                schedule: scheduleTimes.first,
+                scheduleTimes: scheduleTimes,
+                maxScheduleTimes: 3,
                 intervalMinutes: nil
             ),
             intervalJob("token_refresh", "Spotify Token Refresh", minutes: 45, now: now),
@@ -202,9 +204,9 @@ actor DemoBackend {
         ])
     }
 
-    func updateSchedule(hour: Int, minute: Int) async -> UpdateScheduleResponse {
+    func updateSchedule(times: [JobSchedule]) async -> UpdateScheduleResponse {
         await pause(0.4)
-        schedule = JobSchedule(hour: hour, minute: minute)
+        scheduleTimes = Array(Set(times)).sorted { ($0.hour, $0.minute) < ($1.hour, $1.minute) }
         return UpdateScheduleResponse(
             message: "Schedule updated",
             nextRun: iso(nextDailyRun(after: Date()))
@@ -270,8 +272,12 @@ actor DemoBackend {
     }
 
     private func nextDailyRun(after date: Date) -> Date {
-        let components = DateComponents(hour: schedule.hour, minute: schedule.minute)
-        return Calendar.current.nextDate(after: date, matching: components, matchingPolicy: .nextTime) ?? date
+        scheduleTimes
+            .compactMap { time in
+                let components = DateComponents(hour: time.hour, minute: time.minute)
+                return Calendar.current.nextDate(after: date, matching: components, matchingPolicy: .nextTime)
+            }
+            .min() ?? date
     }
 
     private func intervalJob(_ id: String, _ name: String, minutes: Int, now: Date) -> Job {
