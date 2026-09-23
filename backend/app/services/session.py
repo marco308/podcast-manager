@@ -1,5 +1,6 @@
 """Session management service for database-backed sessions."""
 
+import logging
 import secrets
 from datetime import UTC, datetime, timedelta
 
@@ -8,11 +9,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.session import Session
 
+logger = logging.getLogger(__name__)
+
 
 class SessionService:
     """Service for managing database-backed sessions."""
 
     SESSION_EXPIRY_HOURS = 24
+
+    # How stale ``last_accessed_at`` may get before a request rewrites it.
+    # Nothing reads the column at finer resolution, and every rewrite is a
+    # SQLite write.
+    LAST_ACCESSED_RESOLUTION = timedelta(minutes=5)
 
     @staticmethod
     def generate_session_id() -> str:
@@ -66,14 +74,39 @@ class SessionService:
         return result.scalar_one_or_none()
 
     async def update_last_accessed(self, db: AsyncSession, session: Session) -> None:
-        """Update session's last accessed timestamp.
+        """Update session's last accessed timestamp, committing straight away.
+
+        This runs in ``get_current_session``, i.e. at the start of every
+        authenticated request, on the request's own DB session. It used to
+        ``flush()``, which opens SQLite's single write transaction and keeps
+        it open until the handler commits — minutes, for a manual run or a
+        library sync that spends its time on Spotify calls. Every other
+        writer (including ``TokenManager`` saving a rotated refresh token)
+        then waited out the busy timeout and failed with "database is
+        locked". So the write is throttled to once per
+        ``LAST_ACCESSED_RESOLUTION`` and committed immediately; it is
+        best-effort, and a failure never fails the request.
 
         Args:
             db: Database session.
             session: The session to update.
         """
-        session.last_accessed_at = datetime.now(UTC)
-        await db.flush()
+        now = datetime.now(UTC)
+        last = session.last_accessed_at
+        if last is not None:
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=UTC)
+            if now - last < self.LAST_ACCESSED_RESOLUTION:
+                return
+        session.last_accessed_at = now
+        try:
+            await db.commit()
+        except Exception as e:
+            logger.warning(f"Could not record session last-accessed time: {e}")
+            await db.rollback()
+            # The rollback expired the row; reload it so callers can keep
+            # reading it (csrf_token, user_id) without a lazy load.
+            await db.refresh(session)
 
     async def delete_session(self, db: AsyncSession, session_id: str) -> None:
         """Delete a session by ID.

@@ -275,10 +275,11 @@ async def sync_all_libraries() -> None:
         for user_id in user_ids:
             async with async_session_maker() as db:
                 try:
-                    access_token = await TokenManager(user_id).get_token(min_remaining_seconds=300)
+                    token_manager = TokenManager(user_id)
+                    access_token = await token_manager.get_token(min_remaining_seconds=300)
                     # One httpx client for the whole /me/shows walk.
                     async with SpotifyService(access_token=access_token) as spotify:
-                        result = await sync_library(db, spotify)
+                        result = await sync_library(db, spotify, on_unauthorized=token_manager.force_refresh)
                     await db.commit()
                     summaries.append(f"User {user_id}: {result.summary}")
                 except Exception as e:
@@ -554,13 +555,16 @@ async def init_scheduler() -> None:
     )
 
     # Token refresh — the threshold in refresh_all_tokens must stay above
-    # this interval (issue #166), see TOKEN_REFRESH_THRESHOLD_SECONDS.
+    # this interval (issue #166), see TOKEN_REFRESH_THRESHOLD_SECONDS. First
+    # run is at startup rather than one interval in, so a token that lapsed
+    # while the server was down is renewed straight away.
     scheduler.add_job(
         refresh_all_tokens,
         IntervalTrigger(minutes=TOKEN_REFRESH_INTERVAL_MINUTES),
         id="token_refresh",
         name="Spotify Token Refresh",
         replace_existing=True,
+        next_run_time=datetime.now(UTC),
     )
 
     # Remove played episodes every 30 minutes (issue #89, PR2).
