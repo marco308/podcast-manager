@@ -41,6 +41,8 @@ open PodcastManager.xcodeproj
 
 Enter your backend URL on the login screen and sign in with Spotify. The app signs in through the system browser and returns via the `podcastmanager://` URL scheme. The session is stored in the Keychain.
 
+No server yet? Tap **Try the demo** on the login screen to use the app with a made-up library. Nothing in the demo touches Spotify. Exit it from Settings.
+
 ## Tests
 
 ```bash
@@ -48,7 +50,7 @@ cd ios/PodcastManager
 xcodebuild test -scheme PodcastManager -destination 'platform=iOS Simulator,name=iPhone 16'
 ```
 
-These are model-decoding tests and aren't run in CI.
+These cover model decoding, CSRF retry and the demo backend, and aren't run in CI.
 
 ## For contributors
 
