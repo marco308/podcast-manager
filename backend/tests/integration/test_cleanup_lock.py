@@ -373,7 +373,7 @@ async def test_manual_run_returns_409_when_lock_is_held_too_long():
     assert not ran, "the update must not run when the lock could not be acquired"
 
     release.set()
-    await holder
+    await asyncio.wait_for(holder, timeout=1)
 
     # The failed acquire must not have left the lock in a broken state.
     assert not locks.playlist_write_lock.locked()

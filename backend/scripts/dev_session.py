@@ -32,7 +32,6 @@ from urllib.parse import urlparse
 
 from sqlalchemy import select
 
-import app.models  # noqa: F401  — registers every model on Base.metadata
 from app.config import get_settings
 from app.database import async_session_maker, engine
 from app.models.session import Session

@@ -15,8 +15,7 @@ from pathlib import Path
 
 from sqlalchemy import create_engine, text
 
-import app.models  # noqa: F401  — registers every model on Base.metadata
-from app.database import Base
+from app.models import Base
 from scripts.adopt_legacy_schema import schema_gaps
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]

@@ -7,7 +7,6 @@ Create Date: 2026-02-14
 """
 from typing import Sequence, Union
 from alembic import op
-import sqlalchemy as sa
 
 revision: str = '008_add_weekend_rule_type'
 down_revision: Union[str, None] = '007_multi_category'

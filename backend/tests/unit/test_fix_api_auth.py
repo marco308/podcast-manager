@@ -23,9 +23,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-import app.routers.auth as auth_module
-from app.database import Base
-from app.models import User  # noqa: F401 — importing app.models registers every table on Base.metadata
+from app.routers import auth as auth_module
+from app.models import Base
 from app.rate_limit import limiter
 from app.routers.auth import callback, validate_csrf_token
 from app.services.session import SessionService
