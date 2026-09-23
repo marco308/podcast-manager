@@ -153,7 +153,24 @@ export interface PlaylistFormModalProps {
   onSaved?: (playlist: Playlist) => void;
 }
 
-export function PlaylistFormModal({ open, playlist, onClose, onSaved }: PlaylistFormModalProps) {
+// Every open gets a fresh mount, and with it a fresh form store. Unmounting
+// the <Form> (`destroyOnHidden`) is not enough: the store belongs to
+// `useForm`, which outlives it, and on remount the store's old values win
+// over the new `initialValues` — so editing one playlist after another
+// showed the previous one's name and settings, and saving would have
+// written them to the wrong playlist. The key only changes on open, so the
+// close animation still plays.
+export function PlaylistFormModal(props: PlaylistFormModalProps) {
+  const [session, setSession] = useState(0);
+  const [wasOpen, setWasOpen] = useState(props.open);
+  if (props.open !== wasOpen) {
+    setWasOpen(props.open);
+    if (props.open) setSession((s) => s + 1);
+  }
+  return <PlaylistFormModalContent key={session} {...props} />;
+}
+
+function PlaylistFormModalContent({ open, playlist, onClose, onSaved }: PlaylistFormModalProps) {
   const { message } = App.useApp();
   const createPlaylist = useCreatePlaylist();
   const updatePlaylist = useUpdatePlaylist();
@@ -302,8 +319,8 @@ export function PlaylistFormModal({ open, playlist, onClose, onSaved }: Playlist
       confirmLoading={saving}
       okButtonProps={{ disabled: !membersReady }}
       width={880}
-      // Remount the form on every open so `initialValues` reflects the
-      // playlist being edited (or the defaults for a new one).
+      // Fresh values on each open come from the remount in
+      // PlaylistFormModal; this just frees the closed form.
       destroyOnHidden
     >
       {!membersReady ? (
