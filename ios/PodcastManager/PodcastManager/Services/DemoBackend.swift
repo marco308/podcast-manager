@@ -115,27 +115,17 @@ actor DemoBackend {
 
     func runAllPlaylists() async -> PlaylistRunAllResponse {
         await pause(2)
-        var results: [PlaylistRunResult] = []
-        for playlist in playlists {
-            if playlist.isEnabled {
-                markUpdated(playlist.id)
-                results.append(PlaylistRunResult(
-                    playlistId: playlist.id, playlistName: playlist.name, success: true,
-                    episodeCount: episodeCount(for: playlist), error: nil, skipped: false, partial: false
-                ))
-            } else {
-                results.append(PlaylistRunResult(
-                    playlistId: playlist.id, playlistName: playlist.name, success: true,
-                    episodeCount: 0, error: nil, skipped: true, partial: false
-                ))
-            }
+        // Like `update_all_playlists`, disabled playlists are filtered out
+        // up front, so they get no result row at all (issue #239).
+        let enabled = playlists.filter(\.isEnabled)
+        let results = enabled.map { playlist in
+            markUpdated(playlist.id)
+            return PlaylistRunResult(
+                playlistId: playlist.id, playlistName: playlist.name, success: true,
+                episodeCount: episodeCount(for: playlist), error: nil, skipped: false, partial: false
+            )
         }
-        let updated = results.filter { $0.skipped != true }.count
-        let skipped = results.count - updated
-        var message = "Updated \(updated) playlists, 0 failed"
-        if skipped > 0 {
-            message += ", \(skipped) skipped (disabled)"
-        }
+        let message = "Updated \(results.count) playlists, 0 failed"
         return PlaylistRunAllResponse(message: message, results: results)
     }
 
