@@ -26,3 +26,7 @@ known-first-party = ["app", "scripts"]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.coverage.run]
+source = ["app"]
+branch = true

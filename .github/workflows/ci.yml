@@ -37,7 +37,14 @@ jobs:
       # and is excluded until it is cleaned up — see issue #178).
       - run: ruff check app scripts
       - run: ruff format --check app scripts
-      - run: pytest tests
+      - run: pytest tests --cov --cov-report=term --cov-report=json
+      # One copy of the coverage report feeds the README badge (coverage-badge
+      # job below); 3.14 because that is what the Docker image runs.
+      - if: matrix.python-version == '3.14'
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: backend/coverage.json
       # Prove the migration chain builds the schema the models declare on a
       # fresh database, matches them exactly (drift check), and can unwind
       # cleanly (issues #176/#178). Dummy env vars per tests/conftest.py.
@@ -51,6 +58,40 @@ jobs:
           alembic upgrade head
           python -m scripts.check_migration_drift
           alembic downgrade base
+
+  # Publish backend coverage as a shields.io endpoint JSON on the orphan
+  # `badges` branch, which the README badge reads. Kept on its own branch so
+  # main's history isn't a stream of bot commits, and done here rather than
+  # through Codecov so there is no third-party account or token to manage.
+  coverage-badge:
+    needs: backend
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: coverage-badge
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: coverage
+      - name: Push badge JSON to the badges branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          pct=$(jq -r '.totals.percent_covered_display' coverage.json)
+          color=$(awk -v p="$pct" 'BEGIN { print (p >= 90 ? "brightgreen" : p >= 75 ? "green" : p >= 60 ? "yellow" : "red") }')
+          jq -n --arg m "$pct%" --arg c "$color" \
+            '{schemaVersion: 1, label: "coverage", message: $m, color: $c}' > coverage-badge.json
+          git init -q badges && cd badges
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git checkout -q --orphan badges
+          cp ../coverage-badge.json .
+          git add coverage-badge.json
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "Coverage ${pct}% at ${GITHUB_SHA::7}"
+          # Force: the branch only ever holds the latest badge, one commit deep.
+          git push -q --force origin badges
 
   frontend:
     runs-on: ubuntu-latest
