@@ -4,9 +4,10 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +23,7 @@ from app.rate_limit import limiter
 from app.routers._deps import spotify_client
 from app.routers.auth import get_current_user_id, validate_csrf_token
 from app.schemas.playlist import (
+    DB_ID_MAX,
     AssignmentOverride,
     AssignmentOverrideUpdate,
     AssignmentRule,
@@ -57,6 +59,13 @@ DISABLED_PLAYLIST_DETAIL = "This playlist is disabled. Enable it to run it."
 # ``GET /me/playlists`` pages at 50; this bounds the link picker to 1000.
 SPOTIFY_PLAYLIST_PAGE_SIZE = 50
 SPOTIFY_PLAYLIST_MAX_PAGES = 20
+
+# Path IDs are bounded to what SQLite's INTEGER can hold: a larger int
+# reaches the driver and raises OverflowError (a 500) rather than a 422.
+PlaylistId = Annotated[int, Path(ge=1, le=DB_ID_MAX)]
+PodcastId = Annotated[int, Path(ge=1, le=DB_ID_MAX)]
+
+DUPLICATE_LINK_DETAIL = "That Spotify playlist is already linked to another playlist."
 
 
 @asynccontextmanager
@@ -123,10 +132,22 @@ async def _commit_playlist(db: AsyncSession) -> None:
     except IntegrityError:
         await db.rollback()
         logger.info("Playlist save lost the race for a Spotify link")
-        raise HTTPException(
-            status_code=409,
-            detail="That Spotify playlist is already linked to another playlist.",
-        ) from None
+        raise HTTPException(status_code=409, detail=DUPLICATE_LINK_DETAIL) from None
+
+
+async def _flush_playlist_link(db: AsyncSession) -> None:
+    """Write a new link ahead of a Spotify call, turning a duplicate into a 409.
+
+    Like ``_commit_playlist``, but the transaction stays open: the unique
+    constraint is checked now, and the caller can still fail and roll the
+    whole save back afterwards.
+    """
+    try:
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
+        logger.info("Playlist save lost the race for a Spotify link")
+        raise HTTPException(status_code=409, detail=DUPLICATE_LINK_DETAIL) from None
 
 
 async def _get_user(db: AsyncSession, user_id: int) -> User:
@@ -248,6 +269,8 @@ async def list_spotify_playlists(
     spotify, token_manager = await spotify_client(db, user_id)
     items: list[SpotifyPlaylistOption] = []
     offset = 0
+    # Stays True only if every page had a ``next`` — the cap cut the walk short.
+    truncated = True
     for _ in range(SPOTIFY_PLAYLIST_MAX_PAGES):
         try:
             page = await spotify.get_user_playlists(
@@ -283,10 +306,13 @@ async def list_spotify_playlists(
             )
 
         if not page.get("next"):
+            truncated = False
             break
         offset += SPOTIFY_PLAYLIST_PAGE_SIZE
 
-    return SpotifyPlaylistOptionListResponse(items=items, total=len(items))
+    if truncated:
+        logger.info(f"Spotify playlist listing stopped at {SPOTIFY_PLAYLIST_MAX_PAGES} pages")
+    return SpotifyPlaylistOptionListResponse(items=items, total=len(items), truncated=truncated)
 
 
 @router.post("", response_model=PlaylistResponse, status_code=201)
@@ -317,16 +343,12 @@ async def create_playlist(
 
 @router.get("/{playlist_id}", response_model=PlaylistResponse)
 async def get_playlist(
-    playlist_id: int,
+    playlist_id: PlaylistId,
     user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> PlaylistResponse:
     """Get a playlist by ID."""
-    result = await db.execute(select(Playlist).where((Playlist.id == playlist_id) & (Playlist.user_id == user_id)))
-    playlist = result.scalar_one_or_none()
-
-    if not playlist:
-        raise HTTPException(status_code=404, detail="Playlist not found")
+    playlist = await _get_owned_playlist(db, playlist_id, user_id)
 
     count = await _get_podcast_count(db, playlist.id)
     return _build_playlist_response(playlist, count)
@@ -334,19 +356,13 @@ async def get_playlist(
 
 @router.patch("/{playlist_id}", response_model=PlaylistResponse)
 async def update_playlist(
-    playlist_id: int,
+    playlist_id: PlaylistId,
     update_data: PlaylistUpdate,
     session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
 ) -> PlaylistResponse:
     """Update playlist configuration."""
-    result = await db.execute(
-        select(Playlist).where((Playlist.id == playlist_id) & (Playlist.user_id == session.user_id))
-    )
-    playlist = result.scalar_one_or_none()
-
-    if not playlist:
-        raise HTTPException(status_code=404, detail="Playlist not found")
+    playlist = await _get_owned_playlist(db, playlist_id, session.user_id)
 
     # Present-and-null unlinks (the Spotify playlist is left in place and a
     # new one is created on the next run); an absent field is left alone.
@@ -356,6 +372,12 @@ async def update_playlist(
             if new_link is not None:
                 await _check_spotify_playlist_link(db, session.user_id, new_link, playlist_id=playlist.id)
             playlist.spotify_playlist_id = new_link
+            if new_link is not None and update_data.name is not None and update_data.name != playlist.name:
+                # The rename below goes to the newly linked playlist. The
+                # check above is racy, so let the unique constraint refuse the
+                # link now, before a playlist this save may not get is renamed
+                # on Spotify. Only a flush: a failed rename still saves nothing.
+                await _flush_playlist_link(db)
     if update_data.name is not None and update_data.name != playlist.name:
         # The name is otherwise only used when the Spotify playlist is first
         # created, so push a rename through (issue #247). Spotify first: if it
@@ -399,7 +421,7 @@ async def update_playlist(
 
 @router.delete("/{playlist_id}")
 async def delete_playlist(
-    playlist_id: int,
+    playlist_id: PlaylistId,
     remove_from_spotify: bool = Query(False, description="Also delete (unfollow) the playlist on Spotify"),
     session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
@@ -411,13 +433,7 @@ async def delete_playlist(
     that is how Spotify deletes a playlist you own — and only then removed
     locally, so a Spotify failure leaves everything as it was (issue #247).
     """
-    result = await db.execute(
-        select(Playlist).where((Playlist.id == playlist_id) & (Playlist.user_id == session.user_id))
-    )
-    playlist = result.scalar_one_or_none()
-
-    if not playlist:
-        raise HTTPException(status_code=404, detail="Playlist not found")
+    playlist = await _get_owned_playlist(db, playlist_id, session.user_id)
 
     if remove_from_spotify and playlist.spotify_playlist_id:
         # Hold the write lock so a rebuild can't be writing to the playlist
@@ -442,8 +458,12 @@ async def delete_playlist(
             await db.commit()  # persist before the response is sent (see get_db)
         return {"message": "Playlist deleted from the app and Spotify"}
 
-    await db.delete(playlist)
-    await db.commit()  # persist before the response is sent (see get_db)
+    # The write lock here too: a rebuild that is creating this playlist's
+    # Spotify playlist would otherwise save its ID onto a deleted row, which
+    # orphans the new Spotify playlist and fails the rest of the run.
+    async with _playlist_write_lock():
+        await db.delete(playlist)
+        await db.commit()  # persist before the response is sent (see get_db)
     return {"message": "Playlist deleted"}
 
 
@@ -492,7 +512,7 @@ async def _get_owned_playlist(db: AsyncSession, playlist_id: int, user_id: int) 
 
 @router.get("/{playlist_id}/podcasts", response_model=PlaylistPodcastListResponse)
 async def list_playlist_podcasts(
-    playlist_id: int,
+    playlist_id: PlaylistId,
     user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> PlaylistPodcastListResponse:
@@ -522,8 +542,8 @@ async def list_playlist_podcasts(
 
 @router.patch("/{playlist_id}/podcasts/{podcast_id}", response_model=PlaylistPodcastResponse)
 async def update_playlist_podcast(
-    playlist_id: int,
-    podcast_id: int,
+    playlist_id: PlaylistId,
+    podcast_id: PodcastId,
     data: AssignmentOverrideUpdate,
     session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
@@ -557,18 +577,18 @@ async def update_playlist_podcast(
 
 @router.post("/{playlist_id}/podcasts")
 async def add_podcasts_to_playlist(
-    playlist_id: int,
+    playlist_id: PlaylistId,
     data: PlaylistPodcastAdd,
     session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Add podcasts to a playlist."""
-    # Verify playlist exists and belongs to user
-    playlist_result = await db.execute(
-        select(Playlist).where((Playlist.id == playlist_id) & (Playlist.user_id == session.user_id))
-    )
-    if not playlist_result.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail="Playlist not found")
+    """Add podcasts to a playlist.
+
+    Unknown, archived and already-assigned IDs are skipped. Two concurrent
+    adds of the same podcast can both pass the "already assigned" check; the
+    unique constraint stops the second, which gets a 409.
+    """
+    await _get_owned_playlist(db, playlist_id, session.user_id)
 
     # Get current max position
     max_pos_result = await db.execute(
@@ -576,57 +596,52 @@ async def add_podcasts_to_playlist(
     )
     max_position = max_pos_result.scalar() or 0
 
-    added = 0
     # Dedupe while preserving order — with autoflush off, a repeated ID in one
-    # request passes the existence check twice (the second SELECT can't see the
-    # first pending add) and 500s on the unique constraint (issue #182).
-    for podcast_id in dict.fromkeys(data.podcast_ids):
-        # Verify podcast exists
+    # request would be added twice and 500 on the unique constraint (issue #182).
+    requested = list(dict.fromkeys(data.podcast_ids))
+    to_add: list[int] = []
+    if requested:
         # Archived podcasts are hidden from the app, so they can't be assigned
         # (issue #247) — skip them like an unknown ID.
-        podcast_result = await db.execute(
-            select(Podcast).where((Podcast.id == podcast_id) & (Podcast.is_archived.is_(False)))
+        known_result = await db.execute(
+            select(Podcast.id).where(Podcast.id.in_(requested) & Podcast.is_archived.is_(False))
         )
-        if not podcast_result.scalar_one_or_none():
-            continue
-
-        # Check if already assigned
-        existing = await db.execute(
-            select(PlaylistPodcast).where(
-                (PlaylistPodcast.playlist_id == playlist_id) & (PlaylistPodcast.podcast_id == podcast_id)
+        known = set(known_result.scalars())
+        assigned_result = await db.execute(
+            select(PlaylistPodcast.podcast_id).where(
+                (PlaylistPodcast.playlist_id == playlist_id) & PlaylistPodcast.podcast_id.in_(requested)
             )
         )
-        if existing.scalar_one_or_none():
-            continue
+        assigned = set(assigned_result.scalars())
+        to_add = [podcast_id for podcast_id in requested if podcast_id in known and podcast_id not in assigned]
 
+    for podcast_id in to_add:
         max_position += 1
-        assignment = PlaylistPodcast(
-            playlist_id=playlist_id,
-            podcast_id=podcast_id,
-            position=max_position,
-        )
-        db.add(assignment)
-        added += 1
+        db.add(PlaylistPodcast(playlist_id=playlist_id, podcast_id=podcast_id, position=max_position))
+    added = len(to_add)
 
-    await db.commit()  # persist before the response is sent (see get_db)
+    try:
+        await db.commit()  # persist before the response is sent (see get_db)
+    except IntegrityError:
+        await db.rollback()
+        logger.info(f"Adding podcasts to playlist {playlist_id} lost a race with another add")
+        raise HTTPException(
+            status_code=409,
+            detail="Those podcasts were being added to this playlist at the same time. Please refresh and try again.",
+        ) from None
 
     return {"message": f"Added {added} podcast(s) to playlist", "added": added}
 
 
 @router.delete("/{playlist_id}/podcasts/{podcast_id}")
 async def remove_podcast_from_playlist(
-    playlist_id: int,
-    podcast_id: int,
+    playlist_id: PlaylistId,
+    podcast_id: PodcastId,
     session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
     """Remove a podcast from a playlist."""
-    # Verify playlist belongs to user
-    playlist_result = await db.execute(
-        select(Playlist).where((Playlist.id == playlist_id) & (Playlist.user_id == session.user_id))
-    )
-    if not playlist_result.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail="Playlist not found")
+    await _get_owned_playlist(db, playlist_id, session.user_id)
 
     result = await db.execute(
         select(PlaylistPodcast).where(
@@ -646,7 +661,7 @@ async def remove_podcast_from_playlist(
 
 @router.put("/{playlist_id}/podcasts/reorder")
 async def reorder_playlist_podcasts(
-    playlist_id: int,
+    playlist_id: PlaylistId,
     data: PlaylistPodcastReorder,
     session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
@@ -654,30 +669,32 @@ async def reorder_playlist_podcasts(
     """Reorder podcasts within a playlist.
 
     The podcast_ids list defines the new order. Position is assigned
-    based on the index in the list (1-based).
+    based on the index in the list (1-based). It must name every assigned
+    podcast exactly once: a partial or repeated list would leave two rows on
+    the same position, so either is refused with a 400 and nothing changes.
     """
-    # Verify playlist belongs to user
-    playlist_result = await db.execute(
-        select(Playlist).where((Playlist.id == playlist_id) & (Playlist.user_id == session.user_id))
-    )
-    if not playlist_result.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail="Playlist not found")
+    await _get_owned_playlist(db, playlist_id, session.user_id)
 
-    for position, podcast_id in enumerate(data.podcast_ids, start=1):
-        result = await db.execute(
-            select(PlaylistPodcast).where(
-                (PlaylistPodcast.playlist_id == playlist_id) & (PlaylistPodcast.podcast_id == podcast_id)
-            )
+    result = await db.execute(select(PlaylistPodcast).where(PlaylistPodcast.playlist_id == playlist_id))
+    assignments = {assignment.podcast_id: assignment for assignment in result.scalars()}
+
+    requested = data.podcast_ids
+    if len(set(requested)) != len(requested):
+        raise HTTPException(status_code=400, detail="Each podcast can only appear once in the new order")
+    unknown = [podcast_id for podcast_id in requested if podcast_id not in assignments]
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Podcast {unknown[0]} is not assigned to this playlist",
         )
-        assignment = result.scalar_one_or_none()
+    if len(requested) != len(assignments):
+        raise HTTPException(
+            status_code=400,
+            detail="The new order must include every podcast in this playlist",
+        )
 
-        if not assignment:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Podcast {podcast_id} is not assigned to this playlist",
-            )
-
-        assignment.position = position
+    for position, podcast_id in enumerate(requested, start=1):
+        assignments[podcast_id].position = position
 
     await db.commit()  # persist before the response is sent (see get_db)
 
@@ -691,7 +708,7 @@ async def reorder_playlist_podcasts(
 @limiter.limit("3/10minutes")
 async def run_playlist_update(
     request: Request,
-    playlist_id: int,
+    playlist_id: PlaylistId,
     session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -703,14 +720,7 @@ async def run_playlist_update(
     ``/run-all`` needs no such re-read: ``update_all_playlists`` runs its
     ``is_enabled`` query inside the lock, as the daily job does.
     """
-    # Get the playlist
-    playlist_result = await db.execute(
-        select(Playlist).where((Playlist.id == playlist_id) & (Playlist.user_id == session.user_id))
-    )
-    playlist = playlist_result.scalar_one_or_none()
-
-    if not playlist:
-        raise HTTPException(status_code=404, detail="Playlist not found")
+    playlist = await _get_owned_playlist(db, playlist_id, session.user_id)
 
     # Disabled means "never written to on Spotify" — by the daily rebuild, by
     # the cleanup job, and by a manual run too (issue #239). Refuse here
@@ -719,12 +729,7 @@ async def run_playlist_update(
     if not playlist.is_enabled:
         raise HTTPException(status_code=409, detail=DISABLED_PLAYLIST_DETAIL)
 
-    # Get the user
-    user_result = await db.execute(select(User).where(User.id == session.user_id))
-    user = user_result.scalar_one_or_none()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    user = await _get_user(db, session.user_id)
 
     # Build and update the playlist — use the same TokenManager-based
     # plumbing as the scheduled job so manual runs also get just-in-time
@@ -788,12 +793,7 @@ async def run_all_playlist_updates(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Manually trigger all enabled playlist updates."""
-    # Get the user
-    user_result = await db.execute(select(User).where(User.id == session.user_id))
-    user = user_result.scalar_one_or_none()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    user = await _get_user(db, session.user_id)
 
     # Update all playlists — same plumbing as the scheduled job (issue #89).
     # Take the shared write lock so manual fan-out serialises against the
