@@ -1,0 +1,18 @@
+Podcast Manager is the iPhone companion to Podcast Manager, a free, source-available app you run on your own server. It turns the podcasts you follow on Spotify into playlists you design, such as the day's news for the commute or the next chapter of a serial, and rebuilds them for you every day.
+
+Before you install: this app needs a Podcast Manager server of your own and a Spotify Premium account. The project page explains how to set one up. Not ready yet? Tap "Try the demo" on the sign-in screen to explore the app with a made-up library.
+
+ON YOUR PHONE
+• Browse your podcast library and sync it with Spotify
+• Mark story-based shows as sequential, so their episodes play oldest first
+• Add shows to a playlist or remove them, and see the exact rule each one follows
+• Run a playlist now instead of waiting for the daily rebuild
+• Check the background jobs and change what time the daily rebuild runs
+
+ON THE WEB
+Creating playlists, changing their settings and setting per-show rules happen in the Podcast Manager web app, which runs on the same server.
+
+YOUR DATA STAYS ON YOUR SERVER
+Your library and playlists go only to the server you enter; podcast artwork loads from Spotify, and "Open in Spotify" links open Spotify. The app has no analytics, no ads and no tracking. You can delete your account and data from Settings at any time.
+
+Podcast Manager is an independent project. It isn't made, endorsed or supported by Spotify. Spotify is a trademark of Spotify AB.
