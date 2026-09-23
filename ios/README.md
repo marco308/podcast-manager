@@ -14,7 +14,7 @@ The app isn't distributed on the App Store, so you build it yourself.
 ## Requirements
 
 - A running Podcast Manager backend at a public HTTPS URL (see the [main README](../README.md#setup))
-- macOS with Xcode 16 or later; the app targets iOS 18
+- macOS with Xcode 16 or later; the app targets iOS 18 on iPhone
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`)
 - An Apple Developer account to install on a device (the simulator works without one)
 

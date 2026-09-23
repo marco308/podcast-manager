@@ -23,7 +23,8 @@ settings:
     # Override per target in Local.yml to sign under your own bundle ID.
     APP_BUNDLE_ID: com.marcuslab.podcastmanager
     IPHONEOS_DEPLOYMENT_TARGET: "18.0"
-    TARGETED_DEVICE_FAMILY: "1,2"
+    # iPhone only for v1 (issue #267): no iPad screenshots or iPad layout review.
+    TARGETED_DEVICE_FAMILY: "1"
 
 targets:
   PodcastManager:

@@ -28,6 +28,7 @@ xcodegen generate
 ```
 
 - Archive and upload to TestFlight: see the `ios-testflight` skill (`../.claude/skills/ios-testflight/SKILL.md`).
+- App Store listing text, screenshots and the non-file answers (App Privacy, age rating…): `AppStore/README.md`. The app is **iPhone-only** (`TARGETED_DEVICE_FAMILY: "1"`) until someone checks the iPad layouts and adds an iPad screenshot set.
 
 ## Key Patterns
 

@@ -1,0 +1,1 @@
+Split one crowded podcast feed into playlists that rebuild themselves every morning. Needs your own Podcast Manager server; tap Try the demo to look around first.
