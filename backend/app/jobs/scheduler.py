@@ -541,13 +541,16 @@ async def init_scheduler() -> None:
     )
 
     # Token refresh — the threshold in refresh_all_tokens must stay above
-    # this interval (issue #166), see TOKEN_REFRESH_THRESHOLD_SECONDS.
+    # this interval (issue #166), see TOKEN_REFRESH_THRESHOLD_SECONDS. First
+    # run is at startup rather than one interval in, so a token that lapsed
+    # while the server was down is renewed straight away.
     scheduler.add_job(
         refresh_all_tokens,
         IntervalTrigger(minutes=TOKEN_REFRESH_INTERVAL_MINUTES),
         id="token_refresh",
         name="Spotify Token Refresh",
         replace_existing=True,
+        next_run_time=datetime.now(UTC),
     )
 
     # Remove played episodes every 30 minutes (issue #89, PR2).

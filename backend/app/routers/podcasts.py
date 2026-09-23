@@ -4,6 +4,7 @@ import asyncio
 import logging
 from datetime import UTC, datetime
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,17 +14,15 @@ from app.jobs import locks
 from app.models.playlist_podcast import PlaylistPodcast
 from app.models.podcast import Podcast
 from app.models.session import Session
-from app.models.user import User
 from app.rate_limit import limiter
+from app.routers._deps import spotify_client
 from app.routers.auth import get_current_user_id, validate_csrf_token
 from app.schemas.podcast import (
     PodcastListResponse,
     PodcastResponse,
     PodcastUpdate,
 )
-from app.services.encryption import TokenDecryptionError, get_encryption_service
 from app.services.library_sync import UNSUBSCRIBE_GRACE, sync_library
-from app.services.spotify import SpotifyService
 
 logger = logging.getLogger(__name__)
 
@@ -34,32 +33,6 @@ router = APIRouter(prefix="/podcasts", tags=["Podcasts"])
 # client times out long before that — so fail fast with a 409 the UI can
 # explain, matching the playlist write lock's treatment (issue #153).
 SYNC_LOCK_WAIT_SECONDS = 5
-
-
-async def get_user_with_token(
-    user_id: int,
-    db: AsyncSession,
-) -> tuple[User, str]:
-    """Get user and decrypted access token."""
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    encryption = get_encryption_service()
-    try:
-        access_token = encryption.decrypt(user.access_token)
-    except TokenDecryptionError:
-        # Stored ciphertext is unreadable (key rotation, corruption). Force reauth
-        # instead of surfacing a 500 from the global handler.
-        logger.warning(f"Access token for user {user.id} could not be decrypted; forcing reauth")
-        raise HTTPException(
-            status_code=401,
-            detail="Stored credentials could not be read. Please sign in again.",
-        ) from None
-
-    return user, access_token
 
 
 async def _get_playlist_ids_for_podcast(db: AsyncSession, podcast_id: int) -> list[int]:
@@ -218,17 +191,18 @@ async def unfollow_podcast(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
     """Unfollow a podcast from Spotify and optionally remove from local database."""
-    user, access_token = await get_user_with_token(session.user_id, db)
-
     podcast = await _get_podcast_or_404(db, podcast_id)
 
     # Unfollow from Spotify
-    spotify = SpotifyService(access_token=access_token)
+    spotify, token_manager = await spotify_client(db, session.user_id)
     try:
-        await spotify.unfollow_show(podcast.spotify_id)
-    except Exception as e:
+        await spotify.unfollow_show(podcast.spotify_id, on_unauthorized=token_manager.force_refresh)
+    except httpx.HTTPError as e:
         logger.exception(f"Failed to unfollow podcast {podcast.spotify_id} on Spotify: {e}")
-        raise HTTPException(status_code=500, detail="Failed to unfollow podcast on Spotify") from None
+        raise HTTPException(
+            status_code=502,
+            detail="Could not unfollow the podcast on Spotify. Please try again.",
+        ) from None
 
     # Remove from local database (cascade will remove join table entries)
     await db.delete(podcast)
@@ -258,7 +232,7 @@ async def sync_podcasts(
     other walk — and a sync already in flight is rejected rather than queued,
     because the second walk would do the same work twice.
     """
-    user, access_token = await get_user_with_token(session.user_id, db)
+    spotify, token_manager = await spotify_client(db, session.user_id)
 
     try:
         await asyncio.wait_for(locks.library_sync_lock.acquire(), timeout=SYNC_LOCK_WAIT_SECONDS)
@@ -270,9 +244,15 @@ async def sync_podcasts(
         ) from None
 
     try:
-        spotify = SpotifyService(access_token=access_token)
-        result = await sync_library(db, spotify)
+        result = await sync_library(db, spotify, on_unauthorized=token_manager.force_refresh)
         await db.commit()  # persist before the response is sent (see get_db)
+    except httpx.HTTPError as e:
+        # A partial walk reconciles nothing; get_db rolls the upserts back.
+        logger.warning(f"Library sync failed talking to Spotify: {e}")
+        raise HTTPException(
+            status_code=502,
+            detail="Could not load your podcasts from Spotify. Please try again.",
+        ) from None
     finally:
         locks.library_sync_lock.release()
 

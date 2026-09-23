@@ -94,6 +94,11 @@ def _spotify_returning(*pages):
     return client
 
 
+def _stub_client(client):
+    """Stand-in for ``spotify_client``: the client plus a token manager."""
+    return AsyncMock(return_value=(client, MagicMock(force_refresh=AsyncMock())))
+
+
 class TestMarkedShowStopsContributing:
     """#155 marks the show but left it in builds for the whole grace period."""
 
@@ -161,8 +166,8 @@ class TestSyncEndpoint:
         engine, maker = await _make_db()
         monkeypatch.setattr(
             podcasts_module,
-            "SpotifyService",
-            MagicMock(return_value=_spotify_returning(_page("a", total=9))),
+            "spotify_client",
+            _stub_client(_spotify_returning(_page("a", total=9))),
         )
         try:
             async with maker() as db:
@@ -186,8 +191,8 @@ class TestSyncEndpoint:
         engine, maker = await _make_db()
         monkeypatch.setattr(
             podcasts_module,
-            "SpotifyService",
-            MagicMock(return_value=_spotify_returning(_page("a"))),
+            "spotify_client",
+            _stub_client(_spotify_returning(_page("a"))),
         )
         try:
             async with maker() as db:
@@ -215,8 +220,8 @@ class TestConcurrentSyncsAreSerialised:
         monkeypatch.setattr(podcasts_module, "SYNC_LOCK_WAIT_SECONDS", 0.05)
         monkeypatch.setattr(
             podcasts_module,
-            "SpotifyService",
-            MagicMock(return_value=_spotify_returning(_page())),
+            "spotify_client",
+            _stub_client(_spotify_returning(_page())),
         )
         try:
             async with maker() as db:
@@ -243,7 +248,7 @@ class TestConcurrentSyncsAreSerialised:
         engine, maker = await _make_db()
         client = MagicMock()
         client.get_user_shows = AsyncMock(side_effect=RuntimeError("Spotify fell over"))
-        monkeypatch.setattr(podcasts_module, "SpotifyService", MagicMock(return_value=client))
+        monkeypatch.setattr(podcasts_module, "spotify_client", _stub_client(client))
         try:
             async with maker() as db:
                 db.add(_user())
