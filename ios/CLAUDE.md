@@ -46,6 +46,10 @@ The app is a day-to-day companion, not a second admin UI. It covers browsing and
 
 If one of these is ever wanted on iOS, it is a plain addition to `APIClient` (the backend needs no change) plus the corresponding screen. Update this table when that happens.
 
+**Demo mode (issue #264):**
+
+"Try the demo" on the login screen runs the whole app against `DemoBackend`, an in-memory actor with a fictional library (artwork generated into `Resources/DemoArtwork/`). It exists so App Review, and anyone without a server, can use the app: the real sign-in needs a self-hosted backend plus a Spotify account that the backend's Spotify app has allowlisted. `APIClient` checks `demo` at the top of every public call, so **a new `APIClient` method needs a matching `DemoBackend` method** or the demo will hit `makeRequest` and fail with "No server configured". `DemoBackend` mirrors backend rules that a reviewer can see (rule resolution, disabled playlists refusing a run). Demo state isn't persisted: a relaunch returns to login, and Exit Demo in Settings leaves it. Use the demo for App Store screenshots, since the shows are made up.
+
 **Podcast Model:**
 - Custom `init(from:)` decoder with defaults for missing fields
 - Handles both `/api/podcasts` (full schema with `playlist_ids`, `created_at`) and `/api/playlists/{id}/podcasts` (subset with `position` and the resolved `rule`, no `playlist_ids`)

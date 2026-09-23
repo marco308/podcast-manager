@@ -10,6 +10,11 @@ actor APIClient {
     /// cleared centrally instead of every screen handling it (issue #171).
     private var onUnauthorized: (@Sendable () -> Void)?
 
+    /// When set, every call is answered by the in-memory demo instead of the
+    /// network (issue #264). Check it first in each public call so no demo
+    /// request can reach `makeRequest`.
+    private var demo: DemoBackend?
+
     /// `session` is injectable so tests can stub the network with a
     /// `URLProtocol`; production uses the default configuration.
     init(session: URLSession? = nil) {
@@ -30,10 +35,16 @@ actor APIClient {
         onUnauthorized = handler
     }
 
+    /// Turn demo mode on (with a fresh sample library) or off.
+    func setDemo(_ backend: DemoBackend?) {
+        demo = backend
+    }
+
     // MARK: - Auth
 
     func fetchCurrentUser() async throws -> User {
-        try await get("/api/auth/me")
+        if let demo { return await demo.currentUser() }
+        return try await get("/api/auth/me")
     }
 
     /// Trade a one-time mobile-flow `code` for real session credentials.
@@ -70,7 +81,8 @@ actor APIClient {
     // MARK: - Podcasts
 
     func fetchPodcasts(limit: Int = 50, offset: Int = 0) async throws -> PodcastListResponse {
-        try await get("/api/podcasts?limit=\(limit)&offset=\(offset)")
+        if let demo { return await demo.fetchPodcasts(limit: limit, offset: offset) }
+        return try await get("/api/podcasts?limit=\(limit)&offset=\(offset)")
     }
 
     /// Fetch every podcast, paging past the backend's 100-item cap.
@@ -97,51 +109,61 @@ actor APIClient {
     }
 
     func syncPodcasts() async throws -> SyncResponse {
-        try await post("/api/podcasts/sync")
+        if let demo { return await demo.syncPodcasts() }
+        return try await post("/api/podcasts/sync")
     }
 
     func updatePodcast(id: Int, isSequential: Bool) async throws -> Podcast {
-        try await patch("/api/podcasts/\(id)", body: ["is_sequential": isSequential])
+        if let demo { return try await demo.updatePodcast(id: id, isSequential: isSequential) }
+        return try await patch("/api/podcasts/\(id)", body: ["is_sequential": isSequential])
     }
 
     // MARK: - Playlists
 
     func fetchPlaylists() async throws -> PlaylistListResponse {
-        try await get("/api/playlists")
+        if let demo { return await demo.fetchPlaylists() }
+        return try await get("/api/playlists")
     }
 
     func runPlaylist(id: Int) async throws -> PlaylistRunResponse {
-        try await post("/api/playlists/\(id)/run")
+        if let demo { return try await demo.runPlaylist(id: id) }
+        return try await post("/api/playlists/\(id)/run")
     }
 
     func runAllPlaylists() async throws -> PlaylistRunAllResponse {
-        try await post("/api/playlists/run-all")
+        if let demo { return await demo.runAllPlaylists() }
+        return try await post("/api/playlists/run-all")
     }
 
     // MARK: - Playlist Podcasts
 
     func fetchPlaylistPodcasts(playlistId: Int) async throws -> PodcastListResponse {
-        try await get("/api/playlists/\(playlistId)/podcasts")
+        if let demo { return try await demo.fetchPlaylistPodcasts(playlistId: playlistId) }
+        return try await get("/api/playlists/\(playlistId)/podcasts")
     }
 
 
     func addPodcastsToPlaylist(playlistId: Int, podcastIds: [Int]) async throws -> MessageResponse {
+        if let demo { return try await demo.addPodcasts(playlistId: playlistId, podcastIds: podcastIds) }
         let body = ["podcast_ids": podcastIds]
         return try await post("/api/playlists/\(playlistId)/podcasts", body: body)
     }
 
     func removePodcastFromPlaylist(playlistId: Int, podcastId: Int) async throws -> MessageResponse {
-        try await delete("/api/playlists/\(playlistId)/podcasts/\(podcastId)")
+        if let demo { return try await demo.removePodcast(playlistId: playlistId, podcastId: podcastId) }
+        return try await delete("/api/playlists/\(playlistId)/podcasts/\(podcastId)")
     }
 
     // MARK: - Jobs
 
     func fetchJobsStatus() async throws -> JobsStatusResponse {
-        try await get("/api/jobs/status")
+        if let demo { return await demo.jobsStatus() }
+        return try await get("/api/jobs/status")
     }
 
     func updateJobSchedule(hour: Int, minute: Int) async throws -> UpdateScheduleResponse {
-        try await put("/api/jobs/schedule", body: UpdateScheduleRequest(hour: hour, minute: minute))
+        if let demo { return await demo.updateSchedule(hour: hour, minute: minute) }
+        return try await put("/api/jobs/schedule", body: UpdateScheduleRequest(hour: hour, minute: minute))
     }
 
     // MARK: - HTTP Methods
