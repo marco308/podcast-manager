@@ -171,7 +171,7 @@ class SpotifyService:
         method: str,
         url: str,
         *,
-        on_unauthorized: Callable[[], Awaitable[str]] | None = None,
+        on_unauthorized: Callable[[str | None], Awaitable[str]] | None = None,
         cleanup_mode: bool = False,
         **kwargs,
     ) -> httpx.Response:
@@ -181,10 +181,11 @@ class SpotifyService:
         MAX_RETRIES - 1 retries), respecting Spotify's Retry-After header.
 
         If ``on_unauthorized`` is provided and the server responds 401, the
-        callback is invoked to obtain a fresh bearer token, the
-        ``Authorization`` header on the request is rewritten, and the request
-        is retried **once** (not part of the normal retry loop). Without the
-        callback, 401 stays a hard failure — existing behaviour.
+        callback is invoked with the rejected token to obtain a fresh bearer
+        token, the ``Authorization`` header on the request is rewritten, and
+        the request is retried **once** (not part of the normal retry loop).
+        The new token is also kept on the instance so later calls use it.
+        Without the callback, 401 stays a hard failure — existing behaviour.
 
         In ``cleanup_mode`` (issue #89, PR2) a 429 with ``Retry-After`` above
         :data:`CLEANUP_MODE_RETRY_AFTER_LIMIT` raises
@@ -196,7 +197,8 @@ class SpotifyService:
             client: The httpx client to use.
             method: HTTP method (GET, POST, PUT, DELETE).
             url: Request URL.
-            on_unauthorized: Optional async callback returning a new bearer
+            on_unauthorized: Optional async callback that takes the rejected
+                token (``None`` if none was sent) and returns a new bearer
                 token. Used to recover from token expiry that happens
                 between the in-memory check and the API call (issue #89).
             cleanup_mode: When True, bail out on long Retry-After waits
@@ -240,8 +242,13 @@ class SpotifyService:
         # doesn't burn the one retry.
         if response.status_code == 401 and on_unauthorized is not None:
             logger.warning("Spotify 401 — refreshing token and retrying once")
-            new_token = await on_unauthorized()
             headers = dict(kwargs.get("headers") or {})
+            rejected_token = headers.get("Authorization", "").removeprefix("Bearer ") or None
+            new_token = await on_unauthorized(rejected_token)
+            # Keep the new token for every later call on this instance, not
+            # just this retry — otherwise each later batch of a multi-request
+            # write 401s and refreshes again.
+            self._access_token = new_token
             headers["Authorization"] = f"Bearer {new_token}"
             kwargs["headers"] = headers
             response = await self._issue_request(client, method, url, **kwargs)
@@ -337,12 +344,20 @@ class SpotifyService:
             )
             return response.json()
 
-    async def get_user_shows(self, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+    async def get_user_shows(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        *,
+        on_unauthorized: Callable[[str | None], Awaitable[str]] | None = None,
+    ) -> dict[str, Any]:
         """Get user's saved/subscribed podcasts (shows).
 
         Args:
             limit: Maximum number of shows to return (max 50).
             offset: Index of the first show to return.
+            on_unauthorized: Optional callback to recover from 401 by
+                refreshing the bearer token and retrying once.
 
         Returns:
             Paginated list of saved shows.
@@ -354,6 +369,7 @@ class SpotifyService:
                 f"{SPOTIFY_API_BASE}/me/shows",
                 headers=self._headers,
                 params={"limit": limit, "offset": offset},
+                on_unauthorized=on_unauthorized,
             )
             return resp.json()
 
@@ -388,7 +404,7 @@ class SpotifyService:
         description: str = "",
         public: bool = False,
         *,
-        on_unauthorized: Callable[[], Awaitable[str]] | None = None,
+        on_unauthorized: Callable[[str | None], Awaitable[str]] | None = None,
     ) -> dict[str, Any]:
         """Create a new playlist.
 
@@ -423,7 +439,7 @@ class SpotifyService:
         *,
         name: str | None = None,
         description: str | None = None,
-        on_unauthorized: Callable[[], Awaitable[str]] | None = None,
+        on_unauthorized: Callable[[str | None], Awaitable[str]] | None = None,
     ) -> None:
         """Change a playlist's name and/or description (``PUT /playlists/{id}``).
 
@@ -459,7 +475,7 @@ class SpotifyService:
         self,
         playlist_id: str,
         *,
-        on_unauthorized: Callable[[], Awaitable[str]] | None = None,
+        on_unauthorized: Callable[[str | None], Awaitable[str]] | None = None,
     ) -> None:
         """Unfollow a playlist (``DELETE /playlists/{id}/followers``).
 
@@ -488,7 +504,7 @@ class SpotifyService:
         playlist_id: str,
         uris: list[str],
         *,
-        on_unauthorized: Callable[[], Awaitable[str]] | None = None,
+        on_unauthorized: Callable[[str | None], Awaitable[str]] | None = None,
     ) -> None:
         """Replace all items in a playlist.
 
@@ -543,7 +559,7 @@ class SpotifyService:
         playlist_id: str,
         uris: list[str],
         *,
-        on_unauthorized: Callable[[], Awaitable[str]] | None = None,
+        on_unauthorized: Callable[[str | None], Awaitable[str]] | None = None,
         cleanup_mode: bool = False,
     ) -> None:
         """Remove tracks from a playlist.
@@ -608,7 +624,7 @@ class SpotifyService:
         self,
         playlist_id: str,
         *,
-        on_unauthorized: Callable[[], Awaitable[str]] | None = None,
+        on_unauthorized: Callable[[str | None], Awaitable[str]] | None = None,
     ) -> dict[str, Any]:
         """Get a playlist's identity and owner (not its items).
 
@@ -639,7 +655,7 @@ class SpotifyService:
         limit: int = 50,
         offset: int = 0,
         *,
-        on_unauthorized: Callable[[], Awaitable[str]] | None = None,
+        on_unauthorized: Callable[[str | None], Awaitable[str]] | None = None,
     ) -> dict[str, Any]:
         """Get one page of the playlists the user owns or follows.
 
@@ -717,11 +733,18 @@ class SpotifyService:
 
         return all_shows
 
-    async def unfollow_show(self, show_id: str) -> None:
+    async def unfollow_show(
+        self,
+        show_id: str,
+        *,
+        on_unauthorized: Callable[[str | None], Awaitable[str]] | None = None,
+    ) -> None:
         """Unfollow/remove a show from the user's library.
 
         Args:
             show_id: Spotify show ID to unfollow.
+            on_unauthorized: Optional callback to recover from 401 by
+                refreshing the bearer token and retrying once.
 
         Raises:
             httpx.HTTPStatusError: If the request fails.
@@ -733,6 +756,7 @@ class SpotifyService:
                 f"{SPOTIFY_API_BASE}/me/shows",
                 headers=self._headers,
                 params={"ids": show_id},
+                on_unauthorized=on_unauthorized,
             )
 
 

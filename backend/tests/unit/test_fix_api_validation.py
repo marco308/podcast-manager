@@ -251,8 +251,11 @@ class TestUnfollowTakesTheSyncLock:
     def spotify(self, monkeypatch):
         client = MagicMock()
         client.unfollow_show = AsyncMock()
-        monkeypatch.setattr(podcasts_module, "SpotifyService", MagicMock(return_value=client))
-        monkeypatch.setattr(podcasts_module, "get_user_with_token", AsyncMock(return_value=(MagicMock(), "token")))
+        monkeypatch.setattr(
+            podcasts_module,
+            "spotify_client",
+            AsyncMock(return_value=(client, SimpleNamespace(force_refresh=AsyncMock()))),
+        )
         return client
 
     @pytest.mark.asyncio
@@ -275,7 +278,8 @@ class TestUnfollowTakesTheSyncLock:
 
         await unfollow_podcast("1", session=SESSION, db=db)
 
-        spotify.unfollow_show.assert_awaited_once_with("show1")
+        spotify.unfollow_show.assert_awaited_once()
+        assert spotify.unfollow_show.await_args.args == ("show1",)
         assert not locks.library_sync_lock.locked()
         assert (await db.execute(select(Podcast.id))).scalars().all() == [2, 3]
         assert await _positions(db) == {2: 2}
@@ -309,7 +313,7 @@ class TestSpotifyPlaylistTruncation:
         client.get_user_playlists = AsyncMock()
         monkeypatch.setattr(
             playlists_module,
-            "_spotify_client",
+            "spotify_client",
             AsyncMock(return_value=(client, SimpleNamespace(force_refresh=AsyncMock()))),
         )
         return client
@@ -334,12 +338,10 @@ class TestLinkAndRename:
     def spotify(self, monkeypatch):
         client = MagicMock()
         client.update_playlist_details = AsyncMock()
-        monkeypatch.setattr(playlists_module, "SpotifyService", MagicMock(return_value=client))
         token_manager = MagicMock(get_token=AsyncMock(return_value="token"), force_refresh=AsyncMock())
-        monkeypatch.setattr(playlists_module, "TokenManager", MagicMock(return_value=token_manager))
         monkeypatch.setattr(
             playlists_module,
-            "_spotify_client",
+            "spotify_client",
             AsyncMock(return_value=(client, token_manager)),
         )
         return client

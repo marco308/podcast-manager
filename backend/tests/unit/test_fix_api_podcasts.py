@@ -62,7 +62,11 @@ class TestSyncDuplicateShows:
         spotify.get_user_shows = AsyncMock(
             return_value={"items": [_show("showA", "A"), _show("showA", "A"), _show("showB", "B")]}
         )
-        monkeypatch.setattr(podcasts_module, "SpotifyService", MagicMock(return_value=spotify))
+        monkeypatch.setattr(
+            podcasts_module,
+            "spotify_client",
+            AsyncMock(return_value=(spotify, MagicMock(force_refresh=AsyncMock()))),
+        )
 
         try:
             async with maker() as db:

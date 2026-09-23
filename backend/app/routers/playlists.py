@@ -20,6 +20,7 @@ from app.models.podcast import Podcast
 from app.models.session import Session
 from app.models.user import User
 from app.rate_limit import limiter
+from app.routers._deps import spotify_client
 from app.routers.auth import get_current_user_id, validate_csrf_token
 from app.schemas.playlist import (
     DB_ID_MAX,
@@ -38,9 +39,7 @@ from app.schemas.playlist import (
     SpotifyPlaylistOptionListResponse,
 )
 from app.services.assignment_rules import resolve_rule
-from app.services.encryption import TokenDecryptionError
 from app.services.playlist_builder import PlaylistBuilder, spotify_playlist_description
-from app.services.spotify import SpotifyService
 from app.services.token_manager import TokenManager
 
 logger = logging.getLogger(__name__)
@@ -121,20 +120,6 @@ def _build_playlist_response(playlist: Playlist, podcast_count: int) -> Playlist
     )
 
 
-async def _spotify_client(user_id: int) -> tuple[SpotifyService, TokenManager]:
-    """A Spotify client with a fresh token, plus the manager for 401 recovery."""
-    token_manager = TokenManager(user_id)
-    try:
-        token = await token_manager.get_token()
-    except TokenDecryptionError:
-        logger.warning(f"Access token for user {user_id} could not be decrypted; forcing reauth")
-        raise HTTPException(
-            status_code=401,
-            detail="Stored credentials could not be read. Please sign in again.",
-        ) from None
-    return SpotifyService(access_token=token), token_manager
-
-
 async def _commit_playlist(db: AsyncSession) -> None:
     """Commit a playlist write, turning a duplicate link into a 409.
 
@@ -201,7 +186,7 @@ async def _check_spotify_playlist_link(
         )
 
     user = await _get_user(db, user_id)
-    spotify, token_manager = await _spotify_client(user_id)
+    spotify, token_manager = await spotify_client(db, user_id)
     try:
         data = await spotify.get_playlist(spotify_playlist_id, on_unauthorized=token_manager.force_refresh)
     except httpx.HTTPStatusError as e:
@@ -281,7 +266,7 @@ async def list_spotify_playlists(
     )
     linked = {spotify_id: pid for spotify_id, pid in linked_result.all()}
 
-    spotify, token_manager = await _spotify_client(user_id)
+    spotify, token_manager = await spotify_client(db, user_id)
     items: list[SpotifyPlaylistOption] = []
     offset = 0
     # Stays True only if every page had a ``next`` — the cap cut the walk short.
@@ -400,9 +385,8 @@ async def update_playlist(
         # names silently drifting apart. A 404 means the Spotify playlist is
         # gone — there is nothing to rename, so the local rename goes ahead.
         if playlist.spotify_playlist_id:
-            token_manager = TokenManager(session.user_id)
+            spotify, token_manager = await spotify_client(db, session.user_id)
             try:
-                spotify = SpotifyService(access_token=await token_manager.get_token())
                 await spotify.update_playlist_details(
                     playlist.spotify_playlist_id,
                     name=update_data.name,
@@ -455,9 +439,8 @@ async def delete_playlist(
         # Hold the write lock so a rebuild can't be writing to the playlist
         # (or, for a new one, creating it) while it is removed.
         async with _playlist_write_lock():
-            token_manager = TokenManager(session.user_id)
+            spotify, token_manager = await spotify_client(db, session.user_id)
             try:
-                spotify = SpotifyService(access_token=await token_manager.get_token())
                 await spotify.unfollow_playlist(
                     playlist.spotify_playlist_id,
                     on_unauthorized=token_manager.force_refresh,
