@@ -36,6 +36,13 @@ async def db():
     await engine.dispose()
 
 
+@pytest.fixture(autouse=True)
+def fresh_gate(monkeypatch):
+    """A gate per test: asyncio.Condition binds to the first loop that waits
+    on it, and each test runs on its own loop. Production has one loop."""
+    monkeypatch.setattr(locks, "account_write_gate", locks.AccountWriteGate())
+
+
 async def _add_user(db, spotify_id: str) -> User:
     user = User(
         spotify_id=spotify_id,
@@ -154,3 +161,77 @@ class TestDeleteMeEndpoint:
         # Whichever lock was taken before the timeout has been released.
         assert not locks.library_sync_lock.locked()
         assert not locks.playlist_write_lock.locked()
+
+
+class TestAccountWriteGate:
+    """Review on #271: API writes don't take the job locks, so a request that
+    validated its session before the delete could insert a row after it."""
+
+    @pytest.mark.asyncio
+    async def test_in_flight_write_makes_delete_a_409(self, db, monkeypatch):
+        user, _ = await _seed(db)
+        monkeypatch.setattr(auth_module, "ACCOUNT_DELETE_LOCK_WAIT_SECONDS", 0.05)
+
+        async with locks.account_write_gate.shared():
+            with pytest.raises(HTTPException) as exc_info:
+                await delete_me(response=Response(), session=MagicMock(user_id=user.id), db=db)
+
+        assert exc_info.value.status_code == 409
+        assert await _count(db, User) == 1
+        # The gate reopened: a later write gets straight in.
+        async with asyncio.timeout(1), locks.account_write_gate.shared():
+            pass
+
+    @pytest.mark.asyncio
+    async def test_write_arriving_mid_delete_waits_for_it(self):
+        gate = locks.AccountWriteGate()
+        entered = asyncio.Event()
+
+        async def write():
+            async with gate.shared():
+                entered.set()
+
+        async with gate.exclusive(timeout=1):
+            task = asyncio.create_task(write())
+            await asyncio.sleep(0.05)
+            assert not entered.is_set()
+        await asyncio.wait_for(task, 1)
+        assert entered.is_set()
+
+    @pytest.mark.asyncio
+    async def test_second_delete_is_refused_while_one_runs(self):
+        gate = locks.AccountWriteGate()
+        async with gate.exclusive(timeout=1):
+            with pytest.raises(TimeoutError):
+                async with gate.exclusive(timeout=1):
+                    pass
+
+
+class TestAccountWriteGateMiddleware:
+    @staticmethod
+    async def _gate_held_during(method: str, path: str) -> bool:
+        from app.main import AccountWriteGateMiddleware
+
+        held = {}
+
+        async def inner(scope, receive, send):
+            # A closed-for-delete attempt fails fast only if a write is in.
+            try:
+                async with locks.account_write_gate.exclusive(timeout=0.01):
+                    held["value"] = False
+            except TimeoutError:
+                held["value"] = True
+
+        await AccountWriteGateMiddleware(inner)({"type": "http", "method": method, "path": path}, None, None)
+        return held["value"]
+
+    @pytest.mark.asyncio
+    async def test_mutating_requests_hold_the_gate(self):
+        assert await self._gate_held_during("POST", "/api/playlists") is True
+        assert await self._gate_held_during("PATCH", "/api/podcasts/1") is True
+
+    @pytest.mark.asyncio
+    async def test_reads_and_the_delete_itself_do_not(self):
+        assert await self._gate_held_during("GET", "/api/playlists") is False
+        # Holding it would deadlock the delete against its own request.
+        assert await self._gate_held_during("DELETE", "/api/auth/me") is False

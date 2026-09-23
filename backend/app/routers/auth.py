@@ -21,7 +21,7 @@ from app.models.session import Session
 from app.models.user import User
 from app.rate_limit import limiter
 from app.schemas.user import UserResponse
-from app.services.account import delete_account
+from app.services.account import AccountDeletionResult, delete_account
 from app.services.encryption import get_encryption_service
 from app.services.mobile_auth import issue_exchange_code, redeem_exchange_code
 from app.services.session import SessionService, get_session_service
@@ -417,27 +417,22 @@ async def delete_me(
 ) -> dict[str, str]:
     """Delete the signed-in user's account and data (issue #266).
 
-    Waits for any library sync or playlist write to finish first, so a job
-    can't recreate rows for a user who no longer exists. Spotify playlists
-    are left in place; see ``services/account.py``.
+    First closes ``account_write_gate`` and lets in-flight API writes drain,
+    so none can insert a row for the user after it's gone. Then waits for any
+    library sync or playlist write job, for the same reason. The gate comes
+    first: a manual run holds the gate while it waits for the playlist lock,
+    so taking the job locks first could leave both sides waiting. Spotify
+    playlists are left in place; see ``services/account.py``.
     """
-    acquired: list[asyncio.Lock] = []
+    busy = HTTPException(
+        status_code=409,
+        detail="A sync or playlist update is running. Try again in a minute.",
+    )
     try:
-        for lock in (locks.library_sync_lock, locks.playlist_write_lock):
-            try:
-                await asyncio.wait_for(lock.acquire(), timeout=ACCOUNT_DELETE_LOCK_WAIT_SECONDS)
-            except TimeoutError:
-                raise HTTPException(
-                    status_code=409,
-                    detail="A sync or playlist update is running. Try again in a minute.",
-                ) from None
-            acquired.append(lock)
-
-        result = await delete_account(db, session.user_id)
-        await db.commit()
-    finally:
-        for lock in reversed(acquired):
-            lock.release()
+        async with locks.account_write_gate.exclusive(ACCOUNT_DELETE_LOCK_WAIT_SECONDS):
+            result = await _delete_holding_job_locks(db, session.user_id, busy)
+    except TimeoutError:
+        raise busy from None
 
     logger.info(
         f"Deleted account {session.user_id}: {result.playlists} playlists, "
@@ -445,6 +440,24 @@ async def delete_me(
     )
     clear_session_cookies(response)
     return {"message": "Your account and data have been deleted"}
+
+
+async def _delete_holding_job_locks(db: AsyncSession, user_id: int, busy: HTTPException) -> AccountDeletionResult:
+    acquired: list[asyncio.Lock] = []
+    try:
+        for lock in (locks.library_sync_lock, locks.playlist_write_lock):
+            try:
+                await asyncio.wait_for(lock.acquire(), timeout=ACCOUNT_DELETE_LOCK_WAIT_SECONDS)
+            except TimeoutError:
+                raise busy from None
+            acquired.append(lock)
+
+        result = await delete_account(db, user_id)
+        await db.commit()
+        return result
+    finally:
+        for lock in reversed(acquired):
+            lock.release()
 
 
 @router.get("/csrf-token")

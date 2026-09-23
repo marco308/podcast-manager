@@ -71,8 +71,9 @@ export function Settings() {
       content: (
         <>
           <Paragraph>
-            This deletes your account, playlists and podcast library from this server and signs you
-            out. It can&apos;t be undone.
+            This deletes your account and playlists from this server and signs you out. Your podcast
+            library is deleted too, unless another account on this server still uses it. It
+            can&apos;t be undone.
           </Paragraph>
           <Paragraph style={{ marginBottom: 0 }}>
             Playlists already on Spotify stay there. To remove this app&apos;s access to Spotify, go

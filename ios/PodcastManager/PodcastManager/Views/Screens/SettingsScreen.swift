@@ -214,7 +214,8 @@ struct SettingsScreen: View {
                     }
                 } footer: {
                     Text(
-                        "Deletes your account, playlists and podcast library from your server. "
+                        "Deletes your account and playlists from your server, and your podcast "
+                            + "library unless another account on the server still uses it. "
                             + "Playlists already on Spotify stay there."
                     )
                 }
