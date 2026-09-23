@@ -362,8 +362,19 @@ class PlaylistBuilder:
 
     @staticmethod
     def sort_within_show(episodes: list[Episode], pick_from: PickFrom) -> list[Episode]:
-        """Order one show's episodes the way its rule says they are listened to."""
-        return sorted(episodes, key=lambda e: e.release_date_key, reverse=pick_from == PickFrom.NEWEST)
+        """Order one show's episodes the way its rule says they are listened to.
+
+        ``episodes`` arrive in Spotify's newest-first catalogue order, which is
+        the only thing that separates episodes released on the same day — a
+        serial that drops parts 1 and 2 together lists part 2 first. The
+        sorts are stable, so ties keep that order when picking newest and
+        must be read from the reversed list when picking oldest; sorting the
+        list as given put part 2 ahead of part 1, and a limit of one then
+        skipped part 1 altogether.
+        """
+        if pick_from == PickFrom.NEWEST:
+            return sorted(episodes, key=lambda e: e.release_date_key, reverse=True)
+        return sorted(reversed(episodes), key=lambda e: e.release_date_key)
 
     @staticmethod
     def assemble(
@@ -388,6 +399,11 @@ class PlaylistBuilder:
         The slot refill is done explicitly rather than by grouping a sorted
         list — a show's episodes are rarely adjacent after a date merge, which
         is what silently broke ``itertools.groupby`` before (issue #146).
+
+        Each group arrives in its rule's order (see :meth:`sort_within_show`),
+        which already settles same-day ties; the merge starts from every
+        group oldest-first and reverses the whole list for ``newest_first``,
+        so those ties are never re-decided by the date sort.
         """
         if arrangement == Arrangement.BY_POSITION.value:
             return [episode for group in contributions for episode in group.episodes]
@@ -402,22 +418,24 @@ class PlaylistBuilder:
             rng.shuffle(tokens)
             return [next(queues[i]) for i in tokens]
 
-        descending = date_direction == DateDirection.NEWEST_FIRST.value
+        oldest_first_groups = [
+            (group, group.episodes if group.rule.pick_from == PickFrom.OLDEST else group.episodes[::-1])
+            for group in contributions
+        ]
         ordered = sorted(
-            (episode for group in contributions for episode in group.episodes),
+            (episode for _, episodes in oldest_first_groups for episode in episodes),
             key=lambda e: (e.release_date_key, e.show_id),
-            reverse=descending,
         )
-        if not descending:
+        if date_direction != DateDirection.NEWEST_FIRST.value:
             return ordered
+        ordered.reverse()
 
-        for group in contributions:
+        for group, oldest_first in oldest_first_groups:
             if group.rule.pick_from != PickFrom.OLDEST:
                 continue
             slots = [i for i, episode in enumerate(ordered) if episode.show_id == group.show_id]
             if len(slots) < 2:
                 continue
-            oldest_first = sorted((ordered[i] for i in slots), key=lambda e: e.release_date_key)
             for slot, episode in zip(slots, oldest_first, strict=True):
                 ordered[slot] = episode
         return ordered
