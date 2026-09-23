@@ -19,10 +19,17 @@ alembic upgrade head
 
 # Trust X-Forwarded-* from the reverse proxy so request.client.host is the
 # real client IP (per-client rate limiting) instead of the proxy's address
-# (issue #173). The backend publishes no host port in either deployment path
-# — it is only reachable via nginx/Traefik on the internal Docker network —
-# so trusting any peer is sound here. Override to restrict.
-FORWARDED_ALLOW_IPS="${FORWARDED_ALLOW_IPS:-*}"
+# (issue #173).
+#
+# Only proxies on a private network are trusted: nginx and Traefik reach the
+# backend over a Docker bridge (172.16.0.0/12, or 192.168.0.0/16 once Docker
+# runs out of 172.x) or a Swarm overlay (10.0.0.0/8). "*" would also let
+# uvicorn take the *leftmost* X-Forwarded-For entry, which the client writes
+# itself; with a list, uvicorn walks the header from the right and stops at
+# the first address that isn't a trusted proxy, i.e. the one nginx/Traefik
+# actually saw. If your proxy reaches the backend from a public address, set
+# FORWARDED_ALLOW_IPS to its address (comma-separated IPs or CIDRs).
+FORWARDED_ALLOW_IPS="${FORWARDED_ALLOW_IPS:-127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7}"
 
 # Serve over HTTPS when certs are mounted (local mkcert setup); otherwise
 # plain HTTP behind whatever TLS-terminating proxy is in front.

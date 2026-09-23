@@ -11,12 +11,22 @@ from app.models.types import UTCDateTime
 
 
 class Session(Base):
-    """Database-backed session storage with expiration tracking."""
+    """Database-backed session storage with expiration tracking.
+
+    Only the SHA-256 of the session ID is stored (``session_id_hash``), so a
+    copy of the database or a backup can't be replayed as a login. The
+    plaintext ID exists only in the client's cookie (or the iOS Keychain);
+    ``SessionService`` hashes it for every lookup.
+
+    The column keeps its old name, ``session_id``: renaming it would make an
+    older image rolled back onto a migrated database fail on every
+    authenticated request, where keeping it just signs everyone out.
+    """
 
     __tablename__ = "sessions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    session_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    session_id_hash: Mapped[str] = mapped_column("session_id", String(64), unique=True, nullable=False, index=True)
     user_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("users.id", ondelete="CASCADE"),

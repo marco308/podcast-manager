@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     APP_NAME: str = "Podcast Manager"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
+    # Log every SQL statement. Separate from DEBUG so turning on debug logging
+    # doesn't also turn this on; bound parameters are never logged either way
+    # (the engine uses hide_parameters), since they include session-ID hashes
+    # and CSRF tokens.
+    SQL_ECHO: bool = False
 
     # Database
     DATABASE_URL: str = "sqlite+aiosqlite:///./data/podcast_manager.db"
@@ -48,6 +53,12 @@ class Settings(BaseSettings):
     # Cookie domain for cross-subdomain sharing (e.g., ".example.com")
     # Leave empty for same-origin cookies (local development)
     COOKIE_DOMAIN: str = ""
+
+    # The Spotify user ID allowed to sign in. When set, any other account is
+    # refused at the OAuth callback, including the very first sign-in, so a
+    # fresh deployment can't be claimed by whoever reaches it first. Empty
+    # keeps the old rule: the first account to sign in becomes the owner.
+    OWNER_SPOTIFY_ID: str = ""
 
     # Scheduler
     PLAYLIST_UPDATE_HOUR: int = 4

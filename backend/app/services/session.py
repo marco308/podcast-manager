@@ -1,5 +1,6 @@
 """Session management service for database-backed sessions."""
 
+import hashlib
 import secrets
 from datetime import UTC, datetime, timedelta
 
@@ -7,6 +8,15 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.session import Session
+
+
+def hash_session_id(session_id: str) -> str:
+    """Return the stored form of a session ID: its SHA-256, hex-encoded.
+
+    The ID is 32 random bytes, so a plain unsalted hash is enough — there is
+    nothing to guess — and it keeps the lookup a single indexed equality.
+    """
+    return hashlib.sha256(session_id.encode()).hexdigest()
 
 
 class SessionService:
@@ -24,7 +34,7 @@ class SessionService:
         """Generate a cryptographically secure CSRF token."""
         return secrets.token_urlsafe(32)
 
-    async def create_session(self, db: AsyncSession, user_id: int) -> Session:
+    async def create_session(self, db: AsyncSession, user_id: int) -> tuple[Session, str]:
         """Create a new session for a user.
 
         Args:
@@ -32,11 +42,13 @@ class SessionService:
             user_id: The user ID to create a session for.
 
         Returns:
-            The created Session object.
+            The created Session object and the plaintext session ID. Only its
+            hash is stored, so this is the one chance to hand it to the client.
         """
         now = datetime.now(UTC)
+        session_id = self.generate_session_id()
         session = Session(
-            session_id=self.generate_session_id(),
+            session_id_hash=hash_session_id(session_id),
             user_id=user_id,
             csrf_token=self.generate_csrf_token(),
             expires_at=now + timedelta(hours=self.SESSION_EXPIRY_HOURS),
@@ -44,14 +56,14 @@ class SessionService:
         )
         db.add(session)
         await db.flush()
-        return session
+        return session, session_id
 
     async def get_session(self, db: AsyncSession, session_id: str) -> Session | None:
         """Get a valid (non-expired) session by ID.
 
         Args:
             db: Database session.
-            session_id: The session ID to look up.
+            session_id: The plaintext session ID from the client.
 
         Returns:
             The Session object if found and not expired, None otherwise.
@@ -59,7 +71,7 @@ class SessionService:
         now = datetime.now(UTC)
         result = await db.execute(
             select(Session).where(
-                Session.session_id == session_id,
+                Session.session_id_hash == hash_session_id(session_id),
                 Session.expires_at > now,
             )
         )
@@ -75,14 +87,16 @@ class SessionService:
         session.last_accessed_at = datetime.now(UTC)
         await db.flush()
 
-    async def delete_session(self, db: AsyncSession, session_id: str) -> None:
-        """Delete a session by ID.
+    async def delete_session(self, db: AsyncSession, session: Session) -> None:
+        """Delete a session.
+
+        Takes the row rather than an ID: a loaded session only knows its hash.
 
         Args:
             db: Database session.
-            session_id: The session ID to delete.
+            session: The session to delete.
         """
-        await db.execute(delete(Session).where(Session.session_id == session_id))
+        await db.execute(delete(Session).where(Session.id == session.id))
         await db.flush()
 
     async def delete_user_sessions(self, db: AsyncSession, user_id: int) -> None:

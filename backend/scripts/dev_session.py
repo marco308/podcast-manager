@@ -36,7 +36,7 @@ from app.config import get_settings
 from app.database import async_session_maker, engine
 from app.models.session import Session
 from app.models.user import User
-from app.services.session import SessionService
+from app.services.session import SessionService, hash_session_id
 
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 OUT_DIR = Path("data/dev-session")
@@ -63,8 +63,9 @@ async def mint(days: int) -> int:
         user = users[0]
 
         now = datetime.now(UTC)
+        session_id = SessionService.generate_session_id()
         session = Session(
-            session_id=SessionService.generate_session_id(),
+            session_id_hash=hash_session_id(session_id),
             user_id=user.id,
             csrf_token=SessionService.generate_csrf_token(),
             expires_at=now + timedelta(days=days),
@@ -81,7 +82,7 @@ async def mint(days: int) -> int:
     jar = OUT_DIR / "cookies.txt"
     jar.write_text(
         "# Netscape HTTP Cookie File\n"
-        f"#HttpOnly_127.0.0.1\tFALSE\t/\tTRUE\t{expiry}\tsession_id\t{session.session_id}\n"
+        f"#HttpOnly_127.0.0.1\tFALSE\t/\tTRUE\t{expiry}\tsession_id\t{session_id}\n"
         f"127.0.0.1\tFALSE\t/\tTRUE\t{expiry}\tcsrf_token\t{session.csrf_token}\n"
     )
     info = OUT_DIR / "session.json"
@@ -89,7 +90,7 @@ async def mint(days: int) -> int:
         json.dumps(
             {
                 "spotify_id": user.spotify_id,
-                "session_id": session.session_id,
+                "session_id": session_id,
                 "csrf_token": session.csrf_token,
                 "expires_at": session.expires_at.isoformat(),
             },

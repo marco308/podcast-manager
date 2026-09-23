@@ -41,6 +41,13 @@ OAUTH_VERIFIER_COOKIE_NAME = "oauth_verifier"
 COOKIE_MAX_AGE = 24 * 60 * 60  # 24 hours in seconds
 OAUTH_STATE_MAX_AGE = 600  # 10 minutes for OAuth flow
 
+# Serialises the user lookup-and-create in the OAuth callback. Registration
+# closes once a user exists, but counting and inserting are separate
+# statements: two first sign-ins arriving together would both count zero and
+# both register. The app runs as a single uvicorn process (entrypoint.sh starts
+# no workers), so a process-wide lock is enough.
+_registration_lock = asyncio.Lock()
+
 # How long account deletion waits for a running sync or rebuild to finish
 # before giving up with a 409.
 ACCOUNT_DELETE_LOCK_WAIT_SECONDS = 10
@@ -73,12 +80,16 @@ def get_cookie_settings() -> dict:
     return cookie_settings
 
 
-def set_session_cookies(response: Response, session: Session) -> None:
-    """Set session and CSRF cookies on the response."""
+def set_session_cookies(response: Response, session: Session, session_id: str) -> None:
+    """Set session and CSRF cookies on the response.
+
+    ``session_id`` is the plaintext ID from ``create_session``; the row only
+    holds its hash.
+    """
     cookie_settings = get_cookie_settings()
 
     # Session cookie (HTTP-only)
-    response.set_cookie(key=COOKIE_NAME, value=session.session_id, **cookie_settings)
+    response.set_cookie(key=COOKIE_NAME, value=session_id, **cookie_settings)
 
     # CSRF cookie (NOT HTTP-only so JavaScript can read it)
     csrf_settings = {**cookie_settings, "httponly": False}
@@ -192,6 +203,57 @@ async def login(redirect_scheme: str | None = Query(None)) -> RedirectResponse:
     return response
 
 
+async def _upsert_user(
+    db: AsyncSession,
+    profile: dict,
+    token_data: dict,
+    encrypted_access: str,
+    encrypted_refresh: str,
+) -> User:
+    """Update the signed-in user, or register them if nobody has yet.
+
+    Call with ``_registration_lock`` held: the lookup, the user count and the
+    commit have to run as one step, or two first sign-ins can both register.
+    """
+    result = await db.execute(select(User).where(User.spotify_id == profile["id"]))
+    user = result.scalar_one_or_none()
+
+    if user:
+        # Update existing user
+        user.display_name = profile.get("display_name")
+        user.email = profile.get("email")
+        user.access_token = encrypted_access
+        user.refresh_token = encrypted_refresh
+        user.token_expires_at = token_data["expires_at"]
+        user.updated_at = datetime.now(UTC)
+        logger.info(f"Updated existing user: {user.id}")
+    else:
+        # Block new registrations if a user already exists (single-user app)
+        existing_user_count = await db.execute(select(func.count()).select_from(User))
+        if existing_user_count.scalar() > 0:
+            logger.warning(f"Rejected sign-up attempt from Spotify ID: {profile['id']}")
+            raise HTTPException(
+                status_code=403,
+                detail="Registration is closed. This is a single-user application.",
+            )
+
+        user = User(
+            spotify_id=profile["id"],
+            display_name=profile.get("display_name"),
+            email=profile.get("email"),
+            access_token=encrypted_access,
+            refresh_token=encrypted_refresh,
+            token_expires_at=token_data["expires_at"],
+        )
+        db.add(user)
+        logger.info(f"Created new user for Spotify ID: {profile['id']}")
+
+    await db.flush()
+    await db.commit()
+    logger.info(f"Committed user to database: {user.id}")
+    return user
+
+
 @router.get("/callback")
 async def callback(
     code: str | None = Query(None),
@@ -262,47 +324,22 @@ async def callback(
         profile = await spotify_with_token.get_current_user()
         logger.info(f"Got Spotify profile: {profile.get('id')}")
 
-        # Check if user exists
-        result = await db.execute(select(User).where(User.spotify_id == profile["id"]))
-        user = result.scalar_one_or_none()
+        # With OWNER_SPOTIFY_ID set, only that account may sign in — checked
+        # before the database is touched, so it also guards the first sign-in
+        # on a fresh deployment, which the user-count rule below can't.
+        if settings.OWNER_SPOTIFY_ID and profile["id"] != settings.OWNER_SPOTIFY_ID:
+            logger.warning(f"Rejected sign-in from non-owner Spotify ID: {profile['id']}")
+            raise HTTPException(
+                status_code=403,
+                detail="Sign-in is restricted to this server's owner. This is a single-user application.",
+            )
 
         # Encrypt tokens
         encrypted_access = encryption.encrypt(token_data["access_token"])
         encrypted_refresh = encryption.encrypt(token_data["refresh_token"])
 
-        if user:
-            # Update existing user
-            user.display_name = profile.get("display_name")
-            user.email = profile.get("email")
-            user.access_token = encrypted_access
-            user.refresh_token = encrypted_refresh
-            user.token_expires_at = token_data["expires_at"]
-            user.updated_at = datetime.now(UTC)
-            logger.info(f"Updated existing user: {user.id}")
-        else:
-            # Block new registrations if a user already exists (single-user app)
-            existing_user_count = await db.execute(select(func.count()).select_from(User))
-            if existing_user_count.scalar() > 0:
-                logger.warning(f"Rejected sign-up attempt from Spotify ID: {profile['id']}")
-                raise HTTPException(
-                    status_code=403,
-                    detail="Registration is closed. This is a single-user application.",
-                )
-
-            user = User(
-                spotify_id=profile["id"],
-                display_name=profile.get("display_name"),
-                email=profile.get("email"),
-                access_token=encrypted_access,
-                refresh_token=encrypted_refresh,
-                token_expires_at=token_data["expires_at"],
-            )
-            db.add(user)
-            logger.info(f"Created new user for Spotify ID: {profile['id']}")
-
-        await db.flush()
-        await db.commit()
-        logger.info(f"Committed user to database: {user.id}")
+        async with _registration_lock:
+            user = await _upsert_user(db, profile, token_data, encrypted_access, encrypted_refresh)
 
         # Rotate sessions on login: invalidate any prior sessions for this user so a
         # compromised session cannot survive re-authentication. This also doubles as
@@ -310,7 +347,7 @@ async def callback(
         await session_service.delete_user_sessions(db, user.id)
 
         # Create database-backed session
-        session = await session_service.create_session(db, user.id)
+        session, session_id = await session_service.create_session(db, user.id)
         await db.commit()
         logger.info(f"Created session for user {user.id}")
 
@@ -325,7 +362,7 @@ async def callback(
         # JSON response body. Mitigates URL-scheme hijacking and log exposure.
         if mobile_redirect_scheme:
             exchange_code = await issue_exchange_code(
-                session_id=session.session_id,
+                session_id=session_id,
                 csrf_token=session.csrf_token,
             )
             redirect_url = f"{mobile_redirect_scheme}://auth/callback?code={exchange_code}"
@@ -339,7 +376,7 @@ async def callback(
         # Web flow: redirect to frontend with cookies. FRONTEND_URL is
         # normalised (trailing slash stripped) by Settings itself.
         response = RedirectResponse(url=settings.FRONTEND_URL, status_code=302)
-        set_session_cookies(response, session)
+        set_session_cookies(response, session, session_id)
         response.delete_cookie(key=OAUTH_STATE_COOKIE_NAME, **delete_kwargs)
         response.delete_cookie(key=OAUTH_VERIFIER_COOKIE_NAME, **delete_kwargs)
         # Also clears any disallowed scheme cookie ignored above (issue #172).
@@ -484,7 +521,7 @@ async def logout(
     session_service: SessionService = Depends(get_session_service),
 ) -> dict[str, str]:
     """Clear session and log out."""
-    await session_service.delete_session(db, session.session_id)
+    await session_service.delete_session(db, session)
     await db.commit()
     clear_session_cookies(response)
     return {"message": "Logged out successfully"}
