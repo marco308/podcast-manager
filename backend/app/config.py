@@ -2,6 +2,7 @@
 
 import urllib.parse
 from functools import lru_cache
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -52,6 +53,23 @@ class Settings(BaseSettings):
     # Scheduler
     PLAYLIST_UPDATE_HOUR: int = 4
     PLAYLIST_UPDATE_MINUTE: int = 0
+    # IANA zone the run times are wall-clock times in (e.g. "Europe/London").
+    # Defaults to UTC, which is what the scheduler used before this was
+    # configurable, so existing deployments keep their run times.
+    TIMEZONE: str = "UTC"
+
+    @field_validator("TIMEZONE")
+    @classmethod
+    def _valid_timezone(cls, value: str) -> str:
+        """Fail at startup on a zone name the scheduler couldn't use."""
+        value = value.strip()
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as e:
+            raise ValueError(
+                f"TIMEZONE={value!r} is not a known IANA time zone name (e.g. 'UTC', 'Europe/London')"
+            ) from e
+        return value
 
     @field_validator("FRONTEND_URL")
     @classmethod

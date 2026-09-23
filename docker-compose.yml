@@ -13,6 +13,9 @@ services:
       - ./backend/.env
     environment:
       - DATABASE_URL=sqlite+aiosqlite:///./data/podcast_manager.db
+      # Zone the playlist update times are in (IANA name; defaults to UTC).
+      # Set it here or in backend/.env.
+      # - TIMEZONE=Europe/London
     volumes:
       - podcast_data:/app/data
     restart: unless-stopped
