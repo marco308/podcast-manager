@@ -37,7 +37,9 @@ struct DemoBackendTests {
             _ = try await demo.runPlaylist(id: 3)
         }
         let all = await demo.runAllPlaylists()
-        #expect(all.results.first { $0.playlistId == 3 }?.skipped == true)
+        // The backend filters disabled playlists out of run-all entirely.
+        #expect(all.results.contains { $0.playlistId == 3 } == false)
+        #expect(all.message == "Updated 2 playlists, 0 failed")
     }
 
     @Test func apiClientRoutesToTheDemo() async throws {
