@@ -205,6 +205,12 @@ It isn't on the App Store, so you build it yourself with Xcode. See [ios/README.
 
 Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md). To report a vulnerability, follow [SECURITY.md](SECURITY.md) instead of opening a public issue.
 
+## Support
+
+Podcast Manager is built and maintained by [Marcus](https://marcuslab.uk/) in spare time. If it's useful to you, you can support it through [GitHub Sponsors](https://github.com/sponsors/marco308) or [Buy Me a Coffee](https://buymeacoffee.com/marcuslab).
+
+<p align="center"><a href="https://github.com/sponsors/marco308"><img src="https://img.shields.io/badge/Sponsor-%E2%9D%A4-db61a2?logo=githubsponsors&amp;logoColor=white&amp;style=for-the-badge" alt="Sponsor on GitHub" height="40"></a> <a href="https://buymeacoffee.com/marcuslab"><img src="https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20coffee&amp;emoji=%E2%98%95&amp;slug=marcuslab&amp;button_colour=FFDD00&amp;font_colour=000000&amp;font_family=Cookie&amp;outline_colour=000000&amp;coffee_colour=ffffff" alt="Buy me a coffee" height="40"></a></p>
+
 ## License
 
 [PolyForm Noncommercial 1.0.0](LICENSE). You're free to use, modify and self-host Podcast Manager for personal and other non-commercial purposes. **Commercial use is not permitted.** To use it commercially, get in touch about a separate licence. Contributions are accepted under the same licence (see [CONTRIBUTING.md](CONTRIBUTING.md)).
