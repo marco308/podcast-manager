@@ -49,6 +49,19 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Before init: under CodeQL's build tracer Homebrew thinks it is running
+      # under Rosetta and refuses to install. Only the compile needs tracing.
+      - name: Generate Xcode project
+        if: matrix.language == 'swift'
+        working-directory: ios/PodcastManager
+        run: |
+          brew install xcodegen
+          # project.yml includes the gitignored Local.yml and xcodegen fails
+          # when it is missing; an empty override is enough for an unsigned
+          # simulator build.
+          echo '{}' > Local.yml
+          xcodegen generate
+
       - uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
@@ -59,12 +72,6 @@ jobs:
         if: matrix.language == 'swift'
         working-directory: ios/PodcastManager
         run: |
-          brew install xcodegen
-          # project.yml includes the gitignored Local.yml and xcodegen fails
-          # when it is missing; an empty override is enough for an unsigned
-          # simulator build.
-          echo '{}' > Local.yml
-          xcodegen generate
           xcodebuild build \
             -project PodcastManager.xcodeproj \
             -scheme PodcastManager \
