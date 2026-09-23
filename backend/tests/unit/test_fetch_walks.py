@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.services.playlist_builder import PlaylistBuilder
+from app.services.playlist_builder import EpisodeFetchError, PlaylistBuilder
 
 
 def _ep(i, *, played=False):
@@ -34,6 +34,24 @@ class FakeSpotify:
         items = [_ep(i, played=i in self.played) for i in range(offset, min(offset + limit, self.total))]
         has_more = offset + limit < self.total
         return {"items": items, "total": self.total, "next": "next-url" if has_more else None}
+
+
+class OverstatedSpotify(FakeSpotify):
+    """Reports ``total`` episodes but only returns the first ``returnable``.
+
+    What Spotify does when ``total`` counts episodes that are not available in
+    the user's market: offsets past the real end come back empty.
+    """
+
+    def __init__(self, total, returnable, played=()):
+        super().__init__(total, played)
+        self.returnable = returnable
+
+    async def get_show_episodes(self, show_id, limit=50, offset=0):
+        self.calls.append((limit, offset))
+        end = min(offset + limit, self.returnable)
+        items = [_ep(i, played=i in self.played) for i in range(offset, end)]
+        return {"items": items, "total": self.total, "next": "next-url" if end < self.returnable else None}
 
 
 def _builder(spotify):
@@ -168,3 +186,38 @@ class TestWalkFromTail:
         result = await _builder(spotify)._fetch_unplayed(_podcast(), need=1, from_oldest=True)
         ids = [e.id for e in result]
         assert len(ids) == len(set(ids))
+
+
+class TestTailWalkWithAnOverstatedTotal:
+    """An empty tail page used to drop the head too, so the show silently
+    contributed nothing and was not reported as a failure."""
+
+    @pytest.mark.asyncio
+    async def test_empty_tail_page_falls_back_to_reading_from_the_head(self):
+        podcast = _podcast()
+        spotify = OverstatedSpotify(total=300, returnable=240, played={239})
+        result = await _builder(spotify)._fetch_unplayed(podcast, need=1, from_oldest=True)
+        ids = [e.id for e in result]
+        # The real oldest unplayed episode is found, not nothing.
+        assert ids[-1] == "e238"
+        assert len(ids) == 239
+        # First page, the empty tail page, then a forward walk to the real end.
+        assert spotify.calls[:2] == [(50, 0), (50, 250)]
+        assert spotify.calls[2:] == [(50, offset) for offset in range(0, 250, 50)]
+        # The forward walk saw the whole (returnable) catalogue.
+        assert podcast.unplayed_episodes == 239
+
+    @pytest.mark.asyncio
+    async def test_nothing_returned_on_the_fallback_is_a_fetch_failure(self):
+        spotify = OverstatedSpotify(total=300, returnable=240)
+        real = spotify.get_show_episodes
+
+        async def first_page_only(show_id, limit=50, offset=0):
+            if spotify.calls:
+                spotify.calls.append((limit, offset))
+                return {"items": [], "total": 300, "next": None}
+            return await real(show_id, limit=limit, offset=offset)
+
+        spotify.get_show_episodes = first_page_only
+        with pytest.raises(EpisodeFetchError):
+            await _builder(spotify)._fetch_unplayed(_podcast(), need=1, from_oldest=True)

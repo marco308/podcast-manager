@@ -35,6 +35,15 @@ SOFT_THROTTLE_SLEEP_SECONDS = 0.1
 # cleanup loop holding the rate-limit budget hostage.
 CLEANUP_MODE_RETRY_AFTER_LIMIT = 60
 
+# Longest Retry-After we will sleep through. Above this the request fails
+# fast with the 429 rather than sleeping the cap and retrying into another
+# 429 — a playlist build holds ``playlist_write_lock`` while it waits.
+MAX_RETRY_AFTER_SECONDS = 300
+
+# A multi-batch playlist replace that fails after its first write is retried
+# once as a whole (see ``replace_playlist_items``).
+REPLACE_PLAYLIST_ATTEMPTS = 2
+
 
 class CleanupBudgetExceeded(Exception):
     """Raised when a cleanup-mode request hits a Retry-After above the cleanup limit.
@@ -186,6 +195,10 @@ class SpotifyService:
         is retried **once** (not part of the normal retry loop). Without the
         callback, 401 stays a hard failure — existing behaviour.
 
+        A 429 whose ``Retry-After`` exceeds :data:`MAX_RETRY_AFTER_SECONDS`
+        is not slept through: the 429 is raised straight away as an
+        ``httpx.HTTPStatusError``.
+
         In ``cleanup_mode`` (issue #89, PR2) a 429 with ``Retry-After`` above
         :data:`CLEANUP_MODE_RETRY_AFTER_LIMIT` raises
         :class:`CleanupBudgetExceeded` instead of sleeping — the cleanup
@@ -228,9 +241,15 @@ class SpotifyService:
                     f"Spotify Retry-After {raw_retry_after}s exceeds cleanup limit {CLEANUP_MODE_RETRY_AFTER_LIMIT}s"
                 )
 
-            retry_after = min(raw_retry_after, 300)  # Cap at 5 minutes
-            if raw_retry_after > 300:
-                logger.warning(f"Spotify requested {raw_retry_after}s wait — capping to {retry_after}s")
+            if raw_retry_after > MAX_RETRY_AFTER_SECONDS:
+                # Sleeping the cap and retrying only earns another 429 while
+                # holding the caller's locks; give up now and let the 429
+                # surface through raise_for_status below.
+                logger.warning(
+                    f"Spotify requested {raw_retry_after}s wait — over the {MAX_RETRY_AFTER_SECONDS}s cap, not retrying"
+                )
+                break
+            retry_after = raw_retry_after
             logger.warning(f"Rate limited by Spotify (attempt {attempt + 2}/{MAX_RETRIES}), waiting {retry_after}s")
             await asyncio.sleep(retry_after)
             response = await self._issue_request(client, method, url, **kwargs)
@@ -502,40 +521,38 @@ class SpotifyService:
             Over 100 URIs this is a PUT followed by POST appends, and
             Spotify offers no transactional replace — a failed append
             batch leaves the playlist truncated to the URIs written so
-            far (issue #182). The next scheduled rebuild repairs it.
+            far (issue #182). So a failure *after* the PUT landed retries
+            the whole replace once, which usually repairs a transient
+            error on the spot instead of leaving the playlist short until
+            the next run. A 429 is not retried: the request layer has
+            already waited out what Spotify allowed. A failure of the PUT
+            itself leaves the playlist unchanged and is raised as is.
         """
+        url = f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/items"
+        # Spotify limits to 100 items per request: PUT the first batch
+        # (replacing everything), then POST-append the rest.
+        batches = [uris[i : i + 100] for i in range(0, len(uris), 100)] or [[]]
         async with self._get_client_contextmanager() as client:
-            # Spotify limits to 100 items per request
-            if len(uris) <= 100:
-                await self._request_with_retry(
-                    client,
-                    "PUT",
-                    f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/items",
-                    headers=self._headers,
-                    json={"uris": uris},
-                    on_unauthorized=on_unauthorized,
-                )
-            else:
-                # First replace with first 100
-                await self._request_with_retry(
-                    client,
-                    "PUT",
-                    f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/items",
-                    headers=self._headers,
-                    json={"uris": uris[:100]},
-                    on_unauthorized=on_unauthorized,
-                )
-
-                # Then add remaining in batches of 100
-                for i in range(100, len(uris), 100):
-                    batch = uris[i : i + 100]
-                    await self._request_with_retry(
-                        client,
-                        "POST",
-                        f"{SPOTIFY_API_BASE}/playlists/{playlist_id}/items",
-                        headers=self._headers,
-                        json={"uris": batch},
-                        on_unauthorized=on_unauthorized,
+            for attempt in range(REPLACE_PLAYLIST_ATTEMPTS):
+                replaced = False
+                try:
+                    for index, batch in enumerate(batches):
+                        await self._request_with_retry(
+                            client,
+                            "PUT" if index == 0 else "POST",
+                            url,
+                            headers=self._headers,
+                            json={"uris": batch},
+                            on_unauthorized=on_unauthorized,
+                        )
+                        replaced = True
+                    return
+                except Exception as e:
+                    rate_limited = isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 429
+                    if not replaced or rate_limited or attempt + 1 >= REPLACE_PLAYLIST_ATTEMPTS:
+                        raise
+                    logger.warning(
+                        f"Playlist {playlist_id} left truncated by a failed append ({e}); retrying the replace"
                     )
 
     async def remove_tracks_from_playlist(

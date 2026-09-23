@@ -88,10 +88,17 @@ def _page(*show_ids, total=None):
     return {"items": items, "total": len(items) if total is None else total}
 
 
+def _as_context_manager(client):
+    """Let a mocked SpotifyService be used as ``async with SpotifyService(...)``."""
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    return client
+
+
 def _spotify_returning(*pages):
     client = MagicMock()
     client.get_user_shows = AsyncMock(side_effect=list(pages))
-    return client
+    return _as_context_manager(client)
 
 
 class TestMarkedShowStopsContributing:
@@ -274,6 +281,7 @@ class TestConcurrentSyncsAreSerialised:
             return _page()
 
         client.get_user_shows = observe_lock
+        _as_context_manager(client)
         try:
             async with maker() as db:
                 db.add(_user())

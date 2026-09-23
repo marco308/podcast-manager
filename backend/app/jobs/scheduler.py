@@ -55,6 +55,10 @@ TOKEN_REFRESH_THRESHOLD_SECONDS = (TOKEN_REFRESH_INTERVAL_MINUTES + TOKEN_REFRES
 # keeps the Spotify API budget bounded; one run a day remains the default.
 MAX_PLAYLIST_UPDATE_TIMES = 3
 
+# How late the daily update may still start after its scheduled time (e.g.
+# after an event-loop stall). APScheduler's default of 1s drops the run.
+DAILY_UPDATE_MISFIRE_GRACE_SECONDS = 600
+
 # AppSetting key holding the run times as "HH:MM,HH:MM". The older
 # ``playlist_update_hour`` / ``playlist_update_minute`` keys are still written
 # with the first time, so a downgrade keeps a sensible schedule.
@@ -272,8 +276,9 @@ async def sync_all_libraries() -> None:
             async with async_session_maker() as db:
                 try:
                     access_token = await TokenManager(user_id).get_token(min_remaining_seconds=300)
-                    spotify = SpotifyService(access_token=access_token)
-                    result = await sync_library(db, spotify)
+                    # One httpx client for the whole /me/shows walk.
+                    async with SpotifyService(access_token=access_token) as spotify:
+                        result = await sync_library(db, spotify)
                     await db.commit()
                     summaries.append(f"User {user_id}: {result.summary}")
                 except Exception as e:
@@ -392,6 +397,8 @@ async def update_all_playlists() -> None:
                             else:
                                 playlists_failed += 1
                                 errors.append(f"{res.playlist_name}: {res.error}")
+                                if res.exception is not None:
+                                    error_objects.append(res.exception)
 
                         await db.commit()
 
@@ -531,13 +538,19 @@ async def init_scheduler() -> None:
     # reschedule endpoint and the UI's "configurable" flag key off — but the
     # name says what the run actually does now (issue #240). max_instances=1
     # (the default) means a run still going when the next time comes round is
-    # skipped rather than doubled up.
+    # skipped rather than doubled up. APScheduler's default misfire grace is
+    # 1s, so a brief event-loop stall at the scheduled moment would drop the
+    # run entirely; 10 minutes of grace plus coalesce runs it late, once. The
+    # options live on the job, so they hold for every time in an OrTrigger
+    # and survive reschedule_job (which only swaps the trigger).
     scheduler.add_job(
         update_all_playlists,
         _update_trigger(update_times),
         id="daily_playlist_update",
         name="Daily Library Sync & Playlist Update",
         replace_existing=True,
+        misfire_grace_time=DAILY_UPDATE_MISFIRE_GRACE_SECONDS,
+        coalesce=True,
     )
 
     # Token refresh — the threshold in refresh_all_tokens must stay above
@@ -724,35 +737,30 @@ def _classify_failure(
 ) -> str | None:
     """Classify the failure mode of a playlist-update job for SyncLog.
 
-    The classification is heuristic — we don't carry structured error
-    objects around the job today. We inspect both raised exceptions
-    (typically httpx.HTTPStatusError from user-level failures) and the
-    error message strings produced by ``update_playlist`` to recognise
-    well-known patterns.
+    Classification uses only structured data: the ``httpx.HTTPStatusError``
+    found in each exception or its ``__cause__`` / ``__context__`` chain
+    (``EpisodeFetchError`` wraps the HTTP error with ``raise ... from``).
+    ``error_messages`` are never searched — they contain user-chosen names,
+    and a playlist called "Top 401" used to classify as ``token_expired``.
 
     Returns:
         One of: rate_limit, token_expired, playlist_write_failed,
         partial, unknown — or None if there were no failures.
     """
-    import httpx  # local import to avoid cycles in tests that stub modules
-
     if not error_messages and not exceptions:
         return None
 
     statuses: list[int] = []
     methods: list[str] = []
     for exc in exceptions:
-        if isinstance(exc, httpx.HTTPStatusError):
-            statuses.append(exc.response.status_code)
-            methods.append(exc.request.method.upper())
+        http_error = _find_http_status_error(exc)
+        if http_error is not None:
+            statuses.append(http_error.response.status_code)
+            methods.append(http_error.request.method.upper())
 
-    # Also peek into the textual errors — update_playlist wraps the
-    # underlying exception via str(e), which for httpx prints the status.
-    text_blob = " ".join(error_messages)
-
-    if 429 in statuses or "429" in text_blob or "Too Many Requests" in text_blob:
+    if 429 in statuses:
         return "rate_limit"
-    if 401 in statuses or "401" in text_blob or "Unauthorized" in text_blob:
+    if 401 in statuses:
         return "token_expired"
 
     write_methods = {"PUT", "POST", "DELETE"}
@@ -764,6 +772,20 @@ def _classify_failure(
         return "partial"
 
     return "unknown"
+
+
+def _find_http_status_error(exc: BaseException):
+    """The first ``httpx.HTTPStatusError`` in ``exc``'s cause/context chain."""
+    import httpx  # local import to avoid cycles in tests that stub modules
+
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        if isinstance(current, httpx.HTTPStatusError):
+            return current
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return None
 
 
 async def _still_enabled_playlist_ids() -> set[int] | None:
