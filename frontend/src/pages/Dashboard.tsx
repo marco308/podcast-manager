@@ -1,4 +1,4 @@
-import { App, Card, Row, Col, Statistic, Button, Space, Typography, Tag, Grid } from 'antd';
+import { Card, Row, Col, Statistic, Button, Space, Typography, Tag, Grid } from 'antd';
 import {
   SyncOutlined,
   CustomerServiceOutlined,
@@ -8,64 +8,25 @@ import {
   ExportOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
-import { usePodcasts, useSyncPodcasts, usePlaylists, useRunAllPlaylists } from '../hooks';
+import {
+  usePodcasts,
+  usePlaylists,
+  useSyncPodcastsWithFeedback,
+  useRunAllPlaylistsWithFeedback,
+} from '../hooks';
 import { LoadingSpinner } from '../components';
-import { getErrorMessage } from '../api';
 import { ruleSummary, spotifyPlaylistUrl } from '../utils/playlistLabels';
-import { syncResultSummary } from '../utils/syncSummary';
 
 const { Title, Text } = Typography;
 const { useBreakpoint } = Grid;
 
 export function Dashboard() {
-  const { message } = App.useApp();
   const { data: podcasts, isLoading: podcastsLoading } = usePodcasts();
   const { data: playlists, isLoading: playlistsLoading } = usePlaylists();
-  const syncPodcasts = useSyncPodcasts();
-  const runAllPlaylists = useRunAllPlaylists();
+  const { sync: handleSync, isPending: syncPending } = useSyncPodcastsWithFeedback();
+  const { runAll: handleRunAll, isPending: runAllPending } = useRunAllPlaylistsWithFeedback();
   const screens = useBreakpoint();
   const isMobile = !screens.md;
-
-  const handleSync = async () => {
-    try {
-      const { text, warn } = syncResultSummary(await syncPodcasts.mutateAsync());
-      if (warn) {
-        message.warning(text);
-      } else {
-        message.success(text);
-      }
-    } catch {
-      message.error('Failed to sync podcasts');
-    }
-  };
-
-  const handleRunAll = async () => {
-    try {
-      const result = await runAllPlaylists.mutateAsync();
-      // A 200 only means the batch ran — each playlist carries its own
-      // success/skipped/error status, so summarise rather than blanket-success.
-      const failed = result.results.filter((r) => !r.success);
-      const skipped = result.results.filter((r) => r.success && r.skipped);
-      const succeeded = result.results.filter((r) => r.success && !r.skipped);
-
-      let summary = `Updated ${succeeded.length} playlist${succeeded.length === 1 ? '' : 's'}`;
-      if (skipped.length > 0) {
-        summary += `, ${skipped.length} skipped (disabled)`;
-      }
-
-      if (failed.length > 0) {
-        message.error(
-          `${summary}, ${failed.length} failed: ${failed.map((r) => r.playlist_name).join(', ')}`
-        );
-      } else if (skipped.length > 0) {
-        message.warning(summary);
-      } else {
-        message.success(summary);
-      }
-    } catch (err: unknown) {
-      message.error(getErrorMessage(err));
-    }
-  };
 
   if (podcastsLoading || playlistsLoading) {
     return <LoadingSpinner tip="Loading dashboard..." />;
@@ -101,9 +62,9 @@ export function Dashboard() {
         >
           <Button
             type="primary"
-            icon={<SyncOutlined spin={syncPodcasts.isPending} />}
+            icon={<SyncOutlined spin={syncPending} />}
             onClick={handleSync}
-            loading={syncPodcasts.isPending}
+            loading={syncPending}
             size={isMobile ? 'large' : 'middle'}
             block={isMobile}
           >
@@ -112,7 +73,7 @@ export function Dashboard() {
           <Button
             icon={<ThunderboltOutlined />}
             onClick={handleRunAll}
-            loading={runAllPlaylists.isPending}
+            loading={runAllPending}
             size={isMobile ? 'large' : 'middle'}
             block={isMobile}
           >
