@@ -15,8 +15,10 @@ COPY . .
 # Build the application
 RUN npm run build
 
-# Production stage
-FROM nginx:alpine
+# Production stage. A versioned tag (1.31 = current mainline, which is what
+# the bare `alpine` tag tracks) rather than `nginx:alpine`, so Dependabot can
+# see and propose the next version instead of it changing silently on rebuild.
+FROM nginx:1.31-alpine
 
 # Copy built assets from builder
 COPY --from=builder /app/dist /usr/share/nginx/html

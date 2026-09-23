@@ -62,25 +62,77 @@ fi
 
 echo "Deploying: $COMPONENT"
 
-# Wait until at least one replica of the named swarm service reports Running.
-# Polls `docker service ps` rather than racing a fixed sleep against the
-# service update, and never passes multiple container IDs into `docker exec`
-# (which would silently operate on the first match only).
+# The image reference a component's service should end up running.
+expected_image() {
+    local component="$1"
+    if [[ -n "$REGISTRY" ]]; then
+        echo "${REGISTRY}/podcast-manager-${component}:${IMAGE_TAG}"
+    else
+        echo "podcast-manager-${component}:latest"
+    fi
+}
+
+# When the service's most recent update started (empty if it never had one).
+# Recorded before each update so wait_for_service can tell the status of *this*
+# update from a stale "completed" left by the previous one.
+update_started_at() {
+    docker service inspect --format \
+        '{{if .UpdateStatus}}{{.UpdateStatus.StartedAt}}{{end}}' "$1" 2>/dev/null || true
+}
+
+# Wait until the update this script started has finished and taken. A task in
+# Running is not enough: the stack uses `failure_action: rollback`, so a failed
+# update puts the *old* task back in Running, and that must not print
+# "Deployment complete!". So this polls the service's UpdateStatus until it
+# reports `completed` for an update that started after `previous_start`, fails
+# at once on any rollback or pause, and then confirms the service spec names
+# the expected image and a task is actually Running.
 wait_for_service() {
     local service="$1"
-    local timeout=120
+    local component="$2"
+    local previous_start="$3"
+    local want
+    want="$(expected_image "$component")"
+    local timeout="${DEPLOY_TIMEOUT:-300}"
     local elapsed=0
-    echo "Waiting for $service to report Running (timeout: ${timeout}s)..."
+    local state started image
+    echo "Waiting for the update of $service to complete (timeout: ${timeout}s)..."
     while (( elapsed < timeout )); do
-        if docker service ps --filter desired-state=running \
-            --format '{{.CurrentState}}' "$service" 2>/dev/null | grep -q '^Running'; then
-            echo "$service is running."
-            return 0
+        state="$(docker service inspect --format \
+            '{{if .UpdateStatus}}{{.UpdateStatus.State}}{{end}}' "$service" 2>/dev/null || true)"
+        started="$(update_started_at "$service")"
+        if [[ -n "$state" && "$started" != "$previous_start" ]]; then
+            case "$state" in
+                completed)
+                    # Spec image carries the resolved digest (ref@sha256:...);
+                    # compare the reference the script asked for.
+                    image="$(docker service inspect --format \
+                        '{{.Spec.TaskTemplate.ContainerSpec.Image}}' "$service")"
+                    image="${image%%@*}"
+                    if [[ "$image" != "$want" ]]; then
+                        echo "ERROR: $service finished updating but runs ${image}, not ${want}." >&2
+                        docker service ps "$service" >&2 || true
+                        return 1
+                    fi
+                    if docker service ps --filter desired-state=running \
+                        --format '{{.CurrentState}}' "$service" 2>/dev/null | grep -q '^Running'; then
+                        echo "$service is running ${want}."
+                        return 0
+                    fi
+                    ;;
+                rollback_started|rollback_completed|rollback_paused|paused)
+                    echo "ERROR: the update of $service did not take (update state: ${state})." >&2
+                    docker service inspect --format \
+                        '{{if .UpdateStatus}}{{.UpdateStatus.Message}}{{end}}' "$service" >&2 || true
+                    docker service ps "$service" >&2 || true
+                    return 1
+                    ;;
+            esac
         fi
         sleep 2
         elapsed=$((elapsed + 2))
     done
-    echo "ERROR: $service did not reach Running state within ${timeout}s" >&2
+    echo "ERROR: the update of $service did not complete within ${timeout}s (last state: ${state:-none})" >&2
     docker service ps "$service" >&2 || true
     return 1
 }
@@ -130,7 +182,7 @@ require_published_image() {
 # Migrations run in the container's entrypoint (backend/entrypoint.sh) before
 # uvicorn starts, so a task that reaches Running has already migrated — and
 # the compose path gets the same treatment (issue #149). A failing migration
-# exits the container, which surfaces here as wait_for_service timing out.
+# exits the container, which surfaces here as a rollback (or a timeout).
 
 if [[ -n "$REGISTRY" ]]; then
     echo "Deploying published images from ${REGISTRY} (tag: ${IMAGE_TAG}); no local build."
@@ -141,26 +193,34 @@ if [[ -n "$REGISTRY" ]]; then
     esac
 fi
 
+# Deploy one component: build if registry-less, update, wait for it to take.
+deploy_component() {
+    local component="$1"
+    local service="$2"
+    local previous_start
+    previous_start="$(update_started_at "$service")"
+    update_service "$component" "$service"
+    wait_for_service "$service" "$component" "$previous_start"
+}
+
 case "$COMPONENT" in
     backend)
         if [[ -z "$REGISTRY" ]]; then build_image backend; fi
-        update_service backend "$BACKEND_SERVICE"
-        wait_for_service "$BACKEND_SERVICE"
+        deploy_component backend "$BACKEND_SERVICE"
         ;;
     frontend)
         if [[ -z "$REGISTRY" ]]; then build_image frontend; fi
-        update_service frontend "$FRONTEND_SERVICE"
-        wait_for_service "$FRONTEND_SERVICE"
+        deploy_component frontend "$FRONTEND_SERVICE"
         ;;
     all)
         if [[ -z "$REGISTRY" ]]; then
             build_image backend
             build_image frontend
         fi
-        update_service backend "$BACKEND_SERVICE"
-        update_service frontend "$FRONTEND_SERVICE"
-        wait_for_service "$BACKEND_SERVICE"
-        wait_for_service "$FRONTEND_SERVICE"
+        # Backend first and confirmed before the frontend moves, so a
+        # rolled-back backend stops the deploy with the frontend untouched.
+        deploy_component backend "$BACKEND_SERVICE"
+        deploy_component frontend "$FRONTEND_SERVICE"
         ;;
 esac
 
