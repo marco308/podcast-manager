@@ -18,9 +18,8 @@ from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from sqlalchemy import create_engine
 
-import app.models  # noqa: F401  — registers every model on Base.metadata
 from app.config import get_settings
-from app.database import Base
+from app.models import Base
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger("check_migration_drift")

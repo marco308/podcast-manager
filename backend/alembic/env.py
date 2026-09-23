@@ -9,8 +9,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.config import get_settings
-from app.database import Base
-from app.models import User, Podcast, Playlist, SyncLog  # noqa: F401
+from app.models import Base
 
 # this is the Alembic Config object
 config = context.config

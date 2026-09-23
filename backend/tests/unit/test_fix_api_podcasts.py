@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-import app.routers.podcasts as podcasts_module
+from app.routers import podcasts as podcasts_module
 from app.database import Base
 from app.models import Podcast, User
 from app.rate_limit import limiter

@@ -33,9 +33,8 @@ from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
 
-import app.models  # noqa: F401  — registers every model on Base.metadata
 from app.config import get_settings
-from app.database import Base
+from app.models import Base
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger("adopt_legacy_schema")

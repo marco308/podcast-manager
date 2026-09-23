@@ -26,7 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-import app.routers.podcasts as podcasts_module
+from app.routers import podcasts as podcasts_module
 from app.database import Base
 from app.jobs import locks, scheduler
 from app.models import Playlist, PlaylistPodcast, Podcast, User

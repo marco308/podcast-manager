@@ -17,7 +17,7 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-import app.routers.playlists as playlists_module
+from app.routers import playlists as playlists_module
 from app.database import Base
 from app.models import Playlist, User
 from app.routers.playlists import create_playlist, list_spotify_playlists, update_playlist

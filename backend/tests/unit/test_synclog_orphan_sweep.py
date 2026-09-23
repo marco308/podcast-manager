@@ -23,8 +23,7 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-import app.models  # noqa: F401 — registers every table on Base.metadata
-from app.database import Base
+from app.models import Base
 from app.jobs import scheduler
 from app.models.sync_log import SyncLog, SyncStatus
 

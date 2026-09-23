@@ -19,8 +19,7 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-import app.models  # noqa: F401 — registers every table on Base.metadata
-from app.database import Base
+from app.models import Base
 from app.jobs import scheduler
 from app.models import Podcast
 from app.models.sync_log import SyncLog, SyncStatus
