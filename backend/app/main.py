@@ -16,6 +16,7 @@ from app.jobs import locks
 from app.jobs.scheduler import init_scheduler, shutdown_scheduler
 from app.rate_limit import limiter
 from app.routers import auth_router, jobs_router, playlists_router, podcasts_router
+from app.routers._deps import ReauthRequired, reauth_required_handler
 
 settings = get_settings()
 
@@ -75,6 +76,8 @@ app = FastAPI(
 # expensive endpoints. This wires up the 429 handler and middleware.
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+# Unreadable stored credentials: a 401 that also clears the session cookies.
+app.add_exception_handler(ReauthRequired, reauth_required_handler)
 
 
 # CORS origins - restrict based on environment (shared by the middleware and
