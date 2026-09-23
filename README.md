@@ -61,7 +61,7 @@ The Settings page shows each job's next run and the result of its last one, incl
 
 ### Single-user by design
 
-Each installation serves one Spotify account: registration closes once the first account signs in. To manage playlists for someone else, run a second instance for them.
+Each installation serves one Spotify account: registration closes once the first account signs in. Set `OWNER_SPOTIFY_ID` to your Spotify user ID to lock it to your account from the start, so nobody who reaches a fresh install first can claim it. To manage playlists for someone else, run a second instance for them.
 
 ## Screenshots
 
@@ -143,11 +143,15 @@ SPOTIFY_REDIRECT_URI=https://127.0.0.1:8000/api/auth/callback   # 127.0.0.1, not
 ENCRYPTION_KEY=...        # python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 FRONTEND_URL=https://127.0.0.1:3000
 COOKIE_DOMAIN=            # e.g. .example.com when the API and frontend are on sibling subdomains
+OWNER_SPOTIFY_ID=         # your Spotify user ID; when set, no other account can sign in
 PLAYLIST_UPDATE_HOUR=4    # initial daily-update time; later changes made in the UI take precedence
 PLAYLIST_UPDATE_MINUTE=0
+TIMEZONE=UTC              # IANA zone the run times are in, e.g. Europe/London (follows daylight saving)
 ```
 
 Spotify tokens are stored encrypted with `ENCRYPTION_KEY`. Keep it stable: changing it means signing in again.
+
+`DEBUG=true` turns on debug logging and serves the API docs at `/api/docs`; they are off otherwise. `SQL_ECHO=true` logs SQL statements, without their parameters.
 
 ### Local development
 
@@ -196,6 +200,8 @@ The app is served on port 8080, and nginx in the frontend container proxies `/ap
 ```
 
 rolls out new images and updates the Swarm services. Set `REGISTRY=ghcr.io/<owner>` to deploy the images CI publishes to GHCR, tagged with the checked-out commit (or pass `IMAGE_TAG=1.1.0` for a [release](https://github.com/marco308/podcast-manager/releases)); without it, the script builds locally.
+
+**Client IPs behind a proxy:** the backend takes the client IP (used for rate limiting) from `X-Forwarded-For` only when the request comes from a private address, which covers nginx and Traefik on a Docker network. If your proxy reaches the backend from a public address, set `FORWARDED_ALLOW_IPS` on the backend container to that address (comma-separated IPs or CIDRs). Setting it to `*` lets clients choose their own IP.
 
 ## iOS companion app
 

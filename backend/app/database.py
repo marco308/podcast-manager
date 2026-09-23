@@ -17,9 +17,12 @@ settings = get_settings()
 # Create async engine
 # Note: connect_args timeout (seconds) sets sqlite3.connect(timeout=) which is the
 # busy timeout for aiosqlite. The PRAGMA below also sets it (in ms) for consistency.
+# hide_parameters keeps bound values (session-ID hashes, CSRF tokens, encrypted
+# Spotify tokens) out of SQL echo and out of the messages of logged DB errors.
 engine = create_async_engine(
     settings.DATABASE_URL,
-    echo=settings.DEBUG,
+    echo=settings.SQL_ECHO,
+    hide_parameters=True,
     future=True,
     connect_args={"timeout": 30},
 )
