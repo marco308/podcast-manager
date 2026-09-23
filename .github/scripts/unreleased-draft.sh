@@ -24,8 +24,10 @@ COMMITS=$(git rev-list --count "$LAST..$HEAD_SHA")
 
 DRAFT_ID=""
 if [[ -z "${DRY_RUN:-}" ]]; then
+    # Found by title, not tag: GitHub renames a draft's not-yet-existing tag to
+    # "untagged-<hash>" once the draft is edited.
     DRAFT_ID=$(gh api "repos/$GH_REPO/releases?per_page=100" \
-        --jq "map(select(.draft and .tag_name == \"$DRAFT_TAG\")) | .[0].id // empty")
+        --jq 'map(select(.draft and (.name | startswith("Unreleased: ")))) | .[0].id // empty')
 fi
 
 if (( COMMITS == 0 )); then
