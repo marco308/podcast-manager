@@ -1,6 +1,7 @@
 # Podcast Manager
 
 [![CI](https://github.com/marco308/podcast-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/marco308/podcast-manager/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fmarco308%2Fpodcast-manager%2Fbadges%2Fcoverage-badge.json)](https://github.com/marco308/podcast-manager/actions/workflows/ci.yml)
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm_Noncommercial_1.0.0-red.svg)](LICENSE)
 
 Spotify puts every podcast you follow into one chronological feed. Podcast Manager is a self-hosted web app (plus an iOS companion) that splits that feed into playlists you design, such as today's news for the commute or the next unheard episode of a serial, and rebuilds the matching Spotify playlists every day.
@@ -172,6 +173,7 @@ npm run dev              # https://127.0.0.1:3000
 ```bash
 cd backend
 pytest tests
+pytest tests --cov       # with a coverage report for app/ (the README badge's number)
 ```
 
 No `.env` is needed; the test suite injects dummy values. CI also runs ruff, ESLint, Prettier and the frontend build (see [CONTRIBUTING.md](CONTRIBUTING.md)).
