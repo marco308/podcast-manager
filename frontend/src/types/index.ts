@@ -170,6 +170,8 @@ export interface SpotifyPlaylistOption {
 export interface SpotifyPlaylistOptionListResponse {
   items: SpotifyPlaylistOption[];
   total: number;
+  // True when the server stopped at its page cap with more playlists left.
+  truncated: boolean;
 }
 
 // Playlist podcast list response
