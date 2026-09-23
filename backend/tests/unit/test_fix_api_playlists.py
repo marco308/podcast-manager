@@ -173,11 +173,11 @@ class TestPlaylistSchemaBounds:
 
     def test_podcast_ids_capped_on_add_and_reorder(self):
         with pytest.raises(ValidationError):
-            PlaylistPodcastAdd(podcast_ids=list(range(501)))
+            PlaylistPodcastAdd(podcast_ids=list(range(1, 502)))
         with pytest.raises(ValidationError):
-            PlaylistPodcastReorder(podcast_ids=list(range(501)))
+            PlaylistPodcastReorder(podcast_ids=list(range(1, 502)))
         # At the cap is fine.
-        PlaylistPodcastAdd(podcast_ids=list(range(500)))
+        PlaylistPodcastAdd(podcast_ids=list(range(1, 501)))
 
 
 class TestAssignmentOverrides:
