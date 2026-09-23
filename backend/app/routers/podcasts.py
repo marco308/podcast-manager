@@ -2,6 +2,9 @@
 
 import asyncio
 import logging
+import re
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -16,6 +19,7 @@ from app.models.session import Session
 from app.models.user import User
 from app.rate_limit import limiter
 from app.routers.auth import get_current_user_id, validate_csrf_token
+from app.schemas.playlist import DB_ID_MAX
 from app.schemas.podcast import (
     PodcastListResponse,
     PodcastResponse,
@@ -34,6 +38,25 @@ router = APIRouter(prefix="/podcasts", tags=["Podcasts"])
 # client times out long before that — so fail fast with a 409 the UI can
 # explain, matching the playlist write lock's treatment (issue #153).
 SYNC_LOCK_WAIT_SECONDS = 5
+
+# ASCII digits only: ``str.isdigit`` also accepts characters like "²" that
+# ``int()`` then rejects.
+_NUMERIC_ID = re.compile(r"[0-9]+")
+
+
+@asynccontextmanager
+async def _library_sync_lock(detail: str) -> AsyncIterator[None]:
+    """Hold ``library_sync_lock``, or raise 409 with ``detail`` if a sync keeps it."""
+    try:
+        await asyncio.wait_for(locks.library_sync_lock.acquire(), timeout=SYNC_LOCK_WAIT_SECONDS)
+    except TimeoutError:
+        logger.info("Request rejected — library_sync_lock held by a sync")
+        raise HTTPException(status_code=409, detail=detail) from None
+
+    try:
+        yield
+    finally:
+        locks.library_sync_lock.release()
 
 
 async def get_user_with_token(
@@ -76,9 +99,16 @@ async def _get_podcast_or_404(db: AsyncSession, podcast_ref: str) -> Podcast:
     segment is looked up as a Spotify show ID instead, so iOS builds from
     before the switch keep working; Spotify IDs are 22-character base62 and
     never all digits in practice. Drop the fallback once those builds are gone.
+
+    A number too big for SQLite's INTEGER can't be a row, so it is a 404
+    rather than an OverflowError from the driver.
     """
-    if podcast_ref.isdigit():
-        result = await db.execute(select(Podcast).where(Podcast.id == int(podcast_ref)))
+    if _NUMERIC_ID.fullmatch(podcast_ref):
+        # Checked on the string first: int() refuses more than 4300 digits.
+        digits = podcast_ref.lstrip("0") or "0"
+        if len(digits) > len(str(DB_ID_MAX)) or int(digits) > DB_ID_MAX:
+            raise HTTPException(status_code=404, detail="Podcast not found")
+        result = await db.execute(select(Podcast).where(Podcast.id == int(digits)))
     else:
         result = await db.execute(select(Podcast).where(Podcast.spotify_id == podcast_ref))
     podcast = result.scalar_one_or_none()
@@ -113,7 +143,7 @@ def _build_podcast_response(podcast: Podcast, playlist_ids: list[int]) -> Podcas
 async def list_podcasts(
     include_archived: bool = Query(False, description="Also return archived podcasts"),
     limit: int = Query(50, ge=1, le=100),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=DB_ID_MAX),
     user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> PodcastListResponse:
@@ -217,7 +247,17 @@ async def unfollow_podcast(
     session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
-    """Unfollow a podcast from Spotify and optionally remove from local database."""
+    """Unfollow a podcast on Spotify, then delete it locally.
+
+    Holds ``library_sync_lock`` like ``POST /podcasts/sync``: a sync that has
+    already loaded this row would otherwise hit a StaleDataError when it
+    writes it back, and that rolls back the whole sync.
+    """
+    async with _library_sync_lock("A library sync is running. Please try again shortly."):
+        return await _unfollow_podcast(podcast_id, session, db)
+
+
+async def _unfollow_podcast(podcast_id: str, session: Session, db: AsyncSession) -> dict[str, str]:
     user, access_token = await get_user_with_token(session.user_id, db)
 
     podcast = await _get_podcast_or_404(db, podcast_id)
@@ -230,7 +270,8 @@ async def unfollow_podcast(
         logger.exception(f"Failed to unfollow podcast {podcast.spotify_id} on Spotify: {e}")
         raise HTTPException(status_code=500, detail="Failed to unfollow podcast on Spotify") from None
 
-    # Remove from local database (cascade will remove join table entries)
+    # The ORM relationship cascade deletes its playlist assignments too; the
+    # database's own ON DELETE CASCADE never fires (SQLite foreign keys are off).
     await db.delete(podcast)
     await db.commit()  # persist before the response is sent (see get_db)
 
