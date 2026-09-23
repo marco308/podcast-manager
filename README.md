@@ -54,7 +54,7 @@ For example, a Morning playlist with defaults "latest only, newest" gets today's
 |-----|----------|-------------|
 | **Daily update** | 1 to 3 times a day (default once, at 04:00; set the times on the Settings page) | Syncs your Spotify library, then rebuilds every enabled playlist from unplayed episodes. A failed sync doesn't stop the rebuild. |
 | **Played-episode cleanup** | Every 30 minutes | Removes fully played episodes from enabled playlists |
-| **Token refresh** | Every 45 minutes | Refreshes Spotify access tokens before they expire |
+| **Token refresh** | At startup, then every 45 minutes | Refreshes Spotify access tokens before they expire |
 | **Session cleanup** | Every hour | Removes expired login sessions |
 
 The Settings page shows each job's next run and the result of its last one, including which step failed if part of a run did.
