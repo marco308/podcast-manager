@@ -27,6 +27,7 @@ xcodegen generate
 
 ```
 
+- Version and build number live only in `project.yml` (`MARKETING_VERSION`, `CURRENT_PROJECT_VERSION` on the app target); `Info.plist` references them, so a bump is one edit. Bump `CURRENT_PROJECT_VERSION` before every upload.
 - Archive and upload to TestFlight: see the `ios-testflight` skill (`../.claude/skills/ios-testflight/SKILL.md`).
 - App Store listing text, screenshots and the non-file answers (App Privacy, age rating…): `AppStore/README.md`. The app is **iPhone-only** (`TARGETED_DEVICE_FAMILY: "1"`) until someone checks the iPad layouts and adds an iPad screenshot set.
 

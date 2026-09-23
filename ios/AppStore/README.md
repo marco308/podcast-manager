@@ -59,6 +59,6 @@ python3 -c "from PIL import Image; import glob; [Image.open(f).convert('RGB').sa
 ## Submitting
 
 1. Create the app record in App Store Connect with bundle ID `com.marcuslab.podcastmanager`, the name from `name.txt`, and English (U.K.) as the primary language. This is where you find out whether the name is free.
-2. Upload a build with the `ios-testflight` skill, bumping `CFBundleVersion` first.
+2. Upload a build with the `ios-testflight` skill, bumping `CURRENT_PROJECT_VERSION` in `project.yml` first.
 3. Fill in the fields above, upload the screenshots, answer the questions, attach the build and submit for review.
 4. After approval, replace "The app isn't distributed on the App Store" in `ios/README.md`, and add the App Store link to the main README and `site/index.html`.
