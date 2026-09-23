@@ -61,7 +61,7 @@ apiClient.interceptors.response.use(
     // Handle 403 Forbidden (CSRF failure) - clear cached token, refresh, and retry once
     if (
       error.response?.status === 403 &&
-      error.response?.data?.detail?.includes('CSRF') &&
+      detailText(error.response?.data?.detail).includes('CSRF') &&
       error.config &&
       !(error.config as unknown as Record<string, unknown>)._csrfRetry
     ) {
@@ -92,10 +92,41 @@ apiClient.interceptors.response.use(
 
 export default apiClient;
 
+// FastAPI sends `detail` as a string for HTTPException, but as a list of
+// {loc, msg, type} objects for a 422 validation error — and a proxy error
+// page (nginx 502/504) has no JSON body at all. Flatten it to text so it is
+// always safe to render.
+function detailText(detail: ApiError['detail'] | undefined): string {
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((d) => (d && typeof d === 'object' && typeof d.msg === 'string' ? d.msg : ''))
+      .filter(Boolean)
+      .join('; ');
+  }
+  return '';
+}
+
+const STATUS_MESSAGES: Record<number, string> = {
+  429: 'Too many requests — wait a minute and try again.',
+  502: 'The server is unreachable right now. Try again shortly.',
+  503: 'The server is unavailable right now. Try again shortly.',
+  504: 'The server took too long to respond. The action may still finish — refresh in a minute to check.',
+};
+
 // Helper to extract error message
 export function getErrorMessage(error: unknown): string {
-  if (axios.isAxiosError(error)) {
-    return error.response?.data?.detail || error.message || 'An error occurred';
+  if (axios.isAxiosError<ApiError>(error)) {
+    // The backend's own detail wins (a 502 can carry "Spotify rejected the
+    // rename"); a fixed sentence covers bodies that aren't FastAPI's, such
+    // as slowapi's 429 or an nginx 504 page.
+    const detail = detailText(error.response?.data?.detail);
+    if (detail) return detail;
+    const status = error.response?.status;
+    if (status !== undefined && status in STATUS_MESSAGES) {
+      return STATUS_MESSAGES[status];
+    }
+    return error.message || 'An error occurred';
   }
   if (error instanceof Error) {
     return error.message;

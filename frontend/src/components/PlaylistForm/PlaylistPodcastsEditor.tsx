@@ -78,10 +78,10 @@ function DragHandle() {
   return (
     <span
       ref={setActivatorNodeRef}
+      // dnd-kit's attributes already make the handle focusable
+      // (tabIndex 0, role="button", aria-roledescription, aria-describedby).
       {...attributes}
       {...listeners}
-      role="button"
-      tabIndex={0}
       aria-label="Drag to reorder"
       style={{ cursor: 'grab', touchAction: 'none', display: 'inline-flex', padding: 4 }}
     >

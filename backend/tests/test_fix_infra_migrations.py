@@ -10,11 +10,13 @@ Covers:
   * 007's downgrade converts a single-element ``categories`` list back to its
     value — the old SQL hit ``INSTR(...) = 0``, so ``SUBSTR(x, 2, -2)`` read
     backwards and corrupted every single-category podcast to ``'['``;
-  * the migrated schema at head matches the models (scripts.check_migration_drift).
+  * the migrated schema at head matches the models (scripts.check_migration_drift);
+  * 020 hashes existing session IDs in place, so signed-in clients stay signed in.
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
 import sqlite3
 import subprocess
@@ -29,10 +31,18 @@ def _run_alembic(db_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 def _run_module(db_path: Path, module: str, *args: str) -> subprocess.CompletedProcess[str]:
+    return _run_python_args(db_path, "-m", module, *args)
+
+
+def _run_python(db_path: Path, code: str) -> subprocess.CompletedProcess[str]:
+    return _run_python_args(db_path, "-c", code)
+
+
+def _run_python_args(db_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["DATABASE_URL"] = f"sqlite+aiosqlite:///{db_path}"
     return subprocess.run(
-        [sys.executable, "-m", module, *args],
+        [sys.executable, *args],
         cwd=BACKEND_DIR,
         env=env,
         capture_output=True,
@@ -115,3 +125,54 @@ def test_016_clears_counts_on_upgrade_and_restores_zero_on_downgrade(tmp_path: P
         nullable = {row[1]: not row[3] for row in conn.execute("PRAGMA table_info(podcasts)")}
     assert rows == {"s1": 0, "s2": 0}
     assert nullable["unplayed_episodes"] is False, "downgrade must restore NOT NULL"
+
+
+_SESSION_LOOKUP = """
+import asyncio
+from app.database import async_session_maker
+from app.services.session import SessionService
+
+async def main():
+    async with async_session_maker() as db:
+        for sid in ("plain-web", "plain-ios"):
+            session = await SessionService().get_session(db, sid)
+            assert session is not None and session.user_id == 1, sid
+        assert await SessionService().get_session(db, "nope") is None
+
+asyncio.run(main())
+"""
+
+
+def test_020_hashes_existing_session_ids_in_place(tmp_path: Path) -> None:
+    """Signed-in clients (web and iOS) must stay signed in across 020: their
+    plaintext cookie has to find the row once it only holds the hash."""
+    db = tmp_path / "sessions.db"
+    _assert_ok(_run_alembic(db, "upgrade", "019_podcast_unplayed_counted_at"))
+
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "INSERT INTO users (id, spotify_id, access_token, refresh_token, token_expires_at) "
+            "VALUES (1, 'me', 'a', 'r', '2099-01-01 00:00:00')"
+        )
+        conn.executemany(
+            "INSERT INTO sessions (session_id, user_id, csrf_token, expires_at) VALUES (?, 1, ?, ?)",
+            [("plain-web", "csrf-web", "2099-01-01 00:00:00"), ("plain-ios", "csrf-ios", "2099-01-01 00:00:00")],
+        )
+        conn.commit()
+
+    _assert_ok(_run_alembic(db, "upgrade", "head"))
+
+    with sqlite3.connect(db) as conn:
+        rows = dict(conn.execute("SELECT csrf_token, session_id FROM sessions"))
+    assert rows == {
+        "csrf-web": hashlib.sha256(b"plain-web").hexdigest(),
+        "csrf-ios": hashlib.sha256(b"plain-ios").hexdigest(),
+    }
+
+    # The app's own lookup finds them by the plaintext cookie value.
+    _assert_ok(_run_python(db, _SESSION_LOOKUP))
+
+    # Hashes can't be reversed, so downgrade signs everyone out.
+    _assert_ok(_run_alembic(db, "downgrade", "019_podcast_unplayed_counted_at"))
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone() == (0,)

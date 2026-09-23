@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.database import Base
 from app.models import Playlist, Session, User
 from app.services.playlist_builder import PlaylistBuilder
-from app.services.session import SessionService
+from app.services.session import SessionService, hash_session_id
 
 
 @pytest_asyncio.fixture
@@ -73,7 +73,7 @@ async def dbs(tmp_path):
 
 async def _add_session(db, last_accessed_at: datetime) -> Session:
     session = Session(
-        session_id="sess-1",
+        session_id_hash=hash_session_id("sess-1"),
         user_id=1,
         csrf_token="csrf-1",
         expires_at=datetime.now(UTC) + timedelta(hours=1),

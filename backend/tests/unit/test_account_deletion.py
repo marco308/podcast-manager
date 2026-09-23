@@ -68,7 +68,7 @@ async def _seed(db) -> tuple[User, Podcast]:
         [
             PlaylistPodcast(playlist_id=playlist.id, podcast_id=podcast.id, position=0),
             Session(
-                session_id="sess-1",
+                session_id_hash="sess-1-hash",
                 user_id=user.id,
                 csrf_token="csrf-1",
                 expires_at=datetime.now(UTC) + timedelta(hours=1),

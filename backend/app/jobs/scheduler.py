@@ -67,8 +67,10 @@ PLAYLIST_UPDATE_TIMES_KEY = "playlist_update_times"
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# Global scheduler instance
-scheduler = AsyncIOScheduler()
+# Global scheduler instance. The run times are wall-clock times in
+# ``settings.TIMEZONE`` — the status endpoint reports the zone so the UIs can
+# label them, rather than presenting them as the viewer's local time.
+scheduler = AsyncIOScheduler(timezone=settings.TIMEZONE)
 
 # Track last run times in-memory for interval jobs
 _last_run_times: dict[str, datetime] = {}
@@ -129,7 +131,7 @@ def _parse_update_times(value: str) -> list[tuple[int, int]]:
 
 def _update_trigger(times: list[tuple[int, int]]) -> CronTrigger | OrTrigger:
     """One cron trigger per run time, combined — still a single job."""
-    triggers = [CronTrigger(hour=hour, minute=minute) for hour, minute in times]
+    triggers = [CronTrigger(hour=hour, minute=minute, timezone=settings.TIMEZONE) for hour, minute in times]
     return triggers[0] if len(triggers) == 1 else OrTrigger(triggers)
 
 
@@ -646,6 +648,8 @@ async def get_job_status() -> list[dict]:
             # only know about one; ``schedule_times`` is the full list.
             info["schedule"] = {"hour": times[0][0], "minute": times[0][1]}
             info["schedule_times"] = [{"hour": hour, "minute": minute} for hour, minute in times]
+            # The zone those hours and minutes are in — not the viewer's.
+            info["schedule_timezone"] = settings.TIMEZONE
             info["is_configurable"] = job.id == "daily_playlist_update"
             if info["is_configurable"]:
                 info["max_schedule_times"] = MAX_PLAYLIST_UPDATE_TIMES

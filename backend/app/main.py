@@ -53,14 +53,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     logger.info("Application shutdown complete")
 
 
+def docs_urls(debug: bool) -> dict[str, str | None]:
+    """The interactive docs and the OpenAPI schema are served only with DEBUG.
+
+    In production they would publish a map of every endpoint and parameter to
+    anyone who can reach the API host; nothing in the repo consumes the schema.
+    """
+    if not debug:
+        return {"docs_url": None, "redoc_url": None, "openapi_url": None}
+    return {"docs_url": "/api/docs", "redoc_url": "/api/redoc", "openapi_url": "/api/openapi.json"}
+
+
 app = FastAPI(
     title=settings.APP_NAME,
     description="Podcast management and playlist automation",
     version=settings.APP_VERSION,
     lifespan=lifespan,
-    docs_url="/api/docs",
-    redoc_url="/api/redoc",
-    openapi_url="/api/openapi.json",
+    **docs_urls(settings.DEBUG),
 )
 
 # Rate-limit setup — the Limiter itself is applied via decorators on the
@@ -94,10 +103,12 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
     # browser hides the 500 behind a CORS/network error (issue #182). Mirror
     # the middleware config: echo the Origin only if it's one we allow, and
     # include credentials since the middleware does.
-    headers = {}
+    # ServerErrorMiddleware sits outside SecurityHeadersMiddleware, so add
+    # the security headers here too.
+    headers = security_headers(request.url.path)
     origin = request.headers.get("origin")
     if origin and origin in cors_origins:
-        headers = {
+        headers |= {
             "Access-Control-Allow-Origin": origin,
             "Access-Control-Allow-Credentials": "true",
             "Vary": "Origin",
@@ -110,6 +121,59 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
         },
         headers=headers,
     )
+
+
+# Sent on every API response. The API host is routed straight to the backend
+# by Traefik in the example stack, so nginx's headers don't cover it. The API
+# only returns JSON and redirects, so the CSP allows nothing at all.
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+}
+_API_CSP = "default-src 'none'; frame-ancestors 'none'"
+# Swagger UI and ReDoc (DEBUG only) load scripts and styles from a CDN.
+_DOCS_PATHS = ("/api/docs", "/api/redoc")
+
+
+def security_headers(path: str) -> dict[str, str]:
+    """A fresh dict of the security headers for a response to ``path``."""
+    if path.startswith(_DOCS_PATHS):
+        return dict(_SECURITY_HEADERS)
+    return {**_SECURITY_HEADERS, "Content-Security-Policy": _API_CSP}
+
+
+class SecurityHeadersMiddleware:
+    """Adds ``security_headers`` to every HTTP response.
+
+    Pure ASGI (it only rewrites the ``http.response.start`` message) for the
+    same reason as ``AccountWriteGateMiddleware``: ``BaseHTTPMiddleware``
+    would end the request before ``get_db``'s after-response commit. A header
+    the endpoint already set is left alone.
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        extra = security_headers(scope["path"])
+
+        async def send_with_headers(message) -> None:
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                present = {name.lower() for name, _ in headers}
+                for name, value in extra.items():
+                    key = name.lower().encode()
+                    if key not in present:
+                        headers.append((key, value.encode()))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
 
 
 _MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
@@ -148,6 +212,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Added last, so outermost: CORS preflights and rejections get the headers too.
+app.add_middleware(SecurityHeadersMiddleware)
 
 # Include routers
 app.include_router(auth_router, prefix="/api")

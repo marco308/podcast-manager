@@ -1,32 +1,24 @@
 import { useState } from 'react';
-import { App, Typography, Button, Space, Alert, Switch } from 'antd';
+import { Typography, Button, Space, Alert, Switch } from 'antd';
 import { SyncOutlined } from '@ant-design/icons';
-import { usePodcasts, useSyncPodcasts } from '../hooks';
+import { usePodcasts, useSyncPodcastsWithFeedback } from '../hooks';
 import { PodcastTable, LoadingSpinner } from '../components';
-import { syncResultSummary } from '../utils/syncSummary';
 
 const { Title, Text } = Typography;
 
 export function Podcasts() {
-  const { message } = App.useApp();
   // Archived podcasts (hidden, still followed on Spotify) only show on request
   const [showArchived, setShowArchived] = useState(false);
-  const { data: podcasts, isLoading, error } = usePodcasts({ includeArchived: showArchived });
-  const syncPodcasts = useSyncPodcasts();
+  const {
+    data: podcasts,
+    isLoading,
+    isPlaceholderData,
+    error,
+  } = usePodcasts({ includeArchived: showArchived });
+  const { sync: handleSync, isPending: syncPending } = useSyncPodcastsWithFeedback();
 
-  const handleSync = async () => {
-    try {
-      const { text, warn } = syncResultSummary(await syncPodcasts.mutateAsync());
-      if (warn) {
-        message.warning(text);
-      } else {
-        message.success(text);
-      }
-    } catch {
-      message.error('Failed to sync podcasts from Spotify');
-    }
-  };
-
+  // Only the first load replaces the page with a spinner; switching "Show
+  // archived" keeps the table mounted with the previous list meanwhile.
   if (isLoading) {
     return <LoadingSpinner tip="Loading podcasts..." />;
   }
@@ -64,14 +56,23 @@ export function Podcasts() {
         </div>
         <Space wrap>
           <Space size={8}>
-            <Switch checked={showArchived} onChange={setShowArchived} size="small" />
-            <Text>Show archived</Text>
+            <Switch
+              id="show-archived"
+              checked={showArchived}
+              onChange={setShowArchived}
+              loading={isPlaceholderData}
+              size="small"
+              aria-labelledby="show-archived-label"
+            />
+            <label htmlFor="show-archived" id="show-archived-label">
+              <Text>Show archived</Text>
+            </label>
           </Space>
           <Button
             type="primary"
-            icon={<SyncOutlined spin={syncPodcasts.isPending} />}
+            icon={<SyncOutlined spin={syncPending} />}
             onClick={handleSync}
-            loading={syncPodcasts.isPending}
+            loading={syncPending}
           >
             Sync from Spotify
           </Button>
@@ -89,9 +90,9 @@ export function Podcasts() {
               </Text>
               <Button
                 type="primary"
-                icon={<SyncOutlined spin={syncPodcasts.isPending} />}
+                icon={<SyncOutlined spin={syncPending} />}
                 onClick={handleSync}
-                loading={syncPodcasts.isPending}
+                loading={syncPending}
               >
                 Sync Now
               </Button>

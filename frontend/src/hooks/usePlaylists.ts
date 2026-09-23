@@ -103,8 +103,10 @@ export function useRunPlaylist() {
   return useMutation({
     mutationFn: (id: number) => playlistsApi.run(id),
     onSuccess: () => {
-      // A run touches last_updated_at (list + detail) and unplayed counts.
+      // A run touches last_updated_at (list + detail) and, when it reads a
+      // show's whole catalogue, the podcast's unplayed count.
       queryClient.invalidateQueries({ queryKey: playlistKeys.all });
+      queryClient.invalidateQueries({ queryKey: podcastKeys.all });
     },
   });
 }
@@ -116,7 +118,10 @@ export function useRunAllPlaylists() {
   return useMutation({
     mutationFn: playlistsApi.runAll,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: playlistKeys.lists() });
+      // Same as a single run, for every playlist: an open detail page needs
+      // its last_updated_at too, not just the list.
+      queryClient.invalidateQueries({ queryKey: playlistKeys.all });
+      queryClient.invalidateQueries({ queryKey: podcastKeys.all });
     },
   });
 }

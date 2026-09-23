@@ -30,8 +30,27 @@ function computeIsDarkMode(preference: ThemePreference): boolean {
   }
 }
 
+// localStorage throws (rather than returning null) when storage is blocked,
+// e.g. Safari with cookies disabled or some private modes. The preference is
+// a convenience, so fall back to the default instead of failing to render.
+function readStoredPreference(): string | null {
+  try {
+    return localStorage.getItem(STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredPreference(preference: ThemePreference): void {
+  try {
+    writeStoredPreference(preference);
+  } catch {
+    // Not persisted; the choice still applies for this page load.
+  }
+}
+
 function getStoredPreference(): ThemePreference {
-  const stored = localStorage.getItem(STORAGE_KEY);
+  const stored = readStoredPreference();
   if (stored === 'light' || stored === 'dark' || stored === 'system') {
     return stored;
   }
@@ -71,7 +90,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
   const setThemePreference = useCallback((preference: ThemePreference) => {
     setThemePreferenceState(preference);
     setIsDarkMode(computeIsDarkMode(preference));
-    localStorage.setItem(STORAGE_KEY, preference);
+    writeStoredPreference(preference);
   }, []);
 
   const toggleTheme = useCallback(() => {

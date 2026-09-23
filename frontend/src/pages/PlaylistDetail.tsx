@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import {
   Alert,
-  App,
   Avatar,
   Button,
   Card,
@@ -22,7 +21,7 @@ import {
 } from '@ant-design/icons';
 import { Link, useParams } from 'react-router';
 import dayjs from 'dayjs';
-import { usePlaylist, usePlaylistPodcasts, useRunPlaylist } from '../hooks';
+import { usePlaylist, usePlaylistPodcasts, useRunPlaylistWithFeedback } from '../hooks';
 import { LoadingSpinner, PlaylistFormModal } from '../components';
 import { getErrorMessage } from '../api';
 import {
@@ -32,6 +31,7 @@ import {
   pickFromLabel,
   ruleSourceLabel,
   ruleSummary,
+  spotifyPlaylistUrl,
 } from '../utils/playlistLabels';
 import type { Playlist, PlaylistPodcast } from '../types';
 
@@ -169,30 +169,17 @@ function PodcastsSection({ playlist, onEdit }: { playlist: Playlist; onEdit: () 
 }
 
 export function PlaylistDetail() {
-  const { message } = App.useApp();
   const { id } = useParams();
   const playlistId = Number(id);
   const validId = Number.isInteger(playlistId) && playlistId > 0;
   const { data: playlist, isLoading, error } = usePlaylist(validId ? playlistId : 0);
-  const runPlaylist = useRunPlaylist();
   const screens = useBreakpoint();
   const isMobile = !screens.md;
   const [isEditOpen, setIsEditOpen] = useState(false);
 
-  const handleRun = async () => {
-    if (!playlist) return;
-    try {
-      const result = await runPlaylist.mutateAsync(playlist.id);
-      // A skipped (disabled) playlist and a partial rebuild both come back
-      // 200, but neither is a clean success — don't report them as one.
-      if (result.skipped || result.partial) {
-        message.warning(result.message);
-      } else {
-        message.success(result.message);
-      }
-    } catch (err: unknown) {
-      message.error(getErrorMessage(err));
-    }
+  const { run, isRunning } = useRunPlaylistWithFeedback();
+  const handleRun = () => {
+    if (playlist) void run(playlist.id);
   };
 
   const backLink = (
@@ -251,11 +238,7 @@ export function PlaylistDetail() {
           </Title>
           <Text type="secondary">
             {playlist.podcast_count} podcast{playlist.podcast_count !== 1 ? 's' : ''} ·{' '}
-            {playlist.arrangement === 'by_position'
-              ? 'In podcast order'
-              : playlist.arrangement === 'shuffle'
-                ? 'Shuffled'
-                : 'By release date'}
+            {arrangementLabel(playlist)}
           </Text>
         </div>
         <Space wrap>
@@ -285,7 +268,7 @@ export function PlaylistDetail() {
               <Button
                 icon={<PlayCircleOutlined />}
                 onClick={handleRun}
-                loading={runPlaylist.isPending}
+                loading={isRunning(playlist.id)}
                 disabled={!playlist.is_enabled}
                 style={playlist.is_enabled ? undefined : { pointerEvents: 'none' }}
                 aria-hidden={playlist.is_enabled ? undefined : true}
@@ -300,7 +283,7 @@ export function PlaylistDetail() {
           {playlist.spotify_playlist_id && (
             <Button
               icon={<ExportOutlined />}
-              href={`https://open.spotify.com/playlist/${playlist.spotify_playlist_id}`}
+              href={spotifyPlaylistUrl(playlist.spotify_playlist_id) ?? undefined}
               target="_blank"
               rel="noopener noreferrer"
             >
