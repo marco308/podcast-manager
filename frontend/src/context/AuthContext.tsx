@@ -12,6 +12,7 @@ interface AuthContextType {
   isError: boolean;
   login: () => void;
   logout: () => Promise<void>;
+  deleteAccount: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -73,6 +74,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.location.href = '/login';
   }, [queryClient]);
 
+  // Unlike logout, errors propagate: a failed delete must not look like one
+  // that worked. The server clears the cookies on success.
+  const deleteAccount = useCallback(async () => {
+    await authApi.deleteAccount();
+    clearCsrfToken();
+    queryClient.clear();
+    window.location.href = '/login';
+  }, [queryClient]);
+
   const value: AuthContextType = {
     user: user ?? null,
     isLoading: !isInitialized || (isAuthenticated === true && isUserLoading),
@@ -84,6 +94,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isError: isStatusError,
     login,
     logout,
+    deleteAccount,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

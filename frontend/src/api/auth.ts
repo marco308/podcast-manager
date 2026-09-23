@@ -30,6 +30,11 @@ export const authApi = {
     }
   },
 
+  // Delete the account and everything the server stores for it (issue #266)
+  async deleteAccount(): Promise<void> {
+    await apiClient.delete('/auth/me');
+  },
+
   // Logout current user
   async logout(): Promise<void> {
     await apiClient.post('/auth/logout');

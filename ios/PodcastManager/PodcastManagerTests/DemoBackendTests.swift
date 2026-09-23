@@ -42,6 +42,13 @@ struct DemoBackendTests {
         #expect(all.message == "Updated 2 playlists, 0 failed")
     }
 
+    @Test func demoAccountDeletionSucceedsWithoutAServer() async throws {
+        // Reviewers go through the delete flow in the demo (issue #266).
+        let client = APIClient()
+        await client.setDemo(DemoBackend())
+        try await client.deleteAccount()
+    }
+
     @Test func apiClientRoutesToTheDemo() async throws {
         let client = APIClient()
         await client.setDemo(DemoBackend())

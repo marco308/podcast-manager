@@ -15,10 +15,11 @@ import {
   Tooltip,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { LogoutOutlined, ClockCircleOutlined } from '@ant-design/icons';
+import { LogoutOutlined, ClockCircleOutlined, DeleteOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { useAuth, useTheme, useJobs, useUpdateJobSchedule, useHealth } from '../hooks';
+import { getErrorMessage } from '../api';
 import type { ThemePreference } from '../context';
 import type { Job } from '../types';
 
@@ -51,8 +52,8 @@ const THEME_OPTIONS: { value: ThemePreference; label: string; hint: string }[] =
 ];
 
 export function Settings() {
-  const { message } = App.useApp();
-  const { user, logout } = useAuth();
+  const { message, modal } = App.useApp();
+  const { user, logout, deleteAccount } = useAuth();
   const { themePreference, setThemePreference } = useTheme();
   const { data: jobsData, isLoading: jobsLoading } = useJobs();
   const { data: health } = useHealth();
@@ -62,6 +63,33 @@ export function Settings() {
   const handleLogout = () => {
     // logout() swallows its own errors and always redirects to /login
     void logout();
+  };
+
+  const handleDeleteAccount = () => {
+    modal.confirm({
+      title: 'Delete your account?',
+      content: (
+        <>
+          <Paragraph>
+            This deletes your account and playlists from this server and signs you out. Your podcast
+            library is deleted too, unless another account on this server still uses it. It
+            can&apos;t be undone.
+          </Paragraph>
+          <Paragraph style={{ marginBottom: 0 }}>
+            Playlists already on Spotify stay there. To remove this app&apos;s access to Spotify, go
+            to your Spotify account&apos;s Apps page.
+          </Paragraph>
+        </>
+      ),
+      okText: 'Delete account',
+      okButtonProps: { danger: true },
+      // Returning the promise keeps the dialog open with a spinner until the
+      // delete finishes; on failure it closes and the error is shown.
+      onOk: () =>
+        deleteAccount().catch((error: unknown) => {
+          message.error(getErrorMessage(error));
+        }),
+    });
   };
 
   const handleScheduleSave = () => {
@@ -196,9 +224,14 @@ export function Settings() {
           </Descriptions.Item>
         </Descriptions>
         <Divider />
-        <Button icon={<LogoutOutlined />} danger onClick={handleLogout}>
-          Logout
-        </Button>
+        <Space wrap>
+          <Button icon={<LogoutOutlined />} danger onClick={handleLogout}>
+            Logout
+          </Button>
+          <Button icon={<DeleteOutlined />} danger type="text" onClick={handleDeleteAccount}>
+            Delete account
+          </Button>
+        </Space>
       </Card>
 
       <Card title="Appearance" style={{ marginBottom: 24 }}>

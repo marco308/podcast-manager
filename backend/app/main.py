@@ -12,6 +12,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from app.config import get_settings
+from app.jobs import locks
 from app.jobs.scheduler import init_scheduler, shutdown_scheduler
 from app.rate_limit import limiter
 from app.routers import auth_router, jobs_router, playlists_router, podcasts_router
@@ -107,6 +108,35 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
         headers=headers,
     )
 
+
+_MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+class AccountWriteGateMiddleware:
+    """Holds ``locks.account_write_gate`` shared for every mutating request.
+
+    Pure ASGI rather than ``@app.middleware``: ``BaseHTTPMiddleware`` returns
+    once the response starts, but ``get_db``'s backstop commit runs after the
+    response is sent, and that write must stay inside the gate too. The
+    account delete itself is exempt; it takes the gate exclusively.
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if (
+            scope["type"] != "http"
+            or scope["method"] not in _MUTATING_METHODS
+            or (scope["method"] == "DELETE" and scope["path"] == "/api/auth/me")
+        ):
+            await self.app(scope, receive, send)
+            return
+        async with locks.account_write_gate.shared():
+            await self.app(scope, receive, send)
+
+
+app.add_middleware(AccountWriteGateMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

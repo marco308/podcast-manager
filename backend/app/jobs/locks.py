@@ -19,6 +19,8 @@ serialises against scheduled work too (issue #89, AC #3).
 """
 
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 playlist_write_lock = asyncio.Lock()
 
@@ -32,3 +34,66 @@ playlist_write_lock = asyncio.Lock()
 #
 # Same single-replica assumption as ``playlist_write_lock`` above.
 library_sync_lock = asyncio.Lock()
+
+
+class AccountWriteGate:
+    """Lets state-changing requests run concurrently until an account delete.
+
+    Account deletion (issue #266) must not interleave with a request that has
+    already validated its session: a ``POST /api/playlists`` in flight would
+    insert its row after the user is gone. With SQLite's foreign keys off,
+    that row would be orphaned, and since SQLite reuses the freed user id,
+    the next account to register would inherit it. The job locks above
+    don't help, because ordinary API writes never take them.
+
+    Every mutating request holds the gate shared for its whole run
+    (``AccountWriteGateMiddleware`` in ``main.py``). The delete closes it,
+    which holds back new writes, and waits for in-flight ones to drain. The
+    held-back requests then validate against a deleted session and get 401.
+
+    Same single-replica assumption as the locks above.
+    """
+
+    def __init__(self) -> None:
+        self._cond = asyncio.Condition()
+        self._active = 0
+        self._closed = False
+
+    @asynccontextmanager
+    async def shared(self) -> AsyncIterator[None]:
+        async with self._cond:
+            await self._cond.wait_for(lambda: not self._closed)
+            self._active += 1
+        try:
+            yield
+        finally:
+            async with self._cond:
+                self._active -= 1
+                self._cond.notify_all()
+
+    @asynccontextmanager
+    async def exclusive(self, timeout: float) -> AsyncIterator[None]:
+        """Close the gate and wait for in-flight writes to finish.
+
+        Raises ``TimeoutError`` if they don't within ``timeout`` seconds, or
+        if another delete already holds the gate; the gate is then reopened.
+        """
+        async with self._cond:
+            if self._closed:
+                raise TimeoutError("account write gate already closed")
+            self._closed = True
+            try:
+                await asyncio.wait_for(self._cond.wait_for(lambda: self._active == 0), timeout)
+            except TimeoutError:
+                self._closed = False
+                self._cond.notify_all()
+                raise
+        try:
+            yield
+        finally:
+            async with self._cond:
+                self._closed = False
+                self._cond.notify_all()
+
+
+account_write_gate = AccountWriteGate()

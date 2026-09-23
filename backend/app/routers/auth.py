@@ -1,5 +1,6 @@
 """Authentication router for Spotify OAuth2 flow with secure cookie-based sessions."""
 
+import asyncio
 import base64
 import hashlib
 import logging
@@ -15,10 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import get_db
+from app.jobs import locks
 from app.models.session import Session
 from app.models.user import User
 from app.rate_limit import limiter
 from app.schemas.user import UserResponse
+from app.services.account import AccountDeletionResult, delete_account
 from app.services.encryption import get_encryption_service
 from app.services.mobile_auth import issue_exchange_code, redeem_exchange_code
 from app.services.session import SessionService, get_session_service
@@ -37,6 +40,10 @@ OAUTH_STATE_COOKIE_NAME = "oauth_state"
 OAUTH_VERIFIER_COOKIE_NAME = "oauth_verifier"
 COOKIE_MAX_AGE = 24 * 60 * 60  # 24 hours in seconds
 OAUTH_STATE_MAX_AGE = 600  # 10 minutes for OAuth flow
+
+# How long account deletion waits for a running sync or rebuild to finish
+# before giving up with a 409.
+ACCOUNT_DELETE_LOCK_WAIT_SECONDS = 10
 
 
 def _pkce_pair() -> tuple[str, str]:
@@ -404,6 +411,57 @@ async def get_me(
         raise HTTPException(status_code=404, detail="User not found")
 
     return user
+
+
+@router.delete("/me")
+async def delete_me(
+    response: Response,
+    session: Session = Depends(validate_csrf_token),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    """Delete the signed-in user's account and data (issue #266).
+
+    First closes ``account_write_gate`` and lets in-flight API writes drain,
+    so none can insert a row for the user after it's gone. Then waits for any
+    library sync or playlist write job, for the same reason. The gate comes
+    first: a manual run holds the gate while it waits for the playlist lock,
+    so taking the job locks first could leave both sides waiting. Spotify
+    playlists are left in place; see ``services/account.py``.
+    """
+    busy = HTTPException(
+        status_code=409,
+        detail="A sync or playlist update is running. Try again in a minute.",
+    )
+    try:
+        async with locks.account_write_gate.exclusive(ACCOUNT_DELETE_LOCK_WAIT_SECONDS):
+            result = await _delete_holding_job_locks(db, session.user_id, busy)
+    except TimeoutError:
+        raise busy from None
+
+    logger.info(
+        f"Deleted account {session.user_id}: {result.playlists} playlists, "
+        f"{result.podcasts} podcasts, {result.sessions} sessions"
+    )
+    clear_session_cookies(response)
+    return {"message": "Your account and data have been deleted"}
+
+
+async def _delete_holding_job_locks(db: AsyncSession, user_id: int, busy: HTTPException) -> AccountDeletionResult:
+    acquired: list[asyncio.Lock] = []
+    try:
+        for lock in (locks.library_sync_lock, locks.playlist_write_lock):
+            try:
+                await asyncio.wait_for(lock.acquire(), timeout=ACCOUNT_DELETE_LOCK_WAIT_SECONDS)
+            except TimeoutError:
+                raise busy from None
+            acquired.append(lock)
+
+        result = await delete_account(db, user_id)
+        await db.commit()
+        return result
+    finally:
+        for lock in reversed(acquired):
+            lock.release()
 
 
 @router.get("/csrf-token")
