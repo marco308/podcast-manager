@@ -1,0 +1,159 @@
+name: Release
+
+# Releases are cut by pushing a version tag (`git tag -a v1.2.0 -m ... && git
+# push origin v1.2.0`); everything after that happens here:
+#
+#   1. The tagged commit's :<sha> images, already built and published by CI
+#      when it merged to main, get version tags (:1.2.0, and :1.2 / :1 while
+#      it is the newest release in that line). They are retagged rather than
+#      rebuilt, so a release image is bit-for-bit what `deploy.sh` ships.
+#   2. The GitHub Release is created: docs/releases/<tag>.md (highlights and
+#      upgrade notes, written by hand) followed by the generated PR list.
+#
+# Between releases, a draft release named "Unreleased" tracks what has merged
+# to main since the last tag, with a suggestion for when to cut the next one
+# (.github/scripts/unreleased-draft.sh). It is refreshed after every
+# successful CI run on main, and emptied by each release.
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+  # After CI on main rather than on push, so merges made with GITHUB_TOKEN
+  # (Dependabot, which dispatches CI instead of firing a push) count too.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check the tag
+        id: tag
+        run: |
+          TAG="$GITHUB_REF_NAME"
+          VERSION="${TAG#v}"
+          if [[ ! "$VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-.+)?$ ]]; then
+            echo "::error::$TAG is not a vMAJOR.MINOR.PATCH[-pre] tag."
+            exit 1
+          fi
+          MAJOR="${BASH_REMATCH[1]}" MINOR="${BASH_REMATCH[2]}" PRE="${BASH_REMATCH[4]}"
+
+          # Only main's commits have published images to promote.
+          SHA=$(git rev-parse "${TAG}^{commit}")
+          if ! git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "::error::$TAG points at $SHA, which is not on main."
+            exit 1
+          fi
+
+          # Floating tags follow the newest release in their line, so tagging
+          # a 1.0.1 hotfix after 1.1.0 doesn't drag :1 backwards.
+          newest() { git tag -l "$1" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1; }
+          TAGS="$VERSION"
+          LATEST=false
+          if [[ -z "$PRE" ]]; then
+            [[ "$(newest "v${MAJOR}.${MINOR}.*")" == "$TAG" ]] && TAGS="$TAGS ${MAJOR}.${MINOR}"
+            [[ "$(newest "v${MAJOR}.*")" == "$TAG" ]] && TAGS="$TAGS ${MAJOR}"
+            [[ "$(newest "v*")" == "$TAG" ]] && LATEST=true
+          fi
+          {
+            echo "tag=$TAG"
+            echo "version=$VERSION"
+            echo "sha=$SHA"
+            echo "image-tags=$TAGS"
+            echo "prerelease=$([[ -n "$PRE" ]] && echo true || echo false)"
+            echo "latest=$LATEST"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag the images
+        env:
+          REPO: ghcr.io/${{ github.repository_owner }}
+          SHA: ${{ steps.tag.outputs.sha }}
+          IMAGE_TAGS: ${{ steps.tag.outputs.image-tags }}
+        run: |
+          for component in backend frontend; do
+            src="$REPO/podcast-manager-$component:$SHA"
+            # A tag pushed straight after a merge can beat CI's publish.
+            for _ in $(seq 60); do
+              docker buildx imagetools inspect "$src" >/dev/null 2>&1 && break
+              echo "Waiting for $src..."
+              sleep 30
+            done
+            docker buildx imagetools inspect "$src" >/dev/null || {
+              echo "::error::$src was never published. Did CI pass on main for this commit?"
+              exit 1
+            }
+            args=()
+            for t in $IMAGE_TAGS; do args+=(-t "$REPO/podcast-manager-$component:$t"); done
+            docker buildx imagetools create "${args[@]}" "$src"
+          done
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION: ${{ steps.tag.outputs.version }}
+          PRERELEASE: ${{ steps.tag.outputs.prerelease }}
+          LATEST: ${{ steps.tag.outputs.latest }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; leaving it as it is."
+            exit 0
+          fi
+          args=(--verify-tag --title "Podcast Manager $VERSION" --generate-notes "--latest=$LATEST")
+          [[ "$PRERELEASE" == true ]] && args+=(--prerelease)
+          # Hand-written notes go first; --generate-notes appends the PR list.
+          notes="docs/releases/$TAG.md"
+          if [[ -f "$notes" ]]; then
+            args+=(--notes-file "$notes")
+          else
+            echo "::warning::No $notes at $TAG; the release has only the generated PR list."
+          fi
+          gh release create "$TAG" "${args[@]}"
+
+      - name: Reset the Unreleased draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: .github/scripts/unreleased-draft.sh
+
+  unreleased:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event != 'pull_request')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # One writer at a time, so two quick merges can't both create a draft.
+    concurrency: unreleased-draft
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: .github/scripts/unreleased-draft.sh

@@ -48,6 +48,7 @@ Use `127.0.0.1` (not `localhost`) in `SPOTIFY_REDIRECT_URI`.
 Log in through the browser once against the local server. After that, `python -m scripts.dev_session` (from `backend/`) creates a 30-day session for the single local user and writes a curl cookie jar to `data/dev-session/cookies.txt` (gitignored), so you can run `curl -k -b data/dev-session/cookies.txt https://127.0.0.1:8000/api/...`. Mutating requests also need `X-CSRF-Token` from `data/dev-session/session.json`. The Spotify access token renews itself from the stored refresh token. Don't copy the production user row across: PKCE refresh tokens rotate, so production and local would keep invalidating each other.
 
 - Deployment (`./deploy.sh`, Swarm, migrations, production hosts): see the `deploy` skill.
+- Releases (`vX.Y.Z` tags → versioned images and a GitHub Release, the "Unreleased" draft that tracks what hasn't been released, and when to cut one): see the `release` skill. After merging a PR or deploying, check whether a release is due and say so.
 
 ## Architecture
 
