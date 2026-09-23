@@ -5,7 +5,7 @@ struct SettingsScreen: View {
     @State private var jobs: [Job] = []
     @State private var jobsLoading = false
     @State private var jobsError: String?
-    @State private var scheduleDate = Calendar.current.date(from: DateComponents(hour: 4, minute: 0))!
+    @State private var scheduleDates = [Calendar.current.date(from: DateComponents(hour: 4, minute: 0))!]
     @State private var isSavingSchedule = false
     @State private var showScheduleSaved = false
     @State private var scheduleError: String?
@@ -116,13 +116,40 @@ struct SettingsScreen: View {
 
                                 if job.isConfigurable {
                                     Divider()
+                                    ForEach(scheduleDates.indices, id: \.self) { index in
+                                        HStack {
+                                            DatePicker(
+                                                "Update time",
+                                                selection: $scheduleDates[index],
+                                                displayedComponents: .hourAndMinute
+                                            )
+                                            .labelsHidden()
+
+                                            if scheduleDates.count > 1 {
+                                                Button {
+                                                    scheduleDates.remove(at: index)
+                                                } label: {
+                                                    Image(systemName: "minus.circle.fill")
+                                                        .foregroundStyle(.red)
+                                                }
+                                                .buttonStyle(.borderless)
+                                                .accessibilityLabel("Remove this run time")
+                                            }
+                                        }
+                                    }
                                     HStack {
-                                        DatePicker(
-                                            "Update time",
-                                            selection: $scheduleDate,
-                                            displayedComponents: .hourAndMinute
-                                        )
-                                        .labelsHidden()
+                                        if scheduleDates.count < (job.maxScheduleTimes ?? 1) {
+                                            Button {
+                                                // Eight hours after the last run: a sensible
+                                                // spread for up to three a day.
+                                                let last = scheduleDates.last ?? Date()
+                                                scheduleDates.append(last.addingTimeInterval(8 * 3600))
+                                            } label: {
+                                                Label("Add time", systemImage: "plus.circle")
+                                                    .font(.caption)
+                                            }
+                                            .buttonStyle(.borderless)
+                                        }
 
                                         Spacer()
 
@@ -268,9 +295,11 @@ struct SettingsScreen: View {
             jobs = response.jobs
             jobsError = nil
             // Set initial schedule from configurable job
-            if let configurable = response.jobs.first(where: { $0.isConfigurable }),
-               let schedule = configurable.schedule {
-                scheduleDate = Calendar.current.date(from: DateComponents(hour: schedule.hour, minute: schedule.minute)) ?? scheduleDate
+            if let configurable = response.jobs.first(where: { $0.isConfigurable }) {
+                let dates = configurable.runTimes.compactMap {
+                    Calendar.current.date(from: DateComponents(hour: $0.hour, minute: $0.minute))
+                }
+                if !dates.isEmpty { scheduleDates = dates }
             }
         } catch {
             jobsError = "Couldn't load jobs: \(error.localizedDescription)"
@@ -278,15 +307,19 @@ struct SettingsScreen: View {
     }
 
     private func saveSchedule() async {
-        let components = Calendar.current.dateComponents([.hour, .minute], from: scheduleDate)
-        guard let hour = components.hour, let minute = components.minute else { return }
+        let times = scheduleDates.compactMap { date -> JobSchedule? in
+            let components = Calendar.current.dateComponents([.hour, .minute], from: date)
+            guard let hour = components.hour, let minute = components.minute else { return nil }
+            return JobSchedule(hour: hour, minute: minute)
+        }
+        guard !times.isEmpty else { return }
 
         isSavingSchedule = true
         defer { isSavingSchedule = false }
         scheduleError = nil
 
         do {
-            _ = try await APIClient.shared.updateJobSchedule(hour: hour, minute: minute)
+            _ = try await APIClient.shared.updateJobSchedule(times: times)
             showScheduleSaved = true
             await loadJobs()
             try? await Task.sleep(for: .seconds(2))

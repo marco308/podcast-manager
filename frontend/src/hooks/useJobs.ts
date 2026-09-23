@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { jobsApi } from '../api';
+import type { JobSchedule } from '../types';
 
 export const jobKeys = {
   all: ['jobs'] as const,
@@ -18,8 +19,7 @@ export function useUpdateJobSchedule() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ hour, minute }: { hour: number; minute: number }) =>
-      jobsApi.updateSchedule(hour, minute),
+    mutationFn: (times: JobSchedule[]) => jobsApi.updateSchedule(times),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: jobKeys.status() });
     },

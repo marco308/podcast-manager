@@ -5,6 +5,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.combining import OrTrigger
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select
@@ -49,6 +50,16 @@ TOKEN_REFRESH_INTERVAL_MINUTES = 45
 TOKEN_REFRESH_MARGIN_MINUTES = 5
 TOKEN_REFRESH_THRESHOLD_SECONDS = (TOKEN_REFRESH_INTERVAL_MINUTES + TOKEN_REFRESH_MARGIN_MINUTES) * 60
 
+# The library sync + rebuild can run up to this many times a day. Each run is
+# a full /me/shows walk plus a rebuild of every enabled playlist, so the cap
+# keeps the Spotify API budget bounded; one run a day remains the default.
+MAX_PLAYLIST_UPDATE_TIMES = 3
+
+# AppSetting key holding the run times as "HH:MM,HH:MM". The older
+# ``playlist_update_hour`` / ``playlist_update_minute`` keys are still written
+# with the first time, so a downgrade keeps a sensible schedule.
+PLAYLIST_UPDATE_TIMES_KEY = "playlist_update_times"
+
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
@@ -88,6 +99,76 @@ async def _upsert_app_setting(db, key: str, value: str) -> None:
         setting.value = value
     else:
         db.add(AppSetting(key=key, value=value))
+
+
+def normalise_update_times(times: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Sort and de-duplicate run times; reject an empty or oversized list."""
+    unique = sorted(set(times))
+    if not 1 <= len(unique) <= MAX_PLAYLIST_UPDATE_TIMES:
+        raise ValueError(f"Expected 1 to {MAX_PLAYLIST_UPDATE_TIMES} distinct run times, got {len(unique)}")
+    return unique
+
+
+def _format_update_times(times: list[tuple[int, int]]) -> str:
+    return ",".join(f"{hour:02d}:{minute:02d}" for hour, minute in times)
+
+
+def _parse_update_times(value: str) -> list[tuple[int, int]]:
+    times = []
+    for part in value.split(","):
+        hour, minute = (int(x) for x in part.strip().split(":"))
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError(f"Run time out of range: {part!r}")
+        times.append((hour, minute))
+    return normalise_update_times(times)
+
+
+def _update_trigger(times: list[tuple[int, int]]) -> CronTrigger | OrTrigger:
+    """One cron trigger per run time, combined — still a single job."""
+    triggers = [CronTrigger(hour=hour, minute=minute) for hour, minute in times]
+    return triggers[0] if len(triggers) == 1 else OrTrigger(triggers)
+
+
+def _trigger_times(trigger) -> list[tuple[int, int]]:
+    """Read the run times back off a live trigger, in time order."""
+    crons = trigger.triggers if isinstance(trigger, OrTrigger) else [trigger]
+    times = []
+    for cron in crons:
+        if not isinstance(cron, CronTrigger):
+            continue
+        hour = settings.PLAYLIST_UPDATE_HOUR
+        minute = settings.PLAYLIST_UPDATE_MINUTE
+        for field in cron.fields:
+            if field.name == "hour":
+                with contextlib.suppress(ValueError, TypeError):
+                    hour = int(str(field))
+            elif field.name == "minute":
+                with contextlib.suppress(ValueError, TypeError):
+                    minute = int(str(field))
+        times.append((hour, minute))
+    return sorted(times)
+
+
+async def _load_update_times() -> list[tuple[int, int]]:
+    """The persisted run times, falling back to the legacy single-time keys."""
+    times = [(settings.PLAYLIST_UPDATE_HOUR, settings.PLAYLIST_UPDATE_MINUTE)]
+    try:
+        async with async_session_maker() as db:
+            result = await db.execute(select(AppSetting).where(AppSetting.key == PLAYLIST_UPDATE_TIMES_KEY))
+            times_setting = result.scalar_one_or_none()
+            if times_setting:
+                return _parse_update_times(times_setting.value)
+
+            result = await db.execute(select(AppSetting).where(AppSetting.key == "playlist_update_hour"))
+            hour_setting = result.scalar_one_or_none()
+            result = await db.execute(select(AppSetting).where(AppSetting.key == "playlist_update_minute"))
+            minute_setting = result.scalar_one_or_none()
+            hour = int(hour_setting.value) if hour_setting else times[0][0]
+            minute = int(minute_setting.value) if minute_setting else times[0][1]
+            times = [(hour, minute)]
+    except Exception as e:
+        logger.warning(f"Failed to read persisted schedule, using defaults: {e}")
+    return times
 
 
 async def cleanup_expired_sessions() -> None:
@@ -442,30 +523,18 @@ async def init_scheduler() -> None:
     except Exception as e:
         logger.error(f"Failed to sweep orphaned SyncLog rows at startup: {e}")
 
-    # Read persisted schedule from DB
-    update_hour = settings.PLAYLIST_UPDATE_HOUR
-    update_minute = settings.PLAYLIST_UPDATE_MINUTE
-    try:
-        async with async_session_maker() as db:
-            result = await db.execute(select(AppSetting).where(AppSetting.key == "playlist_update_hour"))
-            hour_setting = result.scalar_one_or_none()
-            if hour_setting:
-                update_hour = int(hour_setting.value)
+    update_times = await _load_update_times()
 
-            result = await db.execute(select(AppSetting).where(AppSetting.key == "playlist_update_minute"))
-            minute_setting = result.scalar_one_or_none()
-            if minute_setting:
-                update_minute = int(minute_setting.value)
-    except Exception as e:
-        logger.warning(f"Failed to read persisted schedule, using defaults: {e}")
-
-    # Daily library sync + playlist rebuild. The id stays
+    # Library sync + playlist rebuild, at each of the configured times (one by
+    # default, up to MAX_PLAYLIST_UPDATE_TIMES). The id stays
     # ``daily_playlist_update`` — it is what the persisted schedule, the
     # reschedule endpoint and the UI's "configurable" flag key off — but the
-    # name says what the run actually does now (issue #240).
+    # name says what the run actually does now (issue #240). max_instances=1
+    # (the default) means a run still going when the next time comes round is
+    # skipped rather than doubled up.
     scheduler.add_job(
         update_all_playlists,
-        CronTrigger(hour=update_hour, minute=update_minute),
+        _update_trigger(update_times),
         id="daily_playlist_update",
         name="Daily Library Sync & Playlist Update",
         replace_existing=True,
@@ -508,7 +577,7 @@ async def init_scheduler() -> None:
     )
 
     scheduler.start()
-    logger.info(f"Scheduler started with daily update at {update_hour:02d}:{update_minute:02d}")
+    logger.info(f"Scheduler started with daily update at {_format_update_times(update_times)}")
 
 
 def shutdown_scheduler() -> None:
@@ -553,21 +622,16 @@ async def get_job_status() -> list[dict]:
         }
 
         # Determine job type and add specific fields
-        if isinstance(job.trigger, CronTrigger):
+        if isinstance(job.trigger, CronTrigger | OrTrigger):
             info["type"] = "cron"
-            # Extract hour/minute from cron trigger fields
-            hour = settings.PLAYLIST_UPDATE_HOUR
-            minute = settings.PLAYLIST_UPDATE_MINUTE
-            # Try to get from the actual trigger
-            for field in job.trigger.fields:
-                if field.name == "hour":
-                    with contextlib.suppress(ValueError, TypeError):
-                        hour = int(str(field))
-                elif field.name == "minute":
-                    with contextlib.suppress(ValueError, TypeError):
-                        minute = int(str(field))
-            info["schedule"] = {"hour": hour, "minute": minute}
+            times = _trigger_times(job.trigger) or [(settings.PLAYLIST_UPDATE_HOUR, settings.PLAYLIST_UPDATE_MINUTE)]
+            # ``schedule`` is the first time, kept for installed iOS builds that
+            # only know about one; ``schedule_times`` is the full list.
+            info["schedule"] = {"hour": times[0][0], "minute": times[0][1]}
+            info["schedule_times"] = [{"hour": hour, "minute": minute} for hour, minute in times]
             info["is_configurable"] = job.id == "daily_playlist_update"
+            if info["is_configurable"]:
+                info["max_schedule_times"] = MAX_PLAYLIST_UPDATE_TIMES
         elif isinstance(job.trigger, IntervalTrigger):
             info["type"] = "interval"
             # Get interval in minutes
@@ -605,8 +669,12 @@ async def get_job_status() -> list[dict]:
     return result
 
 
-async def reschedule_playlist_update(hour: int, minute: int) -> str | None:
-    """Reschedule the daily playlist update and persist the new time.
+async def reschedule_playlist_update(times: list[tuple[int, int]]) -> str | None:
+    """Reschedule the library sync + playlist update and persist the new times.
+
+    Args:
+        times: 1 to ``MAX_PLAYLIST_UPDATE_TIMES`` ``(hour, minute)`` pairs.
+            Duplicates are dropped and the list is sorted.
 
     Returns:
         The next run time as an ISO string, or None if the job has no next
@@ -614,27 +682,30 @@ async def reschedule_playlist_update(hour: int, minute: int) -> str | None:
         the exception carries the reason and is already logged (issue #159).
 
     Raises:
+        ValueError: the list is empty or too long.
         Exception: propagated from APScheduler or the settings write.
     """
+    times = normalise_update_times(times)
     try:
         # Persist first, reschedule after: applying the trigger before the
         # write meant a failed write left the live schedule diverging from
         # the persisted one until the next restart (issue #182).
         async with async_session_maker() as db:
-            for key, value in [("playlist_update_hour", str(hour)), ("playlist_update_minute", str(minute))]:
+            for key, value in [
+                (PLAYLIST_UPDATE_TIMES_KEY, _format_update_times(times)),
+                ("playlist_update_hour", str(times[0][0])),
+                ("playlist_update_minute", str(times[0][1])),
+            ]:
                 await _upsert_app_setting(db, key, value)
             await db.commit()
 
-        scheduler.reschedule_job(
-            "daily_playlist_update",
-            trigger=CronTrigger(hour=hour, minute=minute),
-        )
+        scheduler.reschedule_job("daily_playlist_update", trigger=_update_trigger(times))
 
         # Get updated next run time
         job = scheduler.get_job("daily_playlist_update")
         next_run = job.next_run_time.isoformat() if job and job.next_run_time else None
 
-        logger.info(f"Rescheduled daily playlist update to {hour:02d}:{minute:02d}, next run: {next_run}")
+        logger.info(f"Rescheduled daily playlist update to {_format_update_times(times)}, next run: {next_run}")
         return next_run
     except Exception as e:
         logger.error(f"Failed to reschedule daily playlist update: {e}")
