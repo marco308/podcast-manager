@@ -195,7 +195,7 @@ The app is served on port 8080, and nginx in the frontend container proxies `/ap
 ./deploy.sh [backend|frontend|all]
 ```
 
-rolls out new images and updates the Swarm services. Set `REGISTRY=ghcr.io/<owner>` to deploy the images CI publishes to GHCR, tagged with the checked-out commit; without it, the script builds locally.
+rolls out new images and updates the Swarm services. Set `REGISTRY=ghcr.io/<owner>` to deploy the images CI publishes to GHCR, tagged with the checked-out commit (or pass `IMAGE_TAG=1.1.0` for a [release](https://github.com/marco308/podcast-manager/releases)); without it, the script builds locally.
 
 ## iOS companion app
 
