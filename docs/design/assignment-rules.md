@@ -31,8 +31,9 @@ Three levels, each owning one thing.
 - `pick_from`: `newest` or `oldest`. Which end of the show's unplayed episodes to
   take from when limited, and the order the show's episodes are listened to.
   `NULL` on the assignment means *inherit*.
-- `arrangement`: `by_position` (groups in assignment order) or `by_date`
-  (all contributed episodes merged by release date).
+- `arrangement`: `by_position` (groups in assignment order), `by_date`
+  (all contributed episodes merged by release date) or `shuffle` (shows
+  interleaved at random, each show's episodes kept in its rule's order).
 - `date_direction`: `newest_first` or `oldest_first`. Only used by `by_date`.
 
 ### Resolution
@@ -66,6 +67,9 @@ for each assignment in position order (NULL positions last, then by name):
 
 if arrangement == by_position:
     result = concat(groups)
+elif arrangement == shuffle:
+    tokens = shuffle([group index, once per episode])
+    result = [next episode of groups[i] for i in tokens]  # random interleave, per-show order kept
 else:  # by_date
     result = merge(groups) sorted by (release_date, show_id) in date_direction
     for each show resolved to pick == oldest with >= 2 slots:

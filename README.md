@@ -37,7 +37,7 @@ For example, a Morning playlist with defaults "latest only, newest" gets today's
 
 ### Playlist settings
 
-- **Arrangement.** *In podcast order* concatenates each show's episodes in the order you drag them into. *By release date* merges everything by date, newest or oldest first. In a newest-first playlist, a sequential show keeps the slots it wins but fills them oldest-first, so a serial never plays out of order.
+- **Arrangement.** *In podcast order* concatenates each show's episodes in the order you drag them into. *By release date* merges everything by date, newest or oldest first. In a newest-first playlist, a sequential show keeps the slots it wins but fills them oldest-first, so a serial never plays out of order. *Shuffled* mixes the podcasts together in a fresh random order on every rebuild, but each podcast's own episodes still play in order.
 - **Enabled.** A disabled playlist is never written to on Spotify. The daily rebuild and the cleanup job skip it, and a manual run is refused. Its Spotify playlist keeps whatever it last had until you re-enable it.
 - **Spotify playlist.** Leave it empty and one is created on the first run, or pick an existing playlist you own. A Spotify playlist can only be linked to one managed playlist, because each rebuild replaces its contents. Deleting a managed playlist can optionally delete the Spotify playlist too.
 

@@ -25,11 +25,12 @@ export function dateDirectionLabel(direction: Playlist['date_direction']): strin
   return direction === 'newest_first' ? 'newest first' : 'oldest first';
 }
 
-// e.g. "Podcast order" or "By date, newest first".
+// e.g. "Podcast order", "Shuffled" or "By date, newest first".
 export function arrangementLabel(
   playlist: Pick<Playlist, 'arrangement' | 'date_direction'>
 ): string {
   if (playlist.arrangement === 'by_position') return 'Podcast order';
+  if (playlist.arrangement === 'shuffle') return 'Shuffled';
   return `By date, ${dateDirectionLabel(playlist.date_direction)}`;
 }
 

@@ -8,7 +8,7 @@ struct Playlist: Codable, Identifiable, Hashable {
     let defaultEpisodeLimit: Int
     /// Which end of a show's unplayed episodes to take from: "newest" | "oldest".
     let defaultPickFrom: String
-    /// How contributions are assembled: "by_position" | "by_date".
+    /// How contributions are assembled: "by_position" | "by_date" | "shuffle".
     let arrangement: String
     /// Only used when arrangement is "by_date": "newest_first" | "oldest_first".
     let dateDirection: String
@@ -32,6 +32,8 @@ struct Playlist: Codable, Identifiable, Hashable {
         switch arrangement {
         case "by_date":
             return dateDirection == "oldest_first" ? "By date, oldest first" : "By date, newest first"
+        case "shuffle":
+            return "Shuffled"
         default:
             return "Podcast order"
         }
