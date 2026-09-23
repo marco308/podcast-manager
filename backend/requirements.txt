@@ -15,7 +15,7 @@ httpx>=0.28.1,<1.0.0
 apscheduler>=3.11.3,<4.0.0
 # IANA zone data for TIMEZONE: the slim image need not ship /usr/share/zoneinfo,
 # and zoneinfo falls back to this package.
-tzdata>=2025.2
+tzdata>=2026.4
 
 # Security and encryption
 cryptography>=50.0.1
