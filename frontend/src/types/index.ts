@@ -43,8 +43,12 @@ export interface PodcastUpdate {
 // Playlist types (see docs/design/assignment-rules.md)
 
 // Which end of a show's unplayed episodes to take from, and the order they
-// are listened to.
-export type PickFrom = 'newest' | 'oldest';
+// are listened to. `random` (a fresh sample on every rebuild) is only accepted
+// on sleep playlists; the API rejects it on a standard one with a 422.
+export type PickFrom = 'newest' | 'oldest' | 'random';
+// A standard playlist takes unplayed episodes; a sleep playlist takes only
+// episodes already finished (docs/design/sleep-playlists.md).
+export type PlaylistKind = 'standard' | 'sleep';
 // How contributions are assembled: grouped per podcast in assignment order,
 // merged across podcasts by release date, or podcasts interleaved at random
 // (each podcast's own episodes still in order).
@@ -63,6 +67,7 @@ export interface Playlist {
   name: string;
   spotify_playlist_id: string | null;
   is_enabled: boolean;
+  kind: PlaylistKind;
   default_episode_limit: number;
   default_pick_from: PickFrom;
   arrangement: Arrangement;
@@ -76,6 +81,7 @@ export interface PlaylistCreate {
   name: string;
   spotify_playlist_id?: string | null;
   is_enabled?: boolean;
+  kind?: PlaylistKind;
   default_episode_limit?: number;
   default_pick_from?: PickFrom;
   arrangement?: Arrangement;
@@ -87,6 +93,7 @@ export interface PlaylistUpdate {
   // Present and null unlinks the Spotify playlist; absent leaves it alone.
   spotify_playlist_id?: string | null;
   is_enabled?: boolean;
+  kind?: PlaylistKind;
   default_episode_limit?: number;
   default_pick_from?: PickFrom;
   arrangement?: Arrangement;

@@ -1,6 +1,6 @@
 # Sleep playlists
 
-Status: accepted, 2026-10-13. Not yet built.
+Status: built, 2026-10-13 (backend + web; iOS follows).
 Tracking: #331
 
 ## Why
@@ -65,7 +65,7 @@ to it. Without a ledger:
 2. standard playlists see it as *unplayed* again. A serial set to `oldest`
    would put episode 1 back at the top of the commute playlist.
 
-**Table:** `sleep_episodes(episode_id PK, show_id, first_served_at, last_served_at)`.
+**Table:** `sleep_episodes(episode_id PK, first_served_at, last_served_at)`.
 A row is written for every episode a sleep build **successfully writes** to
 Spotify (after `replace_playlist_items`, in the same commit as
 `last_updated_at`).
@@ -83,7 +83,7 @@ playlist. If that matters later, add a "forget" action; not in v1.
 
 Like `podcasts`, the table is global (single-user by construction). Account
 deletion (`services/account.py`) deletes it alongside `podcasts` when no user
-remains. Rows for shows that are deleted can be left or pruned with the show.
+remains.
 
 ## Fetching
 

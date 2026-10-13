@@ -5,7 +5,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.models.playlist import ALL_EPISODES, Arrangement, DateDirection, PickFrom
+from app.models.playlist import ALL_EPISODES, Arrangement, DateDirection, PickFrom, PlaylistKind
 from app.services.assignment_rules import RuleSource
 
 # Spotify playlist IDs are 22 chars of base62 — 64 leaves slack without
@@ -31,6 +31,8 @@ class PlaylistBase(BaseModel):
 
     name: str
     is_enabled: bool = True
+    # ``sleep`` plays episodes already heard (issue #331).
+    kind: PlaylistKind = PlaylistKind.STANDARD
     # Defaults inherited by assignments without an override.
     default_episode_limit: int = Field(ALL_EPISODES, ge=0, le=EPISODE_LIMIT_MAX)
     default_pick_from: PickFrom = PickFrom.NEWEST
@@ -86,6 +88,7 @@ class PlaylistUpdate(BaseModel):
         return value
 
     is_enabled: bool | None = None
+    kind: PlaylistKind | None = None
     default_episode_limit: int | None = Field(None, ge=0, le=EPISODE_LIMIT_MAX)
     default_pick_from: PickFrom | None = None
     arrangement: Arrangement | None = None

@@ -50,6 +50,7 @@ def _assignment(position):
 
 def _builder_with_podcasts(*podcasts):
     builder = PlaylistBuilder(AsyncMock(), MagicMock())
+    builder._load_sleep_ledger = AsyncMock(return_value=set())
     builder._get_playlist_podcasts = AsyncMock(
         return_value=[AssignmentEntry(podcast=p, assignment=_assignment(i)) for i, p in enumerate(podcasts)]
     )
@@ -113,7 +114,7 @@ class TestPartialFailures:
             _make_podcast("Beta", "show2"),
         )
 
-        async def fetch(podcast, *, need, from_oldest):
+        async def fetch(podcast, *, need, from_oldest, wanted=None):
             if podcast.name == "Beta":
                 raise EpisodeFetchError("boom")
             return [_episode("spotify:episode:a1")]

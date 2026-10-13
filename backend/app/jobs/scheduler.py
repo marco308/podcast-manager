@@ -14,7 +14,7 @@ from app.config import get_settings
 from app.database import async_session_maker
 from app.jobs import locks
 from app.jobs.session_cleanup import cleanup_expired_sessions as _cleanup_expired_sessions
-from app.models.playlist import Playlist
+from app.models.playlist import Playlist, PlaylistKind
 from app.models.settings import AppSetting
 from app.models.sync_log import SyncLog, SyncStatus
 from app.models.user import User
@@ -796,6 +796,15 @@ def _find_http_status_error(exc: BaseException):
     return None
 
 
+def _cleanup_candidates():
+    """Playlists the cleanup job may remove played episodes from.
+
+    Enabled ones only (issue #239), and never a sleep playlist, which is
+    made of played episodes on purpose (issue #331).
+    """
+    return Playlist.is_enabled.is_(True) & (Playlist.kind != PlaylistKind.SLEEP.value)
+
+
 async def _still_enabled_playlist_ids() -> set[int] | None:
     """Playlist IDs that are still enabled, re-read at the write boundary.
 
@@ -810,7 +819,7 @@ async def _still_enabled_playlist_ids() -> set[int] | None:
     try:
         async with async_session_maker() as db:
             # Same query shape as the phase-1 read, minus the user filter.
-            result = await db.execute(select(Playlist).where(Playlist.is_enabled.is_(True)))
+            result = await db.execute(select(Playlist).where(_cleanup_candidates()))
             return {p.id for p in result.scalars().all()}
     except Exception as e:
         logger.error(f"Cleanup could not re-check is_enabled (using the earlier read): {e}")
@@ -928,8 +937,10 @@ async def remove_played_episodes_from_playlists() -> None:
                 # (issue #239) — they keep whatever they had until re-enabled.
                 # Re-checked under the write lock in phase 2, since this read
                 # happens before the lock is taken.
+                # Sleep playlists hold played episodes by design (issue #331);
+                # cleanup would empty them.
                 playlists_result = await db.execute(
-                    select(Playlist).where((Playlist.user_id == user.id) & (Playlist.is_enabled == True))
+                    select(Playlist).where((Playlist.user_id == user.id) & _cleanup_candidates())
                 )
                 playlists = playlists_result.scalars().all()
 

@@ -8,6 +8,7 @@ import {
   Input,
   InputNumber,
   Modal,
+  Radio,
   Select,
   Spin,
   Switch,
@@ -31,6 +32,7 @@ import type {
   PickFrom,
   Playlist,
   PlaylistCreate,
+  PlaylistKind,
   PlaylistPodcast,
   PlaylistUpdate,
   Podcast,
@@ -53,6 +55,7 @@ type EpisodeLimitMode = 'all' | 'latest' | 'custom';
 
 interface PlaylistFormValues {
   name: string;
+  kind: PlaylistKind;
   spotify_playlist_id?: string | null;
   arrangement: Arrangement;
   date_direction: DateDirection;
@@ -74,8 +77,18 @@ function modeToLimit(mode: EpisodeLimitMode, custom: number | undefined): number
   return custom ?? 2;
 }
 
+// What choosing Sleep presets (the server's sleep defaults,
+// docs/design/sleep-playlists.md). The user can still change any of them.
+const SLEEP_PRESET: Partial<PlaylistFormValues> = {
+  arrangement: 'shuffle',
+  default_pick_from: 'random',
+  episode_limit_mode: 'custom',
+  custom_episode_limit: 10,
+};
+
 const NEW_PLAYLIST_VALUES: PlaylistFormValues = {
   name: '',
+  kind: 'standard',
   arrangement: 'by_position',
   date_direction: 'oldest_first',
   episode_limit_mode: 'all',
@@ -89,6 +102,7 @@ function valuesFor(playlist: Playlist | null): PlaylistFormValues {
   const mode = limitToMode(playlist.default_episode_limit);
   return {
     name: playlist.name,
+    kind: playlist.kind ?? 'standard',
     spotify_playlist_id: playlist.spotify_playlist_id ?? undefined,
     arrangement: playlist.arrangement,
     date_direction: playlist.date_direction,
@@ -120,6 +134,7 @@ function MembershipDraft({
   defaultEpisodeLimit,
   defaultPickFrom,
   orderMatters,
+  kind,
   onDraft,
 }: {
   initial: EditorRow[];
@@ -127,6 +142,7 @@ function MembershipDraft({
   defaultEpisodeLimit: number;
   defaultPickFrom: PickFrom;
   orderMatters: boolean;
+  kind: PlaylistKind;
   onDraft: (rows: EditorRow[]) => void;
 }) {
   const [rows, setRows] = useState<EditorRow[]>(initial);
@@ -142,6 +158,7 @@ function MembershipDraft({
       defaultEpisodeLimit={defaultEpisodeLimit}
       defaultPickFrom={defaultPickFrom}
       orderMatters={orderMatters}
+      kind={kind}
     />
   );
 }
@@ -196,6 +213,8 @@ function PlaylistFormModalContent({ open, playlist, onClose, onSaved }: Playlist
   const [draft, setDraft] = useState<EditorRow[] | null>(null);
   const [form] = Form.useForm<PlaylistFormValues>();
 
+  const kind = Form.useWatch('kind', form) ?? playlist?.kind ?? 'standard';
+  const sleep = kind === 'sleep';
   const arrangement = Form.useWatch('arrangement', form);
   const episodeLimitMode = Form.useWatch('episode_limit_mode', form);
   const customLimit = Form.useWatch('custom_episode_limit', form);
@@ -203,6 +222,20 @@ function PlaylistFormModalContent({ open, playlist, onClose, onSaved }: Playlist
   const linkedSpotifyId = Form.useWatch('spotify_playlist_id', form);
 
   const spotifyUrl = spotifyPlaylistUrl(playlist?.spotify_playlist_id);
+
+  // Choosing Sleep presets the sleep defaults; going back to Standard drops a
+  // `random` pick, which a standard playlist refuses (the server does the
+  // same to a playlist switched by PATCH).
+  const handleValuesChange = (changed: Partial<PlaylistFormValues>) => {
+    if (changed.kind === 'sleep') {
+      form.setFieldsValue(SLEEP_PRESET);
+    } else if (
+      changed.kind === 'standard' &&
+      form.getFieldValue('default_pick_from') === 'random'
+    ) {
+      form.setFieldsValue({ default_pick_from: 'newest' });
+    }
+  };
 
   const handleClose = () => {
     setDraft(null);
@@ -220,12 +253,16 @@ function PlaylistFormModalContent({ open, playlist, onClose, onSaved }: Playlist
 
     const shared = {
       name: values.name,
+      kind: values.kind,
       // null, not undefined: the server reads a present-and-null as "unlink"
       // and an absent field as "leave the link alone".
       spotify_playlist_id: values.spotify_playlist_id ?? null,
       is_enabled: values.is_enabled,
       default_episode_limit: modeToLimit(values.episode_limit_mode, values.custom_episode_limit),
-      default_pick_from: values.default_pick_from,
+      default_pick_from:
+        values.kind !== 'sleep' && values.default_pick_from === 'random'
+          ? 'newest'
+          : values.default_pick_from,
       arrangement: values.arrangement,
       date_direction: values.date_direction,
     };
@@ -256,7 +293,11 @@ function PlaylistFormModalContent({ open, playlist, onClose, onSaved }: Playlist
     // Membership is applied after the settings save so a brand-new playlist
     // has an id to add to. A failure here leaves the settings saved and says
     // so, rather than reporting the whole save as failed.
-    const rows = draft ?? initialRows;
+    // A standard playlist can't keep a `random` override; the server clears
+    // those when the kind changes, so the draft drops them too.
+    const rows = (draft ?? initialRows).map((r) =>
+      values.kind !== 'sleep' && r.pick_from === 'random' ? { ...r, pick_from: null } : r
+    );
     const before = new Map(initialRows.map((r) => [r.id, r]));
     const wanted = new Set(rows.map((r) => r.id));
     const toAdd = rows.filter((r) => !before.has(r.id));
@@ -354,6 +395,7 @@ function PlaylistFormModalContent({ open, playlist, onClose, onSaved }: Playlist
           layout="vertical"
           style={{ marginTop: 16 }}
           initialValues={valuesFor(playlist)}
+          onValuesChange={handleValuesChange}
         >
           <Form.Item
             name="name"
@@ -366,6 +408,24 @@ function PlaylistFormModalContent({ open, playlist, onClose, onSaved }: Playlist
             rules={[{ required: true, message: 'Please enter a name' }]}
           >
             <Input placeholder="e.g., Morning Podcasts" />
+          </Form.Item>
+          <Form.Item
+            name="kind"
+            label="Kind"
+            extra={
+              sleep
+                ? "Sleep plays only episodes you've already finished — for falling asleep to."
+                : "Standard plays episodes you haven't finished yet."
+            }
+          >
+            <Radio.Group
+              optionType="button"
+              buttonStyle="solid"
+              options={[
+                { value: 'standard', label: 'Standard' },
+                { value: 'sleep', label: 'Sleep' },
+              ]}
+            />
           </Form.Item>
           <Form.Item
             name="spotify_playlist_id"
@@ -473,8 +533,8 @@ function PlaylistFormModalContent({ open, playlist, onClose, onSaved }: Playlist
           >
             <Select<EpisodeLimitMode>
               options={[
-                { value: 'all', label: 'All unplayed' },
-                { value: 'latest', label: 'Latest only' },
+                { value: 'all', label: sleep ? 'All played' : 'All unplayed' },
+                { value: 'latest', label: sleep ? 'Just 1' : 'Latest only' },
                 { value: 'custom', label: 'Up to…' },
               ]}
             />
@@ -483,7 +543,7 @@ function PlaylistFormModalContent({ open, playlist, onClose, onSaved }: Playlist
             <Form.Item
               name="custom_episode_limit"
               label="Maximum episodes"
-              extra={`Between 2 and ${EPISODE_LIMIT_MAX} unplayed episodes per podcast`}
+              extra={`Between 2 and ${EPISODE_LIMIT_MAX} ${sleep ? 'played' : 'unplayed'} episodes per podcast`}
               rules={[{ required: true, message: 'Please enter a maximum' }]}
             >
               <InputNumber min={2} max={EPISODE_LIMIT_MAX} precision={0} style={{ width: 160 }} />
@@ -493,13 +553,18 @@ function PlaylistFormModalContent({ open, playlist, onClose, onSaved }: Playlist
           <Form.Item
             name="default_pick_from"
             label="Take from"
-            extra="Sequential podcasts always take from the oldest unfinished episode unless overridden below"
+            extra={
+              sleep
+                ? 'Random takes a fresh sample of played episodes on every rebuild. Sequential hints are ignored on sleep playlists.'
+                : 'Sequential podcasts always take from the oldest unfinished episode unless overridden below'
+            }
             rules={[{ required: true, message: 'Please choose where to take episodes from' }]}
           >
             <Select<PickFrom>
               options={[
                 { value: 'newest', label: 'Newest' },
                 { value: 'oldest', label: 'Oldest' },
+                ...(sleep ? [{ value: 'random' as const, label: 'Random' }] : []),
               ]}
             />
           </Form.Item>
@@ -522,6 +587,7 @@ function PlaylistFormModalContent({ open, playlist, onClose, onSaved }: Playlist
             defaultEpisodeLimit={modeToLimit(episodeLimitMode ?? 'all', customLimit)}
             defaultPickFrom={watchedPick ?? 'newest'}
             orderMatters={(arrangement ?? 'by_position') === 'by_position'}
+            kind={kind}
             onDraft={setDraft}
           />
         </Form>

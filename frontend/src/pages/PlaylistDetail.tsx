@@ -22,7 +22,7 @@ import {
 import { Link, useParams } from 'react-router';
 import dayjs from 'dayjs';
 import { usePlaylist, usePlaylistPodcasts, useRunPlaylistWithFeedback } from '../hooks';
-import { LoadingSpinner, PlaylistFormModal } from '../components';
+import { LoadingSpinner, PlaylistFormModal, SleepTag } from '../components';
 import { getErrorMessage } from '../api';
 import {
   arrangementLabel,
@@ -112,7 +112,7 @@ function PodcastsSection({ playlist, onEdit }: { playlist: Playlist; onEdit: () 
       render: (_, row) => (
         <Space size={6} wrap>
           <Tag color={hasOverride(row) ? 'purple' : 'default'} style={{ margin: 0 }}>
-            {ruleSummary(row.rule.episode_limit, row.rule.pick_from)}
+            {ruleSummary(row.rule.episode_limit, row.rule.pick_from, playlist.kind)}
           </Tag>
           <Text type="secondary" style={{ fontSize: 12 }}>
             {ruleSourceLabel(row.rule)}
@@ -235,6 +235,9 @@ export function PlaylistDetail() {
         <div style={{ minWidth: 0 }}>
           <Title level={4} style={{ marginBottom: 4 }}>
             {playlist.name}
+            {playlist.kind === 'sleep' && (
+              <SleepTag style={{ marginLeft: 8, verticalAlign: 'middle' }} />
+            )}
           </Title>
           <Text type="secondary">
             {playlist.podcast_count} podcast{playlist.podcast_count !== 1 ? 's' : ''} ·{' '}
@@ -295,6 +298,11 @@ export function PlaylistDetail() {
 
       <Card title="Settings" style={{ marginBottom: 24 }}>
         <Descriptions column={isMobile ? 1 : 2} size="small">
+          <Descriptions.Item label="Kind">
+            {playlist.kind === 'sleep'
+              ? "Sleep — only episodes you've already finished"
+              : "Standard — episodes you haven't finished"}
+          </Descriptions.Item>
           <Descriptions.Item label="Arrangement">{arrangementLabel(playlist)}</Descriptions.Item>
           {playlist.arrangement === 'by_date' && (
             <Descriptions.Item label="Direction">
@@ -302,7 +310,7 @@ export function PlaylistDetail() {
             </Descriptions.Item>
           )}
           <Descriptions.Item label="Default episodes">
-            {episodeLimitLabel(playlist.default_episode_limit)}
+            {episodeLimitLabel(playlist.default_episode_limit, playlist.kind)}
           </Descriptions.Item>
           <Descriptions.Item label="Take from">
             {pickFromLabel(playlist.default_pick_from)}

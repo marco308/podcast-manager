@@ -26,6 +26,25 @@ class PickFrom(str, PyEnum):
 
     NEWEST = "newest"
     OLDEST = "oldest"
+    # A fresh random sample on every rebuild. Sleep playlists only, where the
+    # order a show's episodes are heard in doesn't matter (issue #331).
+    RANDOM = "random"
+
+
+class PlaylistKind(str, PyEnum):
+    """What a playlist is built from.
+
+    ``STANDARD`` plays unplayed episodes. ``SLEEP`` plays episodes already
+    heard, to fall asleep to (docs/design/sleep-playlists.md, issue #331).
+    """
+
+    STANDARD = "standard"
+    SLEEP = "sleep"
+
+
+# What a playlist switched to ``SLEEP`` gets for any setting the request
+# didn't set itself.
+SLEEP_DEFAULT_EPISODE_LIMIT = 10
 
 
 class Arrangement(str, PyEnum):
@@ -63,6 +82,7 @@ class Playlist(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     spotify_playlist_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), default=PlaylistKind.STANDARD.value, nullable=False)
 
     # Defaults inherited by assignments that have no override.
     default_episode_limit: Mapped[int] = mapped_column(Integer, default=ALL_EPISODES, nullable=False)

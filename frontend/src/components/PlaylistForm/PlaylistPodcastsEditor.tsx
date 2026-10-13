@@ -22,7 +22,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import type { PickFrom, Podcast } from '../../types';
+import type { PickFrom, PlaylistKind, Podcast } from '../../types';
 import { EPISODE_LIMIT_MAX } from '../../types';
 import { episodeLimitLabel, pickFromLabel } from '../../utils/playlistLabels';
 
@@ -61,6 +61,8 @@ interface PlaylistPodcastsEditorProps {
   defaultPickFrom: PickFrom;
   // Position only matters when the playlist arranges by position.
   orderMatters: boolean;
+  // Sleep playlists offer a `random` pick and ignore the sequential hint.
+  kind: PlaylistKind;
 }
 
 interface RowContextValue {
@@ -131,7 +133,9 @@ export function PlaylistPodcastsEditor({
   defaultEpisodeLimit,
   defaultPickFrom,
   orderMatters,
+  kind,
 }: PlaylistPodcastsEditorProps) {
+  const sleep = kind === 'sleep';
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
@@ -234,9 +238,12 @@ export function PlaylistPodcastsEditor({
                 })
               }
               options={[
-                { value: 'inherit', label: `Inherit (${episodeLimitLabel(defaultEpisodeLimit)})` },
-                { value: 'all', label: 'All unplayed' },
-                { value: 'latest', label: 'Latest only' },
+                {
+                  value: 'inherit',
+                  label: `Inherit (${episodeLimitLabel(defaultEpisodeLimit, kind)})`,
+                },
+                { value: 'all', label: sleep ? 'All played' : 'All unplayed' },
+                { value: 'latest', label: sleep ? 'Just 1' : 'Latest only' },
                 { value: 'custom', label: 'Up to…' },
               ]}
             />
@@ -260,11 +267,17 @@ export function PlaylistPodcastsEditor({
       key: 'pick_from',
       width: 170,
       render: (_, row) => {
-        const inherited = row.is_sequential ? 'oldest' : defaultPickFrom;
+        // On a sleep playlist the sequential hint is ignored: override, else
+        // the playlist default.
+        const sequentialApplies = row.is_sequential && !sleep;
+        const inherited = sequentialApplies ? 'oldest' : defaultPickFrom;
+        // A `random` override can't survive on a standard playlist (it is
+        // dropped on save), so show it as inheriting.
+        const value = !sleep && row.pick_from === 'random' ? null : row.pick_from;
         return (
           <Select<'inherit' | PickFrom>
             size="small"
-            value={row.pick_from ?? 'inherit'}
+            value={value ?? 'inherit'}
             style={{ width: 160 }}
             onChange={(value) =>
               updateRow(row.id, { pick_from: value === 'inherit' ? null : value })
@@ -272,10 +285,11 @@ export function PlaylistPodcastsEditor({
             options={[
               {
                 value: 'inherit',
-                label: `Inherit (${pickFromLabel(inherited)}${row.is_sequential ? ', sequential' : ''})`,
+                label: `Inherit (${pickFromLabel(inherited)}${sequentialApplies ? ', sequential' : ''})`,
               },
               { value: 'newest', label: 'Newest' },
               { value: 'oldest', label: 'Oldest' },
+              ...(sleep ? [{ value: 'random' as const, label: 'Random' }] : []),
             ]}
           />
         );
