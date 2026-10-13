@@ -1,37 +1,52 @@
 """Tests for the rule-proportional episode fetch (issue #249).
 
-Spotify pages ``/shows/{id}/episodes`` newest-first. A ``newest`` rule walks
-from the head and stops once it has enough unplayed episodes; an ``oldest``
-rule (a serial's "next unfinished") reads ``total`` from the first page and
-walks backwards from the tail, so it never has to read a 300-episode
-back-catalogue to find episode 4.
+Spotify pages ``/shows/{id}/episodes`` newest-first for most shows. A
+``newest`` rule walks from the head and stops once it has enough unplayed
+episodes; an ``oldest`` rule (a serial's "next unfinished") reads ``total``
+from the first page and walks backwards from the tail, so it never has to
+read a 300-episode back-catalogue to find episode 4. A show listed
+oldest-first swaps the two ends.
 """
 
+from datetime import date, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.services.playlist_builder import EpisodeFetchError, PlaylistBuilder
+from app.models.playlist import PickFrom
+from app.services.playlist_builder import EpisodeFetchError, PlaylistBuilder, listed_oldest_first
 
 
 def _ep(i, *, played=False):
-    ep = {"id": f"e{i}", "uri": f"spotify:episode:e{i}", "release_date": f"2020-01-{(i % 28) + 1:02d}"}
+    """Episode ``e{i}``, the i-th newest: one day older for each step of ``i``."""
+    release_date = (date(2030, 1, 1) - timedelta(days=i)).isoformat()
+    ep = {"id": f"e{i}", "uri": f"spotify:episode:e{i}", "release_date": release_date}
     if played:
         ep["resume_point"] = {"fully_played": True}
     return ep
 
 
 class FakeSpotify:
-    """A catalogue of ``total`` episodes, newest at index 0, served by offset."""
+    """A catalogue of ``total`` episodes, served by offset.
 
-    def __init__(self, total, played=()):
+    Listed newest first (``e0`` at offset 0) unless ``oldest_first``, which
+    lists the same episodes the other way round, as Spotify does for some
+    serials: ``e{total-1}`` at offset 0.
+    """
+
+    def __init__(self, total, played=(), oldest_first=False):
         self.total = total
         self.played = set(played)
+        self.oldest_first = oldest_first
         self.calls = []
+
+    def _at(self, offset):
+        return self.total - 1 - offset if self.oldest_first else offset
 
     async def get_show_episodes(self, show_id, limit=50, offset=0):
         self.calls.append((limit, offset))
-        items = [_ep(i, played=i in self.played) for i in range(offset, min(offset + limit, self.total))]
+        indices = [self._at(j) for j in range(offset, min(offset + limit, self.total))]
+        items = [_ep(i, played=i in self.played) for i in indices]
         has_more = offset + limit < self.total
         return {"items": items, "total": self.total, "next": "next-url" if has_more else None}
 
@@ -221,3 +236,89 @@ class TestTailWalkWithAnOverstatedTotal:
         spotify.get_show_episodes = first_page_only
         with pytest.raises(EpisodeFetchError):
             await _builder(spotify)._fetch_unplayed(_podcast(), need=1, from_oldest=True)
+
+
+class TestOldestFirstListing:
+    """Some shows (serials, typically) are listed oldest-first. The walk must
+    read from the end that holds what the rule wants, and hand back
+    newest-first like any other show."""
+
+    @pytest.mark.asyncio
+    async def test_next_unfinished_reads_only_the_first_page(self):
+        spotify = FakeSpotify(total=300, played={299, 298, 297}, oldest_first=True)
+        result = await _builder(spotify)._fetch_unplayed(_podcast(), need=1, from_oldest=True)
+        ids = [e.id for e in result]
+        assert ids[-1] == "e296"
+        assert ids == sorted(ids, key=lambda i: int(i[1:]))  # newest-first
+        assert spotify.calls == [(50, 0)]
+
+    @pytest.mark.asyncio
+    async def test_latest_reads_from_the_tail(self):
+        spotify = FakeSpotify(total=300, played={0}, oldest_first=True)
+        result = await _builder(spotify)._fetch_unplayed(_podcast(), need=1, from_oldest=False)
+        assert [e.id for e in result][0] == "e1"
+        assert spotify.calls == [(50, 0), (50, 250)]
+
+    @pytest.mark.asyncio
+    async def test_unlimited_returns_the_same_episodes_either_way(self):
+        newest = await _builder(FakeSpotify(total=80))._fetch_unplayed(_podcast(), need=None, from_oldest=True)
+        oldest = await _builder(FakeSpotify(total=80, oldest_first=True))._fetch_unplayed(
+            _podcast(), need=None, from_oldest=True
+        )
+        assert [e.id for e in oldest] == [e.id for e in newest]
+
+
+class ListingSpotify:
+    """Serves a fixed listing, in the order given."""
+
+    def __init__(self, items):
+        self.items = items
+
+    async def get_show_episodes(self, show_id, limit=50, offset=0):
+        page = self.items[offset : offset + limit]
+        more = offset + limit < len(self.items)
+        return {"items": page, "total": len(self.items), "next": "next-url" if more else None}
+
+
+class TestSameDaySerialListedOldestFirst:
+    """Bear Hunt released Ep 1 and Ep 2 on one day and is listed oldest-first.
+    Reading that listing as newest-first put Ep 2 ahead of Ep 1, and a limit
+    of two then picked the trailer and Ep 2, skipping Ep 1."""
+
+    LISTING = [
+        {"id": "trailer", "release_date": "2026-09-02"},
+        {"id": "ep1", "release_date": "2026-09-09"},
+        {"id": "ep2", "release_date": "2026-09-09"},
+        {"id": "ep3", "release_date": "2026-09-16"},
+    ]
+
+    @pytest.mark.parametrize("listing", [LISTING, LISTING[::-1]], ids=["oldest-first", "newest-first"])
+    @pytest.mark.asyncio
+    async def test_parts_play_in_order(self, listing):
+        builder = _builder(ListingSpotify(listing))
+        episodes = await builder._fetch_unplayed(_podcast(), need=2, from_oldest=True)
+        oldest = PlaylistBuilder.sort_within_show(episodes, PickFrom.OLDEST)
+        assert [e.id for e in oldest] == ["trailer", "ep1", "ep2", "ep3"]
+        assert [e.id for e in PlaylistBuilder.sort_within_show(episodes, PickFrom.NEWEST)] == [
+            "ep3",
+            "ep2",
+            "ep1",
+            "trailer",
+        ]
+
+
+class TestListedOldestFirst:
+    def test_compares_the_first_and_last_dates(self):
+        assert listed_oldest_first([_ep(2), _ep(1), _ep(0)])
+        assert not listed_oldest_first([_ep(0), _ep(1), _ep(2)])
+
+    def test_no_two_distinct_dates_reads_as_newest_first(self):
+        assert not listed_oldest_first([])
+        assert not listed_oldest_first([_ep(0)])
+        same_day = {"release_date": "2026-09-09"}
+        assert not listed_oldest_first([same_day, dict(same_day)])
+
+    def test_undated_episodes_are_skipped(self):
+        undated = {"release_date": ""}
+        assert not listed_oldest_first([undated, _ep(0), _ep(1)])
+        assert listed_oldest_first([_ep(1), _ep(0), undated, None])

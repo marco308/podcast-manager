@@ -88,6 +88,21 @@ def parse_release_date(value: str | None) -> date:
         return date.min
 
 
+def listed_oldest_first(items: list[dict[str, Any] | None]) -> bool:
+    """Whether a page of a show's episodes runs oldest-first.
+
+    Spotify lists most shows newest-first, but some (serials, typically) come
+    back oldest-first, and nothing in the response says which. Code that
+    assumed newest-first read a same-day tie backwards, so Bear Hunt's Ep 2
+    played before Ep 1. The first and last dated episodes on the page decide;
+    a page without two distinct dates reads as newest-first, Spotify's usual
+    order. Undated episodes are skipped rather than compared as the earliest
+    possible date.
+    """
+    dates = [d for ep in items if ep and (d := parse_release_date(ep.get("release_date"))) != date.min]
+    return len(dates) >= 2 and dates[0] < dates[-1]
+
+
 @dataclass
 class Episode:
     """Simplified episode data for playlist building."""
@@ -255,12 +270,17 @@ class PlaylistBuilder:
         return not resume_point.get("fully_played", False)
 
     async def _walk_from_head(
-        self, spotify: SpotifyService, show_id: str, need: int | None
+        self,
+        spotify: SpotifyService,
+        show_id: str,
+        need: int | None,
+        first: dict[str, Any] | None = None,
     ) -> tuple[list[dict[str, Any]], bool]:
-        """Read episodes newest-first from offset 0.
+        """Read episodes in catalogue order from offset 0.
 
         Stops once ``need`` unplayed episodes have been seen (``None`` means
-        read everything up to the cap). Returns ``(raw_episodes, complete)``
+        read everything up to the cap). ``first`` is the offset-0 page when
+        the caller has already read it. Returns ``(raw_episodes, complete)``
         where ``complete`` is True only if the whole catalogue was read.
         """
         items: list[dict[str, Any]] = []
@@ -268,7 +288,10 @@ class PlaylistBuilder:
         offset = 0
         while len(items) < MAX_EPISODES_PER_SHOW:
             limit = min(PAGE_SIZE, MAX_EPISODES_PER_SHOW - len(items))
-            data = await spotify.get_show_episodes(show_id, limit=limit, offset=offset)
+            if offset == 0 and first is not None:
+                data = first
+            else:
+                data = await spotify.get_show_episodes(show_id, limit=limit, offset=offset)
             page = data.get("items", [])
             if not page:
                 return items, True
@@ -282,28 +305,29 @@ class PlaylistBuilder:
         return items, False
 
     async def _walk_from_tail(
-        self, spotify: SpotifyService, show_id: str, need: int
+        self, spotify: SpotifyService, show_id: str, need: int, first: dict[str, Any]
     ) -> tuple[list[dict[str, Any]], bool]:
         """Read episodes from the *end* of the catalogue until ``need`` unplayed are found.
 
-        Spotify only pages newest-first, so "next unfinished episode of a
-        serial" would otherwise mean reading the whole back-catalogue. The
-        first page gives ``total``; pages are then read backwards from the
-        tail. The result keeps Spotify's newest-first order; ``complete`` is
-        True when the head and tail reads met (the whole catalogue was seen).
+        Spotify only pages from the head of a show's listing, so the episodes
+        at the far end (the oldest of a newest-first show, the newest of an
+        oldest-first one) would otherwise mean reading the whole catalogue.
+        ``first`` is the offset-0 page and gives ``total``; pages are then
+        read backwards from the tail. The result keeps the catalogue order;
+        ``complete`` is True when the head and tail reads met (the whole
+        catalogue was seen).
 
         The cap applies to the tail candidates only, and the head page is
         only merged in when the reads met. If the walk stops short, the
-        unread middle is older than every head episode, so the head must not
-        compete for "oldest" — it would be trimmed in ahead of episodes we
-        never looked at.
+        unread middle sits between the head and the tail, so the head must
+        not compete for the tail's end. It would be trimmed in ahead of
+        episodes we never looked at.
 
         An empty tail page means ``total`` overstated the catalogue (episodes
         counted but not returnable, e.g. outside the user's market); the walk
         then falls back to reading from the head (``_walk_from_head_fallback``)
         rather than returning nothing.
         """
-        first = await spotify.get_show_episodes(show_id, limit=PAGE_SIZE, offset=0)
         head: list[dict[str, Any]] = list(first.get("items", []))
         total = first.get("total")
         if not isinstance(total, int) or total <= len(head) or not first.get("next"):
@@ -323,7 +347,7 @@ class PlaylistBuilder:
                 # tail can't be located from ``total``, so read forwards
                 # instead of letting the show silently contribute nothing.
                 return await self._walk_from_head_fallback(spotify, show_id)
-            tail = page + tail  # keep newest-first overall
+            tail = page + tail  # keep catalogue order overall
             unplayed += sum(1 for ep in page if self._is_unplayed(ep))
             end = start
             if unplayed >= need:
@@ -371,12 +395,15 @@ class PlaylistBuilder:
             podcast: The podcast to fetch for.
             need: How many unplayed episodes the caller wants, or ``None`` for
                 all (up to :data:`MAX_EPISODES_PER_SHOW`).
-            from_oldest: Read from the tail of the catalogue (a serial's
-                "next unfinished") rather than the head.
+            from_oldest: The rule wants the oldest unplayed episodes (a
+                serial's "next unfinished") rather than the newest. With a
+                ``need``, the walk reads from whichever end of the listing
+                holds them (see :func:`listed_oldest_first`).
 
         Returns:
-            Unplayed, playable episodes in Spotify's newest-first order. The
-            caller sorts and trims; this method only bounds the read.
+            Unplayed, playable episodes newest-first, whichever way Spotify
+            lists the show. The caller sorts and trims; this method only
+            bounds the read.
 
         Raises:
             EpisodeFetchError: if Spotify could not be reached or refused the
@@ -387,13 +414,20 @@ class PlaylistBuilder:
         spotify = await self._get_spotify_client()
 
         try:
-            if from_oldest and need is not None:
-                raw, complete = await self._walk_from_tail(spotify, podcast.spotify_id, need)
+            first = await spotify.get_show_episodes(podcast.spotify_id, limit=PAGE_SIZE, offset=0)
+            oldest_first = listed_oldest_first(first.get("items", []))
+            # The wanted episodes are at the far end of the listing when the
+            # rule's direction and the listing's disagree.
+            if need is not None and from_oldest != oldest_first:
+                raw, complete = await self._walk_from_tail(spotify, podcast.spotify_id, need, first)
             else:
-                raw, complete = await self._walk_from_head(spotify, podcast.spotify_id, need)
+                raw, complete = await self._walk_from_head(spotify, podcast.spotify_id, need, first)
         except Exception as e:
             logger.error(f"Failed to fetch episodes for {podcast.name}: {e}")
             raise EpisodeFetchError(f"{podcast.name}: {e}") from e
+
+        if oldest_first:
+            raw = raw[::-1]
 
         unplayed = [
             Episode(
@@ -424,9 +458,10 @@ class PlaylistBuilder:
     def sort_within_show(episodes: list[Episode], pick_from: PickFrom) -> list[Episode]:
         """Order one show's episodes the way its rule says they are listened to.
 
-        ``episodes`` arrive in Spotify's newest-first catalogue order, which is
-        the only thing that separates episodes released on the same day — a
-        serial that drops parts 1 and 2 together lists part 2 first. The
+        ``episodes`` arrive newest-first (``_fetch_unplayed`` turns an
+        oldest-first listing round), and that order is the only thing that
+        separates episodes released on the same day: a serial that drops
+        parts 1 and 2 together has part 2 first. The
         sorts are stable, so ties keep that order when picking newest and
         must be read from the reversed list when picking oldest; sorting the
         list as given put part 2 ahead of part 1, and a limit of one then
