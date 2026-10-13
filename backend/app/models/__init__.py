@@ -5,11 +5,12 @@ Import ``Base`` from here rather than ``app.database`` when you need
 """
 
 from app.database import Base
-from app.models.playlist import ALL_EPISODES, Arrangement, DateDirection, PickFrom, Playlist
+from app.models.playlist import ALL_EPISODES, Arrangement, DateDirection, PickFrom, Playlist, PlaylistKind
 from app.models.playlist_podcast import PlaylistPodcast
 from app.models.podcast import Podcast
 from app.models.session import Session
 from app.models.settings import AppSetting
+from app.models.sleep_episode import SleepEpisode
 from app.models.sync_log import SyncLog
 from app.models.user import User
 
@@ -23,6 +24,8 @@ __all__ = [
     "Arrangement",
     "DateDirection",
     "PickFrom",
+    "PlaylistKind",
+    "SleepEpisode",
     "SyncLog",
     "Session",
     "AppSetting",

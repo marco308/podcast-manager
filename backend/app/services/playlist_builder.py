@@ -8,7 +8,7 @@ docs/design/assignment-rules.md.
 
 import logging
 import random
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -19,9 +19,10 @@ from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.playlist import Arrangement, DateDirection, PickFrom, Playlist
+from app.models.playlist import Arrangement, DateDirection, PickFrom, Playlist, PlaylistKind
 from app.models.playlist_podcast import PlaylistPodcast
 from app.models.podcast import Podcast
+from app.models.sleep_episode import SleepEpisode
 from app.models.user import User
 from app.services.assignment_rules import ResolvedRule, resolve_rule
 from app.services.spotify import SpotifyService
@@ -34,6 +35,9 @@ logger = logging.getLogger(__name__)
 MAX_EPISODES_PER_SHOW = 500
 # Spotify's page size for /shows/{id}/episodes.
 PAGE_SIZE = 50
+
+# Decides whether a raw Spotify episode belongs in a build.
+EpisodeFilter = Callable[[dict[str, Any] | None], bool]
 
 
 def spotify_playlist_description(name: str) -> str:
@@ -191,6 +195,8 @@ class PlaylistBuilder:
         # One httpx client per build (see ``_shared_http_client``), so the
         # dozens of page reads reuse a connection instead of each opening one.
         self._http_client: httpx.AsyncClient | None = None
+        # Draws ``pick_from = random`` samples; replaceable in tests.
+        self._rng = random.Random()
 
     @asynccontextmanager
     async def _shared_http_client(self) -> AsyncIterator[None]:
@@ -257,17 +263,42 @@ class PlaylistBuilder:
         return [AssignmentEntry(podcast=podcast, assignment=assignment) for podcast, assignment in result.all()]
 
     @staticmethod
-    def _is_unplayed(ep: dict[str, Any] | None) -> bool:
-        """True for a playable, unrestricted episode that is not fully played."""
+    def _is_listenable(ep: dict[str, Any] | None) -> bool:
+        """True for a playable, unrestricted episode."""
         if not ep:
             return False
         if not ep.get("is_playable", True):
             return False
         restrictions = ep.get("restrictions", {})
-        if restrictions and restrictions.get("reason"):
-            return False
+        return not (restrictions and restrictions.get("reason"))
+
+    @staticmethod
+    def _is_fully_played(ep: dict[str, Any]) -> bool:
         resume_point = ep.get("resume_point") or {}
-        return not resume_point.get("fully_played", False)
+        return bool(resume_point.get("fully_played", False))
+
+    @classmethod
+    def _is_unplayed(cls, ep: dict[str, Any] | None) -> bool:
+        """True for a playable, unrestricted episode that is not fully played."""
+        return cls._is_listenable(ep) and not cls._is_fully_played(ep)
+
+    async def _load_sleep_ledger(self) -> set[str]:
+        """Episode IDs a sleep build has served (see :class:`SleepEpisode`)."""
+        result = await self._db.execute(select(SleepEpisode.episode_id))
+        return set(result.scalars().all())
+
+    def _episode_filter(self, playlist: Playlist, ledger: set[str]) -> EpisodeFilter:
+        """What a build of ``playlist`` keeps (issue #331).
+
+        Standard: unplayed, and never served by a sleep playlist — falling
+        asleep to a finished episode makes Spotify call it partially played,
+        and it mustn't come back as new. Sleep: fully played, or served by a
+        sleep playlist before (for the same reason, Spotify no longer says
+        it's played).
+        """
+        if playlist.kind == PlaylistKind.SLEEP.value:
+            return lambda ep: self._is_listenable(ep) and (self._is_fully_played(ep) or ep.get("id") in ledger)
+        return lambda ep: self._is_unplayed(ep) and ep.get("id") not in ledger
 
     async def _walk_from_head(
         self,
@@ -275,14 +306,17 @@ class PlaylistBuilder:
         show_id: str,
         need: int | None,
         first: dict[str, Any] | None = None,
+        wanted: EpisodeFilter | None = None,
     ) -> tuple[list[dict[str, Any]], bool]:
         """Read episodes in catalogue order from offset 0.
 
-        Stops once ``need`` unplayed episodes have been seen (``None`` means
-        read everything up to the cap). ``first`` is the offset-0 page when
-        the caller has already read it. Returns ``(raw_episodes, complete)``
-        where ``complete`` is True only if the whole catalogue was read.
+        Stops once ``need`` wanted episodes (default: unplayed) have been seen
+        (``None`` means read everything up to the cap). ``first`` is the
+        offset-0 page when the caller has already read it. Returns
+        ``(raw_episodes, complete)`` where ``complete`` is True only if the
+        whole catalogue was read.
         """
+        wanted = wanted or self._is_unplayed
         items: list[dict[str, Any]] = []
         unplayed = 0
         offset = 0
@@ -297,7 +331,7 @@ class PlaylistBuilder:
                 return items, True
             items.extend(page)
             offset += len(page)
-            unplayed += sum(1 for ep in page if self._is_unplayed(ep))
+            unplayed += sum(1 for ep in page if wanted(ep))
             if need is not None and unplayed >= need:
                 return items, not data.get("next")
             if not data.get("next"):
@@ -305,9 +339,14 @@ class PlaylistBuilder:
         return items, False
 
     async def _walk_from_tail(
-        self, spotify: SpotifyService, show_id: str, need: int, first: dict[str, Any]
+        self,
+        spotify: SpotifyService,
+        show_id: str,
+        need: int,
+        first: dict[str, Any],
+        wanted: EpisodeFilter | None = None,
     ) -> tuple[list[dict[str, Any]], bool]:
-        """Read episodes from the *end* of the catalogue until ``need`` unplayed are found.
+        """Read episodes from the *end* of the catalogue until ``need`` wanted are found.
 
         Spotify only pages from the head of a show's listing, so the episodes
         at the far end (the oldest of a newest-first show, the newest of an
@@ -328,6 +367,7 @@ class PlaylistBuilder:
         then falls back to reading from the head (``_walk_from_head_fallback``)
         rather than returning nothing.
         """
+        wanted = wanted or self._is_unplayed
         head: list[dict[str, Any]] = list(first.get("items", []))
         total = first.get("total")
         if not isinstance(total, int) or total <= len(head) or not first.get("next"):
@@ -348,7 +388,7 @@ class PlaylistBuilder:
                 # instead of letting the show silently contribute nothing.
                 return await self._walk_from_head_fallback(spotify, show_id)
             tail = page + tail  # keep catalogue order overall
-            unplayed += sum(1 for ep in page if self._is_unplayed(ep))
+            unplayed += sum(1 for ep in page if wanted(ep))
             end = start
             if unplayed >= need:
                 break
@@ -388,8 +428,18 @@ class PlaylistBuilder:
             raise EpisodeFetchError(f"show {show_id} returned no episodes despite a non-zero total")
         return items, complete
 
-    async def _fetch_unplayed(self, podcast: Podcast, *, need: int | None, from_oldest: bool) -> list[Episode]:
+    async def _fetch_unplayed(
+        self,
+        podcast: Podcast,
+        *,
+        need: int | None,
+        from_oldest: bool,
+        wanted: EpisodeFilter | None = None,
+    ) -> list[Episode]:
         """Fetch a show's unplayed episodes, reading only as much as the rule needs.
+
+        ``wanted`` replaces "unplayed" as the test of what to keep — a sleep
+        playlist keeps played episodes instead (see :meth:`_episode_filter`).
 
         Args:
             podcast: The podcast to fetch for.
@@ -419,9 +469,9 @@ class PlaylistBuilder:
             # The wanted episodes are at the far end of the listing when the
             # rule's direction and the listing's disagree.
             if need is not None and from_oldest != oldest_first:
-                raw, complete = await self._walk_from_tail(spotify, podcast.spotify_id, need, first)
+                raw, complete = await self._walk_from_tail(spotify, podcast.spotify_id, need, first, wanted)
             else:
-                raw, complete = await self._walk_from_head(spotify, podcast.spotify_id, need, first)
+                raw, complete = await self._walk_from_head(spotify, podcast.spotify_id, need, first, wanted)
         except Exception as e:
             logger.error(f"Failed to fetch episodes for {podcast.name}: {e}")
             raise EpisodeFetchError(f"{podcast.name}: {e}") from e
@@ -429,30 +479,32 @@ class PlaylistBuilder:
         if oldest_first:
             raw = raw[::-1]
 
-        unplayed = [
+        wanted = wanted or self._is_unplayed
+        kept = [
             Episode(
                 id=ep["id"],
                 uri=ep.get("uri") or f"spotify:episode:{ep['id']}",
                 name=ep.get("name", ""),
                 release_date=ep.get("release_date", ""),
                 duration_ms=ep.get("duration_ms", 0),
-                fully_played=False,
+                fully_played=self._is_fully_played(ep),
                 show_id=podcast.spotify_id,
                 show_name=podcast.name,
             )
             for ep in raw
-            if self._is_unplayed(ep)
+            if wanted(ep)
         ]
 
         # Record the real count as a by-product, but only when the walk saw
         # the whole catalogue (issue #155). A limited rule reads a slice and
         # must not overwrite the count with a partial number. The timestamp
         # lets the UIs say how old the count is (issue #241).
+        # Spotify's own count, whatever this build keeps.
         if complete:
-            podcast.unplayed_episodes = len(unplayed)
+            podcast.unplayed_episodes = sum(1 for ep in raw if self._is_unplayed(ep))
             podcast.unplayed_counted_at = datetime.now(UTC)
 
-        return unplayed
+        return kept
 
     @staticmethod
     def sort_within_show(episodes: list[Episode], pick_from: PickFrom) -> list[Episode]:
@@ -467,7 +519,9 @@ class PlaylistBuilder:
         list as given put part 2 ahead of part 1, and a limit of one then
         skipped part 1 altogether.
         """
-        if pick_from == PickFrom.NEWEST:
+        if pick_from in (PickFrom.NEWEST, PickFrom.RANDOM):
+            # Random picks are sampled after this; newest-first is just a
+            # deterministic starting point.
             return sorted(episodes, key=lambda e: e.release_date_key, reverse=True)
         return sorted(reversed(episodes), key=lambda e: e.release_date_key)
 
@@ -573,15 +627,19 @@ class PlaylistBuilder:
 
         contributions: list[ShowContribution] = []
         failed_podcasts: list[str] = []
+        wanted = self._episode_filter(playlist, await self._load_sleep_ledger())
 
         for entry in entries:
             podcast = entry.podcast
             rule = resolve_rule(playlist, podcast, entry.assignment)
+            # A random sample needs the whole catalogue to draw from.
+            sampled = rule.pick_from == PickFrom.RANDOM
             try:
                 episodes = await self._fetch_unplayed(
                     podcast,
-                    need=None if rule.unlimited else rule.episode_limit,
+                    need=None if rule.unlimited or sampled else rule.episode_limit,
                     from_oldest=rule.pick_from == PickFrom.OLDEST,
+                    wanted=wanted,
                 )
             except EpisodeFetchError:
                 # Keep going: one permanently-broken show (region-locked,
@@ -590,7 +648,11 @@ class PlaylistBuilder:
                 continue
 
             episodes = self.sort_within_show(episodes, rule.pick_from)
-            if not rule.unlimited:
+            if sampled:
+                episodes = self._rng.sample(
+                    episodes, len(episodes) if rule.unlimited else min(rule.episode_limit, len(episodes))
+                )
+            elif not rule.unlimited:
                 episodes = episodes[: rule.episode_limit]
             contributions.append(ShowContribution(show_id=podcast.spotify_id, rule=rule, episodes=episodes))
 
@@ -644,6 +706,22 @@ class PlaylistBuilder:
         logger.info(f"Created Spotify playlist '{playlist.name}' with ID {playlist.spotify_playlist_id}")
 
         return playlist.spotify_playlist_id
+
+    async def _record_sleep_served(self, episode_uris: list[str]) -> None:
+        """Add the episodes a sleep build just wrote to the ledger (issue #331).
+
+        Runs under ``playlist_write_lock`` like every build, so the
+        read-then-insert can't race another writer.
+        """
+        ids = {uri.rsplit(":", 1)[-1] for uri in episode_uris if uri.startswith("spotify:episode:")}
+        if not ids:
+            return
+        now = datetime.now(UTC)
+        result = await self._db.execute(select(SleepEpisode).where(SleepEpisode.episode_id.in_(ids)))
+        for row in result.scalars().all():
+            row.last_served_at = now
+            ids.discard(row.episode_id)
+        self._db.add_all(SleepEpisode(episode_id=i, first_served_at=now, last_served_at=now) for i in ids)
 
     async def update_playlist(self, playlist: Playlist) -> PlaylistUpdateResult:
         """Update a single playlist, sharing one HTTP connection for the build."""
@@ -710,6 +788,8 @@ class PlaylistBuilder:
             # refresh token, any request) timed out with "database is
             # locked" until the whole run finished.
             playlist.last_updated_at = datetime.now(UTC)
+            if playlist.kind == PlaylistKind.SLEEP.value:
+                await self._record_sleep_served(episode_uris)
             await self._db.commit()
 
             logger.info(f"Updated playlist '{playlist.name}' with {len(episode_uris)} episodes")

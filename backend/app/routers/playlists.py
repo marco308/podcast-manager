@@ -8,13 +8,19 @@ from typing import Annotated
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.jobs import locks
-from app.models.playlist import Playlist
+from app.models.playlist import (
+    SLEEP_DEFAULT_EPISODE_LIMIT,
+    Arrangement,
+    PickFrom,
+    Playlist,
+    PlaylistKind,
+)
 from app.models.playlist_podcast import PlaylistPodcast
 from app.models.podcast import Podcast
 from app.models.session import Session
@@ -109,6 +115,7 @@ def _build_playlist_response(playlist: Playlist, podcast_count: int) -> Playlist
         id=playlist.id,
         name=playlist.name,
         is_enabled=playlist.is_enabled,
+        kind=playlist.kind,
         default_episode_limit=playlist.default_episode_limit,
         default_pick_from=playlist.default_pick_from,
         arrangement=playlist.arrangement,
@@ -118,6 +125,23 @@ def _build_playlist_response(playlist: Playlist, podcast_count: int) -> Playlist
         created_at=playlist.created_at,
         podcast_count=podcast_count,
     )
+
+
+_RANDOM_NEEDS_SLEEP = "A random pick is only available on sleep playlists"
+
+
+def _apply_sleep_defaults(playlist: Playlist, fields_set: set[str]) -> None:
+    """Give a playlist that just became a sleep playlist its defaults.
+
+    Only for the settings the request didn't set itself: shuffle, a random
+    pick, at most 10 episodes per show (issue #331).
+    """
+    if "arrangement" not in fields_set:
+        playlist.arrangement = Arrangement.SHUFFLE.value
+    if "default_pick_from" not in fields_set:
+        playlist.default_pick_from = PickFrom.RANDOM.value
+    if "default_episode_limit" not in fields_set:
+        playlist.default_episode_limit = SLEEP_DEFAULT_EPISODE_LIMIT
 
 
 async def _commit_playlist(db: AsyncSession) -> None:
@@ -322,6 +346,8 @@ async def create_playlist(
     db: AsyncSession = Depends(get_db),
 ) -> PlaylistResponse:
     """Create a new playlist."""
+    if playlist_data.kind != PlaylistKind.SLEEP and playlist_data.default_pick_from == PickFrom.RANDOM:
+        raise HTTPException(status_code=422, detail=_RANDOM_NEEDS_SLEEP)
     if playlist_data.spotify_playlist_id is not None:
         await _check_spotify_playlist_link(db, session.user_id, playlist_data.spotify_playlist_id)
 
@@ -330,11 +356,14 @@ async def create_playlist(
         name=playlist_data.name,
         spotify_playlist_id=playlist_data.spotify_playlist_id,
         is_enabled=playlist_data.is_enabled,
+        kind=playlist_data.kind.value,
         default_episode_limit=playlist_data.default_episode_limit,
         default_pick_from=playlist_data.default_pick_from.value,
         arrangement=playlist_data.arrangement.value,
         date_direction=playlist_data.date_direction.value,
     )
+    if playlist_data.kind == PlaylistKind.SLEEP:
+        _apply_sleep_defaults(playlist, playlist_data.model_fields_set)
     db.add(playlist)
     await _commit_playlist(db)
 
@@ -363,6 +392,10 @@ async def update_playlist(
 ) -> PlaylistResponse:
     """Update playlist configuration."""
     playlist = await _get_owned_playlist(db, playlist_id, session.user_id)
+
+    new_kind = update_data.kind.value if update_data.kind is not None else playlist.kind
+    if new_kind != PlaylistKind.SLEEP.value and update_data.default_pick_from == PickFrom.RANDOM:
+        raise HTTPException(status_code=422, detail=_RANDOM_NEEDS_SLEEP)
 
     # Present-and-null unlinks (the Spotify playlist is left in place and a
     # new one is created on the next run); an absent field is left alone.
@@ -412,6 +445,22 @@ async def update_playlist(
         playlist.arrangement = update_data.arrangement.value
     if update_data.date_direction is not None:
         playlist.date_direction = update_data.date_direction.value
+    if new_kind != playlist.kind:
+        # The next rebuild replaces everything, so switching kind is just a
+        # column change plus the settings that only make sense for one kind.
+        playlist.kind = new_kind
+        if new_kind == PlaylistKind.SLEEP.value:
+            _apply_sleep_defaults(playlist, update_data.model_fields_set)
+        else:
+            if playlist.default_pick_from == PickFrom.RANDOM.value:
+                playlist.default_pick_from = PickFrom.NEWEST.value
+            await db.execute(
+                update(PlaylistPodcast)
+                .where(
+                    (PlaylistPodcast.playlist_id == playlist.id) & (PlaylistPodcast.pick_from == PickFrom.RANDOM.value)
+                )
+                .values(pick_from=None)
+            )
 
     await _commit_playlist(db)
 
@@ -564,6 +613,9 @@ async def update_playlist_podcast(
     if row is None:
         raise HTTPException(status_code=404, detail="Podcast not assigned to this playlist")
     podcast, assignment = row
+
+    if data.pick_from == PickFrom.RANDOM and playlist.kind != PlaylistKind.SLEEP.value:
+        raise HTTPException(status_code=422, detail=_RANDOM_NEEDS_SLEEP)
 
     if "episode_limit" in data.model_fields_set:
         assignment.episode_limit = data.episode_limit

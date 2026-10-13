@@ -29,7 +29,7 @@ import {
   useRunPlaylistWithFeedback,
   useRunAllPlaylistsWithFeedback,
 } from '../hooks';
-import { LoadingSpinner, PlaylistFormModal } from '../components';
+import { LoadingSpinner, PlaylistFormModal, SleepTag } from '../components';
 import { getErrorMessage } from '../api';
 import { arrangementLabel, ruleSummary, spotifyPlaylistUrl } from '../utils/playlistLabels';
 import type { Playlist } from '../types';
@@ -84,10 +84,11 @@ export function Playlists() {
           <Link to={`/playlists/${record.id}`}>
             <Text strong>{name}</Text>
           </Link>
+          {record.kind === 'sleep' && <SleepTag style={{ marginLeft: 8 }} />}
           {isMobile && (
             <div style={{ marginTop: 4 }}>
               <Tag color="blue">
-                {ruleSummary(record.default_episode_limit, record.default_pick_from)}
+                {ruleSummary(record.default_episode_limit, record.default_pick_from, record.kind)}
               </Tag>
               {record.is_enabled ? <Tag color="success">On</Tag> : <Tag color="default">Off</Tag>}
               {spotifyPlaylistUrl(record.spotify_playlist_id) && (
@@ -112,7 +113,7 @@ export function Playlists() {
       render: (_, record) => (
         <Tooltip title="Default episodes per podcast · where they are taken from">
           <Tag color={record.default_episode_limit === 0 ? 'blue' : 'green'}>
-            {ruleSummary(record.default_episode_limit, record.default_pick_from)}
+            {ruleSummary(record.default_episode_limit, record.default_pick_from, record.kind)}
           </Tag>
         </Tooltip>
       ),

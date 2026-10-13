@@ -1,24 +1,36 @@
-import type { AssignmentRule, PickFrom, Playlist } from '../types';
+import type { AssignmentRule, PickFrom, Playlist, PlaylistKind } from '../types';
 
 // Human labels for the playlist rule model (docs/design/assignment-rules.md),
 // shared by the list table, the dashboard and the detail page so every
 // screen describes a rule the same way.
 
-export function episodeLimitLabel(limit: number): string {
+// A sleep playlist takes episodes already finished, so its limits count
+// played episodes, and "Latest only" makes no sense next to a random pick.
+export function episodeLimitLabel(limit: number, kind: PlaylistKind = 'standard'): string {
+  if (kind === 'sleep') {
+    if (limit === 0) return 'All played';
+    return `Up to ${limit} played`;
+  }
   if (limit === 0) return 'All unplayed';
   if (limit === 1) return 'Latest only';
   return `Up to ${limit}`;
 }
 
 export function pickFromLabel(pick: PickFrom): string {
+  if (pick === 'random') return 'random';
   return pick === 'newest' ? 'newest' : 'oldest';
 }
 
-// e.g. "Latest only · newest", "Up to 3 · oldest", "All unplayed · oldest".
+// e.g. "Latest only · newest", "Up to 3 · oldest", "All unplayed · oldest",
+// or on a sleep playlist "Up to 10 played · random".
 // The direction is shown even when unlimited because it still sets the order
 // the show's episodes are listened to within its group.
-export function ruleSummary(limit: number, pick: PickFrom): string {
-  return `${episodeLimitLabel(limit)} · ${pickFromLabel(pick)}`;
+export function ruleSummary(
+  limit: number,
+  pick: PickFrom,
+  kind: PlaylistKind = 'standard'
+): string {
+  return `${episodeLimitLabel(limit, kind)} · ${pickFromLabel(pick)}`;
 }
 
 export function dateDirectionLabel(direction: Playlist['date_direction']): string {

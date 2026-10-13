@@ -7,7 +7,7 @@ shows is exactly what the next build will do (docs/design/assignment-rules.md).
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
-from app.models.playlist import PickFrom
+from app.models.playlist import PickFrom, PlaylistKind
 
 RuleSource = Literal["override", "sequential", "playlist"]
 
@@ -51,7 +51,8 @@ def resolve_rule(
 
     - ``episode_limit``: assignment override, else the playlist default.
     - ``pick_from``: assignment override, else ``oldest`` when the podcast is
-      sequential, else the playlist default.
+      sequential, else the playlist default. A sleep playlist ignores the
+      sequential hint: order doesn't matter to someone asleep (issue #331).
 
     ``assignment`` may be ``None`` for callers that want "what would a fresh
     row get" (e.g. previewing before adding).
@@ -63,7 +64,7 @@ def resolve_rule(
 
     if assignment is not None and assignment.pick_from is not None:
         pick, pick_source = PickFrom(assignment.pick_from), "override"
-    elif podcast.is_sequential:
+    elif podcast.is_sequential and getattr(playlist, "kind", PlaylistKind.STANDARD.value) != PlaylistKind.SLEEP.value:
         pick, pick_source = PickFrom.OLDEST, "sequential"
     else:
         pick, pick_source = PickFrom(playlist.default_pick_from), "playlist"

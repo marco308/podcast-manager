@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Playlist, PlaylistPodcast, Podcast, Session, SyncLog, User
+from app.models import Playlist, PlaylistPodcast, Podcast, Session, SleepEpisode, SyncLog, User
 
 
 @dataclass(frozen=True)
@@ -33,7 +33,7 @@ class AccountDeletionResult:
 async def delete_account(db: AsyncSession, user_id: int) -> AccountDeletionResult:
     """Delete the user and everything stored for them. Does not commit.
 
-    ``podcasts`` and ``sync_logs`` have no ``user_id`` — they are global by
+    ``podcasts``, ``sync_logs`` and ``sleep_episodes`` have no ``user_id`` — they are global by
     design, because the deployment is single-user (issue #154). They are
     wiped only when no other user remains, so a deployment that predates the
     registration lock never loses another user's library.
@@ -55,6 +55,7 @@ async def delete_account(db: AsyncSession, user_id: int) -> AccountDeletionResul
         await db.execute(delete(PlaylistPodcast))
         podcast_count = (await db.execute(delete(Podcast))).rowcount or 0
         await db.execute(delete(SyncLog))
+        await db.execute(delete(SleepEpisode))
 
     await db.flush()
     return AccountDeletionResult(

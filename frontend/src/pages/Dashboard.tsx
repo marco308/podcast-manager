@@ -14,7 +14,7 @@ import {
   useSyncPodcastsWithFeedback,
   useRunAllPlaylistsWithFeedback,
 } from '../hooks';
-import { LoadingSpinner } from '../components';
+import { LoadingSpinner, SleepTag } from '../components';
 import { ruleSummary, spotifyPlaylistUrl } from '../utils/playlistLabels';
 
 const { Title, Text } = Typography;
@@ -167,8 +167,13 @@ export function Dashboard() {
                         color={playlist.default_episode_limit === 0 ? 'blue' : 'green'}
                         style={{ width: 'fit-content' }}
                       >
-                        {ruleSummary(playlist.default_episode_limit, playlist.default_pick_from)}
+                        {ruleSummary(
+                          playlist.default_episode_limit,
+                          playlist.default_pick_from,
+                          playlist.kind
+                        )}
                       </Tag>
+                      {playlist.kind === 'sleep' && <SleepTag />}
                     </Space>
                     <Text type="secondary" style={{ fontSize: 12 }}>
                       {playlist.podcast_count} podcast{playlist.podcast_count !== 1 ? 's' : ''}
