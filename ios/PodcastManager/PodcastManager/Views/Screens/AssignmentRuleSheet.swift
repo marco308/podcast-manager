@@ -19,7 +19,7 @@ struct AssignmentRuleSheet: View {
     }
 
     private enum PickChoice: Hashable {
-        case inherit, newest, oldest
+        case inherit, newest, oldest, random
     }
 
     @State private var limitChoice: LimitChoice
@@ -54,6 +54,7 @@ struct AssignmentRuleSheet: View {
         switch override.pickFrom {
         case "newest": _pickChoice = State(initialValue: .newest)
         case "oldest": _pickChoice = State(initialValue: .oldest)
+        case "random": _pickChoice = State(initialValue: .random)
         default: _pickChoice = State(initialValue: .inherit)
         }
         _isSequential = State(initialValue: podcast.isSequential)
@@ -66,7 +67,8 @@ struct AssignmentRuleSheet: View {
                     PodcastRow(podcast: podcast)
                     LabeledContent("Next rebuild", value: episodeRuleSummary(
                         limit: resolvedLimit,
-                        pickFrom: resolvedPickFrom
+                        pickFrom: resolvedPickFrom,
+                        sleep: playlist.isSleep
                     ))
                 }
 
@@ -119,9 +121,9 @@ struct AssignmentRuleSheet: View {
     private var episodesSection: some View {
         Section {
             Picker("Episodes", selection: $limitChoice) {
-                Text("Playlist default (\(episodeLimitLabel(playlist.defaultEpisodeLimit)))").tag(LimitChoice.inherit)
-                Text("All unplayed").tag(LimitChoice.all)
-                Text("Latest only").tag(LimitChoice.latest)
+                Text("Playlist default (\(limitLabel(playlist.defaultEpisodeLimit)))").tag(LimitChoice.inherit)
+                Text(limitLabel(0)).tag(LimitChoice.all)
+                Text(limitLabel(1)).tag(LimitChoice.latest)
                 Text("Up to…").tag(LimitChoice.custom)
             }
             .pickerStyle(.inline)
@@ -137,23 +139,32 @@ struct AssignmentRuleSheet: View {
         } header: {
             Text("Episodes")
         } footer: {
-            Text("How many unplayed episodes this podcast adds on each rebuild.")
+            Text(playlist.isSleep
+                ? "How many already-played episodes this podcast adds on each rebuild."
+                : "How many unplayed episodes this podcast adds on each rebuild.")
         }
     }
 
     private var takeFromSection: some View {
         Section {
             Picker("Take from", selection: $pickChoice) {
-                Text("Default (\(inheritedPickFrom)\(isSequential ? ", sequential" : ""))").tag(PickChoice.inherit)
+                Text("Default (\(inheritedPickFrom)\(isSequential && !playlist.isSleep ? ", sequential" : ""))")
+                    .tag(PickChoice.inherit)
                 Text("Newest").tag(PickChoice.newest)
                 Text("Oldest").tag(PickChoice.oldest)
+                // Only a sleep playlist accepts a random pick (the server 422s it elsewhere).
+                if playlist.isSleep || pickChoice == .random {
+                    Text("Random").tag(PickChoice.random)
+                }
             }
             .pickerStyle(.inline)
             .labelsHidden()
         } header: {
             Text("Take From")
         } footer: {
-            Text("Newest takes the latest unplayed episodes. Oldest starts from the earliest unplayed one, so a series plays in order.")
+            Text(playlist.isSleep
+                ? "Random draws a fresh set of played episodes on every rebuild. Newest and Oldest take from either end."
+                : "Newest takes the latest unplayed episodes. Oldest starts from the earliest unplayed one, so a series plays in order.")
         }
     }
 
@@ -178,6 +189,7 @@ struct AssignmentRuleSheet: View {
         case .inherit: nil
         case .newest: "newest"
         case .oldest: "oldest"
+        case .random: "random"
         }
         return AssignmentOverride(episodeLimit: limit, pickFrom: pick)
     }
@@ -187,8 +199,9 @@ struct AssignmentRuleSheet: View {
     }
 
     /// The direction an un-overridden row gets, as `resolve_rule` decides it.
+    /// A sleep playlist ignores the sequential hint (issue #331).
     private var inheritedPickFrom: String {
-        isSequential ? "oldest" : playlist.defaultPickFrom
+        isSequential && !playlist.isSleep ? "oldest" : playlist.defaultPickFrom
     }
 
     private var resolvedLimit: Int {
@@ -199,12 +212,8 @@ struct AssignmentRuleSheet: View {
         newOverride.pickFrom ?? inheritedPickFrom
     }
 
-    private func episodeLimitLabel(_ limit: Int) -> String {
-        switch limit {
-        case 0: return "All unplayed"
-        case 1: return "Latest only"
-        default: return "Up to \(limit)"
-        }
+    private func limitLabel(_ limit: Int) -> String {
+        episodeLimitLabel(limit, sleep: playlist.isSleep)
     }
 
     // MARK: - Save

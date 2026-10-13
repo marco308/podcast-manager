@@ -51,6 +51,7 @@ struct PlaylistFormSheet: View {
         NavigationStack {
             Form {
                 nameSection
+                kindSection
                 spotifySection
                 arrangementSection
                 episodesSection
@@ -109,6 +110,22 @@ struct PlaylistFormSheet: View {
         }
     }
 
+    private var kindSection: some View {
+        Section {
+            Picker("Kind", selection: Binding(get: { draft.kind }, set: { setKind($0) })) {
+                Text("Standard").tag(PlaylistKind.standard)
+                Label("Sleep", systemImage: "moon.fill").tag(PlaylistKind.sleep)
+            }
+            .pickerStyle(.segmented)
+        } header: {
+            Text("Kind")
+        } footer: {
+            Text(draft.isSleep
+                ? "Sleep plays only episodes you've already finished \u{2014} for falling asleep to."
+                : "Standard plays episodes you haven't heard yet.")
+        }
+    }
+
     private var spotifySection: some View {
         Section {
             NavigationLink {
@@ -160,8 +177,8 @@ struct PlaylistFormSheet: View {
     private var episodesSection: some View {
         Section {
             Picker("Episodes per podcast", selection: $limitChoice) {
-                Text("All unplayed").tag(LimitChoice.all)
-                Text("Latest only").tag(LimitChoice.latest)
+                Text(episodeLimitLabel(0, sleep: draft.isSleep)).tag(LimitChoice.all)
+                Text(episodeLimitLabel(1, sleep: draft.isSleep)).tag(LimitChoice.latest)
                 Text("Up to…").tag(LimitChoice.custom)
             }
             if limitChoice == .custom {
@@ -181,9 +198,15 @@ struct PlaylistFormSheet: View {
             Picker("Take from", selection: $draft.defaultPickFrom) {
                 Text("Newest").tag("newest")
                 Text("Oldest").tag("oldest")
+                // Only a sleep playlist accepts a random pick (the server 422s it elsewhere).
+                if draft.isSleep {
+                    Text("Random").tag("random")
+                }
             }
         } footer: {
-            Text("Sequential podcasts always take from the oldest unfinished episode unless overridden on the podcast.")
+            Text(draft.isSleep
+                ? "Random draws a fresh set of played episodes on every rebuild."
+                : "Sequential podcasts always take from the oldest unfinished episode unless overridden on the podcast.")
         }
     }
 
@@ -230,6 +253,16 @@ struct PlaylistFormSheet: View {
     }
 
     // MARK: - State
+
+    /// Kind changes carry presets (see `PlaylistDraft.setKind`); the episode
+    /// limit lives in `limitChoice` / `customLimit` here, so mirror it.
+    private func setKind(_ kind: String) {
+        draft.setKind(kind)
+        if draft.isSleep {
+            limitChoice = .custom
+            customLimit = draft.defaultEpisodeLimit
+        }
+    }
 
     private var trimmedName: String {
         draft.name.trimmingCharacters(in: .whitespacesAndNewlines)

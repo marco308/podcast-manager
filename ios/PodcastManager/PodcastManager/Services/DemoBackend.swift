@@ -113,7 +113,7 @@ actor DemoBackend {
             defaultEpisodeLimit: draft.defaultEpisodeLimit, defaultPickFrom: draft.defaultPickFrom,
             arrangement: draft.arrangement, dateDirection: draft.dateDirection,
             spotifyPlaylistId: draft.spotifyPlaylistId, lastUpdatedAt: nil,
-            createdAt: iso(Date()), podcastCount: 0
+            createdAt: iso(Date()), podcastCount: 0, kind: draft.kind
         )
         playlists.append(playlist)
         assignments[playlist.id] = []
@@ -132,8 +132,15 @@ actor DemoBackend {
             defaultEpisodeLimit: draft.defaultEpisodeLimit, defaultPickFrom: draft.defaultPickFrom,
             arrangement: draft.arrangement, dateDirection: draft.dateDirection,
             spotifyPlaylistId: draft.spotifyPlaylistId, lastUpdatedAt: p.lastUpdatedAt,
-            createdAt: p.createdAt, podcastCount: p.podcastCount
+            createdAt: p.createdAt, podcastCount: p.podcastCount, kind: draft.kind
         )
+        if !draft.isSleep {
+            // Like the server: random overrides only make sense on sleep.
+            for key in overrides.keys where key.playlistId == id && overrides[key]?.pickFrom == PlaylistKind.sleepPickFrom {
+                overrides[key]?.pickFrom = nil
+                if overrides[key] == AssignmentOverride() { overrides[key] = nil }
+            }
+        }
         return withCount(playlists[index])
     }
 
@@ -172,6 +179,9 @@ actor DemoBackend {
         }
         guard (0...AssignmentOverride.episodeLimitMax).contains(draft.defaultEpisodeLimit) else {
             throw APIError.httpError(422, "Episode limit must be between 0 and \(AssignmentOverride.episodeLimitMax)")
+        }
+        if draft.defaultPickFrom == PlaylistKind.sleepPickFrom && !draft.isSleep {
+            throw APIError.httpError(422, "A random pick is only available on sleep playlists")
         }
         guard let link = draft.spotifyPlaylistId,
               link != playlists.first(where: { $0.id == playlistId })?.spotifyPlaylistId
@@ -255,8 +265,12 @@ actor DemoBackend {
         if let limit = override.episodeLimit, !(0...AssignmentOverride.episodeLimitMax).contains(limit) {
             throw APIError.httpError(422, "Episode limit must be between 0 and \(AssignmentOverride.episodeLimitMax)")
         }
-        if let pick = override.pickFrom, !["newest", "oldest"].contains(pick) {
-            throw APIError.httpError(422, "Input should be 'newest' or 'oldest'")
+        if let pick = override.pickFrom, !["newest", "oldest", "random"].contains(pick) {
+            throw APIError.httpError(422, "Input should be 'newest', 'oldest' or 'random'")
+        }
+        if override.pickFrom == PlaylistKind.sleepPickFrom,
+           playlists.first(where: { $0.id == playlistId })?.isSleep != true {
+            throw APIError.httpError(422, "A random pick is only available on sleep playlists")
         }
         await pause(0.3)
         let key = AssignmentKey(playlistId: playlistId, podcastId: podcastId)
@@ -364,7 +378,7 @@ actor DemoBackend {
             defaultEpisodeLimit: p.defaultEpisodeLimit, defaultPickFrom: p.defaultPickFrom,
             arrangement: p.arrangement, dateDirection: p.dateDirection,
             spotifyPlaylistId: p.spotifyPlaylistId, lastUpdatedAt: p.lastUpdatedAt,
-            createdAt: p.createdAt, podcastCount: assignments[p.id]?.count ?? 0
+            createdAt: p.createdAt, podcastCount: assignments[p.id]?.count ?? 0, kind: p.kind
         )
     }
 
@@ -376,18 +390,19 @@ actor DemoBackend {
             defaultEpisodeLimit: p.defaultEpisodeLimit, defaultPickFrom: p.defaultPickFrom,
             arrangement: p.arrangement, dateDirection: p.dateDirection,
             spotifyPlaylistId: p.spotifyPlaylistId, lastUpdatedAt: iso(Date()),
-            createdAt: p.createdAt, podcastCount: p.podcastCount
+            createdAt: p.createdAt, podcastCount: p.podcastCount, kind: p.kind
         )
     }
 
     /// Mirrors `services/assignment_rules.py::resolve_rule`: override, then
-    /// the sequential hint (pick-from only), then the playlist default.
+    /// the sequential hint (pick-from only, and not on a sleep playlist), then
+    /// the playlist default.
     private func rule(for podcast: Podcast, in playlist: Playlist) -> AssignmentRule {
         let override = overrides[AssignmentKey(playlistId: playlist.id, podcastId: podcast.id)]
         let pick: (String, String)
         if let pickFrom = override?.pickFrom {
             pick = (pickFrom, "override")
-        } else if podcast.isSequential {
+        } else if podcast.isSequential && !playlist.isSleep {
             pick = ("oldest", "sequential")
         } else {
             pick = (playlist.defaultPickFrom, "playlist")

@@ -51,6 +51,7 @@ If one of these is ever wanted on iOS, it is a plain addition to `APIClient` (th
 - Custom `init(from:)` decoder with defaults for missing fields
 - Handles both `/api/podcasts` (full schema with `playlist_ids`, `created_at`) and `/api/playlists/{id}/podcasts` (subset with `position`, the resolved `rule` and the raw `override`, no `playlist_ids`)
 - `PlaylistDraft` always encodes `spotify_playlist_id`, as `null` when unlinked, for the same reason: on `PATCH /api/playlists/{id}` an absent key keeps the old link
+- `Playlist.kind` is optional (nil = standard, from servers before sleep playlists). Change a draft's kind with `PlaylistDraft.setKind(_:)`, which applies the sleep presets (shuffle / random / 10) or turns `random` back into `newest`, as the server and web form do. `random` is offered only on sleep playlists, and a sleep playlist ignores the sequential hint (`DemoBackend` mirrors both)
 - The rule sheet always PATCHes both override keys, with `null` for "inherit": the backend treats present-and-null as clear and an absent key as leave alone
 
 ## Gotchas
