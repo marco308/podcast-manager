@@ -4,13 +4,12 @@ Before you install: this app needs a Podcast Manager server of your own and a Sp
 
 ON YOUR PHONE
 • Browse your podcast library and sync it with Spotify
+• Create playlists and change their settings: arrangement, how many episodes each show adds, newest or oldest first
+• Add shows to a playlist, remove them and drag them into order
+• Fine-tune any show in a playlist: how many episodes it adds and where it starts
 • Mark story-based shows as sequential, so their episodes play oldest first
-• Add shows to a playlist or remove them, and see the exact rule each one follows
 • Run a playlist now instead of waiting for the daily rebuild
 • Check the background jobs and change what time the daily rebuild runs
-
-ON THE WEB
-Creating playlists, changing their settings and setting per-show rules happen in the Podcast Manager web app, which runs on the same server.
 
 YOUR DATA STAYS ON YOUR SERVER
 Your library and playlists go only to the server you enter; podcast artwork loads from Spotify, and "Open in Spotify" links open Spotify. The app has no analytics, no ads and no tracking. You can delete your account and data from Settings at any time.

@@ -31,6 +31,92 @@ struct DemoBackendTests {
         #expect(try await demo.fetchPlaylistPodcasts(playlistId: 1).items.contains { $0.id == 4 } == false)
     }
 
+    @Test func reorderSetsPositionsAndRefusesPartialLists() async throws {
+        let demo = DemoBackend()
+        _ = try await demo.reorderPodcasts(playlistId: 2, podcastIds: [10, 2, 3])
+        let rows = try await demo.fetchPlaylistPodcasts(playlistId: 2).items
+        #expect(rows.map(\.id) == [10, 2, 3])
+        // Partial, repeated or foreign lists change nothing, like the backend.
+        for bad in [[10, 2], [10, 2, 2], [10, 2, 4]] {
+            await #expect(throws: APIError.self) {
+                _ = try await demo.reorderPodcasts(playlistId: 2, podcastIds: bad)
+            }
+        }
+        #expect(try await demo.fetchPlaylistPodcasts(playlistId: 2).items.map(\.id) == [10, 2, 3])
+    }
+
+    @Test func overridesResolveAndClearLikeTheBackend() async throws {
+        let demo = DemoBackend()
+        // Long Haul (2) is sequential in Deep Dives (2): oldest by the hint.
+        var row = try await demo.updateAssignment(
+            playlistId: 2, podcastId: 2,
+            override: AssignmentOverride(episodeLimit: 5, pickFrom: "newest")
+        )
+        #expect(row.rule == AssignmentRule(
+            episodeLimit: 5, pickFrom: "newest",
+            episodeLimitSource: "override", pickFromSource: "override"
+        ))
+        #expect(row.override == AssignmentOverride(episodeLimit: 5, pickFrom: "newest"))
+
+        // Clearing both goes back to the playlist default and the hint.
+        row = try await demo.updateAssignment(playlistId: 2, podcastId: 2, override: AssignmentOverride())
+        #expect(row.rule?.episodeLimitSource == "playlist")
+        #expect(row.rule?.pickFromSource == "sequential")
+        #expect(row.rule?.isCustom == false)
+
+        await #expect(throws: APIError.self) {
+            _ = try await demo.updateAssignment(
+                playlistId: 2, podcastId: 2, override: AssignmentOverride(episodeLimit: 501)
+            )
+        }
+        await #expect(throws: APIError.self) {
+            _ = try await demo.updateAssignment(playlistId: 1, podcastId: 2, override: AssignmentOverride())
+        }
+    }
+
+    @Test func playlistLifecycleChecksLinksLikeTheBackend() async throws {
+        let demo = DemoBackend()
+        var draft = PlaylistDraft.new
+        draft.name = "Evening Walk"
+        draft.spotifyPlaylistId = "demoKitchenRadio000002"
+        let created = try await demo.createPlaylist(draft)
+        #expect(created.podcastCount == 0)
+        #expect(try await demo.fetchPlaylistPodcasts(playlistId: created.id).items.isEmpty)
+
+        // The picker marks it taken, and a second link to it is refused.
+        let options = await demo.spotifyPlaylists().items
+        #expect(options.first { $0.id == "demoKitchenRadio000002" }?.linkedPlaylistId == created.id)
+        var other = PlaylistDraft(try #require(await demo.fetchPlaylists().items.first { $0.id == 1 }))
+        other.spotifyPlaylistId = "demoKitchenRadio000002"
+        await #expect(throws: APIError.self) { _ = try await demo.updatePlaylist(id: 1, draft: other) }
+        // Only playlists the user owns can be linked.
+        other.spotifyPlaylistId = "notMine"
+        await #expect(throws: APIError.self) { _ = try await demo.updatePlaylist(id: 1, draft: other) }
+
+        // Saving it unchanged keeps its own link; editing applies.
+        draft.arrangement = "shuffle"
+        draft.defaultEpisodeLimit = 3
+        let updated = try await demo.updatePlaylist(id: created.id, draft: draft)
+        #expect(updated.arrangement == "shuffle")
+        #expect(updated.defaultEpisodeLimit == 3)
+        #expect(updated.spotifyPlaylistId == "demoKitchenRadio000002")
+
+        // Deleting with Spotify removes it from the picker too.
+        _ = try await demo.deletePlaylist(id: created.id, removeFromSpotify: true)
+        #expect(await demo.fetchPlaylists().items.contains { $0.id == created.id } == false)
+        #expect(await demo.spotifyPlaylists().items.contains { $0.id == "demoKitchenRadio000002" } == false)
+    }
+
+    @Test func playlistDraftSendsNullToUnlink() throws {
+        var draft = PlaylistDraft.new
+        draft.name = "X"
+        let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(draft)) as? [String: Any]
+        // Present-and-null is what tells PATCH to unlink; absent would keep the link.
+        #expect(json?.keys.contains("spotify_playlist_id") == true)
+        #expect(json?["spotify_playlist_id"] is NSNull)
+        #expect(json?["default_episode_limit"] as? Int == 0)
+    }
+
     @Test func disabledPlaylistRefusesARun() async throws {
         let demo = DemoBackend()
         await #expect(throws: APIError.self) {

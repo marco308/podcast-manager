@@ -15,9 +15,15 @@ actor DemoBackend {
     private var playlists: [Playlist]
     /// Playlist id → podcast ids in position order.
     private var assignments: [Int: [Int]]
-    /// Per-assignment episode-limit overrides, to show the "Custom" badge.
-    private var limitOverrides: [AssignmentKey: Int]
+    /// Per-assignment overrides; a key with no entry inherits both parts.
+    private var overrides: [AssignmentKey: AssignmentOverride]
     private var scheduleTimes = [JobSchedule(hour: 6, minute: 0)]
+    /// The demo listener's own Spotify playlists, for the link picker.
+    private var spotifyOwned: [(id: String, name: String, items: Int)] = [
+        ("demoRoadTrip0000000001", "Road Trip Listening", 14),
+        ("demoKitchenRadio000002", "Kitchen Radio", 6),
+        ("demoOldMornings0000003", "Old Mornings", 0),
+    ]
     private var lastDailyRun: Date
 
     private struct AssignmentKey: Hashable {
@@ -30,7 +36,7 @@ actor DemoBackend {
         podcasts = seed.podcasts
         playlists = seed.playlists
         assignments = seed.assignments
-        limitOverrides = [AssignmentKey(playlistId: 2, podcastId: 3): 3]
+        overrides = [AssignmentKey(playlistId: 2, podcastId: 3): AssignmentOverride(episodeLimit: 3)]
         lastDailyRun = seed.lastDailyRun
     }
 
@@ -98,6 +104,86 @@ actor DemoBackend {
         return PlaylistListResponse(items: items, total: items.count)
     }
 
+    func createPlaylist(_ draft: PlaylistDraft) async throws -> Playlist {
+        try validate(draft, playlistId: nil)
+        await pause(0.4)
+        let playlist = Playlist(
+            id: (playlists.map(\.id).max() ?? 0) + 1,
+            name: draft.name, isEnabled: draft.isEnabled,
+            defaultEpisodeLimit: draft.defaultEpisodeLimit, defaultPickFrom: draft.defaultPickFrom,
+            arrangement: draft.arrangement, dateDirection: draft.dateDirection,
+            spotifyPlaylistId: draft.spotifyPlaylistId, lastUpdatedAt: nil,
+            createdAt: iso(Date()), podcastCount: 0
+        )
+        playlists.append(playlist)
+        assignments[playlist.id] = []
+        return playlist
+    }
+
+    func updatePlaylist(id: Int, draft: PlaylistDraft) async throws -> Playlist {
+        guard let index = playlists.firstIndex(where: { $0.id == id }) else {
+            throw APIError.httpError(404, "Playlist not found")
+        }
+        try validate(draft, playlistId: id)
+        await pause(0.4)
+        let p = playlists[index]
+        playlists[index] = Playlist(
+            id: p.id, name: draft.name, isEnabled: draft.isEnabled,
+            defaultEpisodeLimit: draft.defaultEpisodeLimit, defaultPickFrom: draft.defaultPickFrom,
+            arrangement: draft.arrangement, dateDirection: draft.dateDirection,
+            spotifyPlaylistId: draft.spotifyPlaylistId, lastUpdatedAt: p.lastUpdatedAt,
+            createdAt: p.createdAt, podcastCount: p.podcastCount
+        )
+        return withCount(playlists[index])
+    }
+
+    func deletePlaylist(id: Int, removeFromSpotify: Bool) async throws -> MessageResponse {
+        guard let playlist = playlists.first(where: { $0.id == id }) else {
+            throw APIError.httpError(404, "Playlist not found")
+        }
+        await pause(0.4)
+        playlists.removeAll { $0.id == id }
+        assignments[id] = nil
+        overrides = overrides.filter { $0.key.playlistId != id }
+        if removeFromSpotify, let link = playlist.spotifyPlaylistId {
+            spotifyOwned.removeAll { $0.id == link }
+            return MessageResponse(message: "Playlist deleted from the app and Spotify")
+        }
+        return MessageResponse(message: "Playlist deleted")
+    }
+
+    func spotifyPlaylists() async -> SpotifyPlaylistListResponse {
+        await pause(0.5)
+        let items = spotifyOwned.map { owned in
+            SpotifyPlaylistOption(
+                id: owned.id, name: owned.name, imageUrl: nil, itemCount: owned.items,
+                linkedPlaylistId: playlists.first { $0.spotifyPlaylistId == owned.id }?.id
+            )
+        }
+        return SpotifyPlaylistListResponse(items: items, total: items.count, truncated: false)
+    }
+
+    /// The checks `PlaylistCreate` / `PlaylistUpdate` and
+    /// `_check_spotify_playlist_link` make: a name, values in range, and a
+    /// link only to an owned playlist no other managed playlist uses.
+    private func validate(_ draft: PlaylistDraft, playlistId: Int?) throws {
+        guard !draft.name.isEmpty, draft.name.count <= 255 else {
+            throw APIError.httpError(422, "Name must be 1 to 255 characters")
+        }
+        guard (0...AssignmentOverride.episodeLimitMax).contains(draft.defaultEpisodeLimit) else {
+            throw APIError.httpError(422, "Episode limit must be between 0 and \(AssignmentOverride.episodeLimitMax)")
+        }
+        guard let link = draft.spotifyPlaylistId,
+              link != playlists.first(where: { $0.id == playlistId })?.spotifyPlaylistId
+        else { return }
+        guard spotifyOwned.contains(where: { $0.id == link }) else {
+            throw APIError.httpError(400, "You can only link a Spotify playlist you own")
+        }
+        if let other = playlists.first(where: { $0.spotifyPlaylistId == link && $0.id != playlistId }) {
+            throw APIError.httpError(409, "That Spotify playlist is already linked to '\(other.name)'")
+        }
+    }
+
     func runPlaylist(id: Int) async throws -> PlaylistRunResponse {
         guard let playlist = playlists.first(where: { $0.id == id }) else {
             throw APIError.httpError(404, "Playlist not found")
@@ -152,10 +238,34 @@ actor DemoBackend {
                 unplayedCountedAt: p.unplayedCountedAt,
                 isSequential: p.isSequential, playlistIds: [], position: position,
                 lastSyncedAt: p.lastSyncedAt, createdAt: nil, updatedAt: nil,
-                rule: rule(for: p, in: playlist)
+                rule: rule(for: p, in: playlist),
+                override: overrides[AssignmentKey(playlistId: playlistId, podcastId: p.id)]
+                    ?? AssignmentOverride()
             )
         }
         return PodcastListResponse(items: items, total: items.count)
+    }
+
+    /// Same validation as `AssignmentOverrideUpdate`: 0...500 and a known
+    /// direction. Both parts are replaced, like the app's PATCH.
+    func updateAssignment(playlistId: Int, podcastId: Int, override: AssignmentOverride) async throws -> Podcast {
+        guard assignments[playlistId]?.contains(podcastId) == true else {
+            throw APIError.httpError(404, "Podcast not assigned to this playlist")
+        }
+        if let limit = override.episodeLimit, !(0...AssignmentOverride.episodeLimitMax).contains(limit) {
+            throw APIError.httpError(422, "Episode limit must be between 0 and \(AssignmentOverride.episodeLimitMax)")
+        }
+        if let pick = override.pickFrom, !["newest", "oldest"].contains(pick) {
+            throw APIError.httpError(422, "Input should be 'newest' or 'oldest'")
+        }
+        await pause(0.3)
+        let key = AssignmentKey(playlistId: playlistId, podcastId: podcastId)
+        overrides[key] = override == AssignmentOverride() ? nil : override
+        let rows = try fetchPlaylistPodcasts(playlistId: playlistId).items
+        guard let row = rows.first(where: { $0.id == podcastId }) else {
+            throw APIError.httpError(404, "Podcast not found")
+        }
+        return row
     }
 
     func addPodcasts(playlistId: Int, podcastIds: [Int]) async throws -> MessageResponse {
@@ -177,8 +287,28 @@ actor DemoBackend {
         await pause(0.3)
         ids.removeAll { $0 == podcastId }
         assignments[playlistId] = ids
-        limitOverrides[AssignmentKey(playlistId: playlistId, podcastId: podcastId)] = nil
+        overrides[AssignmentKey(playlistId: playlistId, podcastId: podcastId)] = nil
         return MessageResponse(message: "Podcast removed from playlist")
+    }
+
+    /// Same checks as `reorder_playlist_podcasts`: every assigned podcast,
+    /// each exactly once, or nothing changes.
+    func reorderPodcasts(playlistId: Int, podcastIds: [Int]) async throws -> MessageResponse {
+        guard let ids = assignments[playlistId] else {
+            throw APIError.httpError(404, "Playlist not found")
+        }
+        guard Set(podcastIds).count == podcastIds.count else {
+            throw APIError.httpError(400, "Each podcast can only appear once in the new order")
+        }
+        if let unknown = podcastIds.first(where: { !ids.contains($0) }) {
+            throw APIError.httpError(400, "Podcast \(unknown) is not assigned to this playlist")
+        }
+        guard podcastIds.count == ids.count else {
+            throw APIError.httpError(400, "The new order must include every podcast in this playlist")
+        }
+        await pause(0.3)
+        assignments[playlistId] = podcastIds
+        return MessageResponse(message: "Podcasts reordered")
     }
 
     // MARK: - Jobs
@@ -253,12 +383,20 @@ actor DemoBackend {
     /// Mirrors `services/assignment_rules.py::resolve_rule`: override, then
     /// the sequential hint (pick-from only), then the playlist default.
     private func rule(for podcast: Podcast, in playlist: Playlist) -> AssignmentRule {
-        let override = limitOverrides[AssignmentKey(playlistId: playlist.id, podcastId: podcast.id)]
+        let override = overrides[AssignmentKey(playlistId: playlist.id, podcastId: podcast.id)]
+        let pick: (String, String)
+        if let pickFrom = override?.pickFrom {
+            pick = (pickFrom, "override")
+        } else if podcast.isSequential {
+            pick = ("oldest", "sequential")
+        } else {
+            pick = (playlist.defaultPickFrom, "playlist")
+        }
         return AssignmentRule(
-            episodeLimit: override ?? playlist.defaultEpisodeLimit,
-            pickFrom: podcast.isSequential ? "oldest" : playlist.defaultPickFrom,
-            episodeLimitSource: override == nil ? "playlist" : "override",
-            pickFromSource: podcast.isSequential ? "sequential" : "playlist"
+            episodeLimit: override?.episodeLimit ?? playlist.defaultEpisodeLimit,
+            pickFrom: pick.0,
+            episodeLimitSource: override?.episodeLimit == nil ? "playlist" : "override",
+            pickFromSource: pick.1
         )
     }
 

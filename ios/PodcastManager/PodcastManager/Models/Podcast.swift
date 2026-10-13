@@ -24,6 +24,9 @@ struct Podcast: Identifiable, Hashable {
     /// Resolved per-assignment rule; only present on rows from
     /// `/api/playlists/{id}/podcasts`.
     let rule: AssignmentRule?
+    /// The raw per-assignment overrides behind `rule` (nil fields inherit);
+    /// only present on rows from `/api/playlists/{id}/podcasts`.
+    var override: AssignmentOverride? = nil
 
     /// Public Spotify URL for the show; opens the Spotify app when installed.
     var spotifyURL: URL? {
@@ -50,6 +53,16 @@ struct AssignmentRule: Codable, Hashable {
     }
 }
 
+/// What an assignment sets for itself; nil means inherit (the playlist
+/// default, or the sequential hint for `pickFrom`).
+struct AssignmentOverride: Codable, Hashable {
+    var episodeLimit: Int?
+    var pickFrom: String?
+
+    /// Backend bound on `episode_limit` (`EPISODE_LIMIT_MAX`).
+    static let episodeLimitMax = 500
+}
+
 extension Podcast: Codable {
     // Uses convertFromSnakeCase on the decoder, so keys are camelCase here
     init(from decoder: Decoder) throws {
@@ -70,6 +83,7 @@ extension Podcast: Codable {
         createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt)
         updatedAt = try c.decodeIfPresent(String.self, forKey: .updatedAt)
         rule = try c.decodeIfPresent(AssignmentRule.self, forKey: .rule)
+        override = try c.decodeIfPresent(AssignmentOverride.self, forKey: .override)
     }
 }
 

@@ -6,9 +6,12 @@ struct PlaylistsScreen: View {
     @State private var isRunningAll = false
     @State private var error: String?
     @State private var statusMessage: String?
+    @State private var showingCreateSheet = false
+    /// Bound so a newly created playlist can be opened straight away.
+    @State private var path: [Playlist] = []
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             Group {
                 if isLoading {
                     ProgressView("Loading playlists...")
@@ -21,7 +24,23 @@ struct PlaylistsScreen: View {
                 }
             }
             .navigationTitle("Playlists")
+            .navigationDestination(for: Playlist.self) { playlist in
+                PlaylistDetailScreen(playlist: playlist) { message in
+                    await loadPlaylists()
+                    if let message {
+                        withAnimation { statusMessage = message }
+                    }
+                }
+            }
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        showingCreateSheet = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .accessibilityLabel("New Playlist")
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Button {
                         Task { await runAllPlaylists() }
@@ -33,6 +52,13 @@ struct PlaylistsScreen: View {
                         }
                     }
                     .disabled(isRunningAll)
+                }
+            }
+            .sheet(isPresented: $showingCreateSheet) {
+                PlaylistFormSheet(playlist: nil) { created in
+                    await loadPlaylists()
+                    // Open it, so the next step (adding podcasts) is one tap.
+                    path.append(created)
                 }
             }
             .task {
@@ -74,16 +100,13 @@ struct PlaylistsScreen: View {
             }
         }
         .listStyle(.plain)
-        .navigationDestination(for: Playlist.self) { playlist in
-            PlaylistDetailScreen(playlist: playlist)
-        }
     }
 
     private var emptyView: some View {
         ContentUnavailableView(
             "No Playlists",
             systemImage: "list.bullet",
-            description: Text("Create playlists in the web app to see them here")
+            description: Text("Tap + to create your first playlist")
         )
     }
 
