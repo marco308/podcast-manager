@@ -149,9 +149,10 @@ Web:
 - Podcasts page multi-select stays and adds with defaults.
 - Settings → About loses the stale Features block (#244).
 
-iOS stays read-mostly (see `ios/CLAUDE.md`): the models and labels move to the
-new fields and each playlist row shows its resolved rule. Rule editing is
-web-only for now.
+iOS: each playlist row shows its resolved rule with the same badges. Since the
+parity work, it also edits everything above: a playlist settings form, drag to
+reorder, and a per-row sheet for the override with "Playlist default" options
+that say what they resolve to (see `ios/CLAUDE.md`).
 
 ## Out of scope
 

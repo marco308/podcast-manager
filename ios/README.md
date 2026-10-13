@@ -3,11 +3,12 @@
 A native SwiftUI companion to the Podcast Manager web app. It connects to your own Podcast Manager backend and covers day-to-day use:
 
 - browse and sync your podcasts, and mark shows as sequential
-- add shows to a playlist or remove them, and see the rule each one follows
+- create, edit and delete playlists: name, Spotify playlist link, arrangement, default episodes and direction, enabled
+- add shows to a playlist, remove them, drag them into order, and set each show's own episode count and direction
 - run a playlist now
 - view the background jobs and change the daily schedule
 
-Creating playlists, editing their settings and overriding per-show rules happen in the web app.
+Unfollowing a podcast is left to Spotify or the web app.
 
 The app isn't distributed on the App Store, so you build it yourself.
 

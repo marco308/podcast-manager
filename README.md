@@ -18,7 +18,7 @@ Podcast Manager is source-available and free for personal and other non-commerci
 - **Two arrangements.** Keep shows grouped in a drag-and-drop order, or merge everything by release date.
 - **Hands-off upkeep.** A daily job syncs your Spotify library and rebuilds every enabled playlist. By default it runs once a day, and you can add up to three run times. Played episodes are removed every 30 minutes.
 - **Library housekeeping.** Archive shows you follow but don't want to see. Shows you unfollow on Spotify stop contributing immediately and are removed after a 7-day grace period.
-- **iOS companion app** for browsing, running playlists and quick edits.
+- **iOS companion app** that does everything the web app does with playlists.
 - Light, dark and system themes.
 
 ## How it works
@@ -205,7 +205,7 @@ rolls out new images and updates the Swarm services. Set `REGISTRY=ghcr.io/<owne
 
 ## iOS companion app
 
-A native SwiftUI app lives in [`ios/`](ios/). It uses the same backend, and you enter the server URL on the login screen. It covers day-to-day use: browsing and syncing podcasts, marking shows sequential, adding shows to or removing them from playlists, running playlists, and viewing or changing the job schedule. Creating playlists and editing rules stays in the web app.
+A native SwiftUI app lives in [`ios/`](ios/). It uses the same backend, and you enter the server URL on the login screen. It can do everything the web app does with playlists: create, edit and delete them, add, remove and reorder their shows, set each show's own rule, and run them. It also browses and syncs podcasts, marks shows sequential, and views or changes the job schedule. Only unfollowing a podcast stays in the web app (or Spotify).
 
 It isn't on the App Store, so you build it yourself with Xcode. See [ios/README.md](ios/README.md).
 

@@ -132,6 +132,32 @@ actor APIClient {
         return try await get("/api/playlists")
     }
 
+    func createPlaylist(_ draft: PlaylistDraft) async throws -> Playlist {
+        if let demo { return try await demo.createPlaylist(draft) }
+        return try await post("/api/playlists", body: draft)
+    }
+
+    /// Sends every field. An unchanged name is not pushed to Spotify, and a
+    /// nil `spotifyPlaylistId` unlinks (the Spotify playlist is left alone).
+    func updatePlaylist(id: Int, draft: PlaylistDraft) async throws -> Playlist {
+        if let demo { return try await demo.updatePlaylist(id: id, draft: draft) }
+        return try await patch("/api/playlists/\(id)", body: draft)
+    }
+
+    /// `removeFromSpotify` also deletes (unfollows) the linked Spotify
+    /// playlist; a Spotify failure then leaves everything as it was.
+    func deletePlaylist(id: Int, removeFromSpotify: Bool) async throws -> MessageResponse {
+        if let demo { return try await demo.deletePlaylist(id: id, removeFromSpotify: removeFromSpotify) }
+        let query = removeFromSpotify ? "?remove_from_spotify=true" : ""
+        return try await delete("/api/playlists/\(id)\(query)")
+    }
+
+    /// The user's own Spotify playlists, for the link picker.
+    func fetchSpotifyPlaylists() async throws -> SpotifyPlaylistListResponse {
+        if let demo { return await demo.spotifyPlaylists() }
+        return try await get("/api/playlists/spotify-playlists")
+    }
+
     func runPlaylist(id: Int) async throws -> PlaylistRunResponse {
         if let demo { return try await demo.runPlaylist(id: id) }
         return try await post("/api/playlists/\(id)/run")
@@ -149,7 +175,6 @@ actor APIClient {
         return try await get("/api/playlists/\(playlistId)/podcasts")
     }
 
-
     func addPodcastsToPlaylist(playlistId: Int, podcastIds: [Int]) async throws -> MessageResponse {
         if let demo { return try await demo.addPodcasts(playlistId: playlistId, podcastIds: podcastIds) }
         let body = ["podcast_ids": podcastIds]
@@ -159,6 +184,33 @@ actor APIClient {
     func removePodcastFromPlaylist(playlistId: Int, podcastId: Int) async throws -> MessageResponse {
         if let demo { return try await demo.removePodcast(playlistId: playlistId, podcastId: podcastId) }
         return try await delete("/api/playlists/\(playlistId)/podcasts/\(podcastId)")
+    }
+
+    /// Replace both per-assignment overrides; nil clears one back to
+    /// inheriting. Returns the row with its newly resolved `rule`.
+    func updateAssignmentOverride(
+        playlistId: Int,
+        podcastId: Int,
+        override: AssignmentOverride
+    ) async throws -> Podcast {
+        if let demo {
+            return try await demo.updateAssignment(playlistId: playlistId, podcastId: podcastId, override: override)
+        }
+        // Both keys always sent: the backend treats present-and-null as
+        // "clear" and an absent key as "leave alone".
+        let body: [String: Any] = [
+            "episode_limit": override.episodeLimit.map { $0 as Any } ?? NSNull(),
+            "pick_from": override.pickFrom.map { $0 as Any } ?? NSNull(),
+        ]
+        return try await patch("/api/playlists/\(playlistId)/podcasts/\(podcastId)", body: body)
+    }
+
+    /// Set the playlist's podcast order. `podcastIds` must list every podcast
+    /// in the playlist exactly once; the backend refuses anything else (400).
+    func reorderPlaylistPodcasts(playlistId: Int, podcastIds: [Int]) async throws -> MessageResponse {
+        if let demo { return try await demo.reorderPodcasts(playlistId: playlistId, podcastIds: podcastIds) }
+        let body = ["podcast_ids": podcastIds]
+        return try await put("/api/playlists/\(playlistId)/podcasts/reorder", body: body)
     }
 
     // MARK: - Jobs
@@ -194,6 +246,13 @@ actor APIClient {
 
     private func put<T: Decodable, B: Encodable>(_ path: String, body: B) async throws -> T {
         var request = try makeRequest(path: path, method: "PUT")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(body)
+        return try await execute(request)
+    }
+
+    private func patch<T: Decodable, B: Encodable>(_ path: String, body: B) async throws -> T {
+        var request = try makeRequest(path: path, method: "PATCH")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
         return try await execute(request)

@@ -125,6 +125,8 @@ import Testing
     #expect(rule.pickFromSource == "sequential")
     #expect(rule.isCustom == true)
     #expect(rule.summary == "Up to 3 · oldest")
+    // The raw override is what the rule sheet edits; null means inherit.
+    #expect(podcast.override == AssignmentOverride(episodeLimit: 3, pickFrom: nil))
 }
 
 @Test func plainPodcastRowHasNoRule() async throws {

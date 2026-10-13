@@ -1,13 +1,25 @@
 import SwiftUI
 
 struct PlaylistDetailScreen: View {
-    let playlist: Playlist
+    /// Kept as state so an edit shows here without a round trip to the list.
+    @State var playlist: Playlist
+    /// Tells the list to reload after the playlist was edited or deleted,
+    /// with a message to show there (deletes only, since this screen closes).
+    var onChanged: ((String?) async -> Void)? = nil
+
+    @Environment(\.dismiss) private var dismiss
 
     @State private var podcasts: [Podcast] = []
     @State private var isLoading = true
     @State private var error: String?
     @State private var showingAddSheet = false
     @State private var statusMessage: String?
+    /// One reorder in flight at a time: each PUT sends the whole order, so
+    /// two racing requests could land out of order and keep the stale one.
+    @State private var isSavingOrder = false
+    /// The row whose rule sheet is open.
+    @State private var editingPodcast: Podcast?
+    @State private var showingSettings = false
 
     var body: some View {
         Group {
@@ -21,6 +33,11 @@ struct PlaylistDetailScreen: View {
         }
         .navigationTitle(playlist.name)
         .toolbar {
+            if podcasts.count > 1 {
+                ToolbarItem(placement: .topBarTrailing) {
+                    EditButton()
+                }
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     showingAddSheet = true
@@ -31,6 +48,23 @@ struct PlaylistDetailScreen: View {
         }
         .sheet(isPresented: $showingAddSheet) {
             AddPodcastsSheet(playlistId: playlist.id, existingPodcastIds: Set(podcasts.map(\.id))) {
+                await loadPodcasts()
+            }
+        }
+        .sheet(isPresented: $showingSettings) {
+            PlaylistFormSheet(playlist: playlist) { saved in
+                playlist = saved
+                withAnimation { statusMessage = "Playlist updated" }
+                // New defaults change every inherited rule shown here.
+                await loadPodcasts()
+                await onChanged?(nil)
+            } onDeleted: { message in
+                await onChanged?(message)
+                dismiss()
+            }
+        }
+        .sheet(item: $editingPodcast) { podcast in
+            AssignmentRuleSheet(playlist: playlist, podcast: podcast) {
                 await loadPodcasts()
             }
         }
@@ -64,21 +98,23 @@ struct PlaylistDetailScreen: View {
     }
 
     private var contentView: some View {
-        Group {
+        // Settings stay visible with no podcasts: a new playlist starts empty
+        // and its settings are still editable from here.
+        List {
+            settingsSection
             if podcasts.isEmpty {
-                ContentUnavailableView(
-                    "No Podcasts",
-                    systemImage: "mic.slash",
-                    description: Text("Tap + to add podcasts to this playlist")
-                )
-            } else {
-                List {
-                    settingsSection
-                    podcastsSection
+                Section("Podcasts") {
+                    ContentUnavailableView(
+                        "No Podcasts",
+                        systemImage: "mic.slash",
+                        description: Text("Tap + to add podcasts to this playlist")
+                    )
                 }
-                .listStyle(.insetGrouped)
+            } else {
+                podcastsSection
             }
         }
+        .listStyle(.insetGrouped)
     }
 
     private var settingsSection: some View {
@@ -93,6 +129,11 @@ struct PlaylistDetailScreen: View {
                 }
             } else {
                 LabeledContent("Spotify playlist", value: "Created on first run")
+            }
+            Button {
+                showingSettings = true
+            } label: {
+                Label("Edit Settings", systemImage: "slider.horizontal.3")
             }
         } header: {
             Text("Playlist Settings")
@@ -110,17 +151,43 @@ struct PlaylistDetailScreen: View {
     }
 
     private var podcastsSection: some View {
-        Section("Podcasts (\(podcasts.count))") {
+        Section {
             ForEach(podcasts) { podcast in
-                VStack(alignment: .leading, spacing: 4) {
-                    PodcastRow(podcast: podcast)
-                    if let rule = podcast.rule {
-                        ruleCaption(rule)
+                Button {
+                    editingPodcast = podcast
+                } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        PodcastRow(podcast: podcast)
+                        if let rule = podcast.rule {
+                            ruleCaption(rule)
+                        }
                     }
                 }
+                // Keep the row's own colours instead of the button tint,
+                // while still getting the row highlight on tap.
+                .tint(.primary)
+                .accessibilityHint("Edit episodes and play order for this playlist")
+                .moveDisabled(isSavingOrder)
             }
             .onDelete { indexSet in
                 Task { await removePodcasts(at: indexSet) }
+            }
+            .onMove(perform: movePodcasts)
+        } header: {
+            Text("Podcasts (\(podcasts.count))")
+        } footer: {
+            // Same hint as the web editor: the order is kept either way, but
+            // only a by-position playlist plays shows in it.
+            let editHint = "Tap a podcast to change how many episodes it adds and where it starts."
+            if podcasts.count > 1 {
+                Text(
+                    editHint + " "
+                        + (playlist.arrangement == "by_position"
+                            ? "Tap Edit and drag rows to set the order podcasts play in."
+                            : "Row order is only used when the arrangement is \"Podcast order\".")
+                )
+            } else {
+                Text(editHint)
             }
         }
     }
@@ -182,6 +249,29 @@ struct PlaylistDetailScreen: View {
             self.error = error.localizedDescription
         }
         isLoading = false
+    }
+
+    /// Move synchronously so the row stays where it was dropped, then save
+    /// the whole order. On failure, reload: the server's order is the truth
+    /// (a 400 usually means the playlist changed elsewhere meanwhile).
+    private func movePodcasts(from source: IndexSet, to destination: Int) {
+        let before = podcasts.map(\.id)
+        podcasts.move(fromOffsets: source, toOffset: destination)
+        let order = podcasts.map(\.id)
+        guard order != before else { return }
+
+        isSavingOrder = true
+        Task {
+            defer { isSavingOrder = false }
+            do {
+                _ = try await APIClient.shared.reorderPlaylistPodcasts(playlistId: playlist.id, podcastIds: order)
+            } catch {
+                withAnimation {
+                    statusMessage = "Failed to reorder: \(error.localizedDescription)"
+                }
+                await loadPodcasts()
+            }
+        }
     }
 
     private func removePodcasts(at offsets: IndexSet) async {

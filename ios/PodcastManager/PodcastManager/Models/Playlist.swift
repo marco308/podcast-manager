@@ -87,3 +87,96 @@ struct PlaylistRunResult: Codable, Identifiable {
 
     var id: Int { playlistId }
 }
+
+/// Everything the playlist form edits; the body of both create (`POST
+/// /api/playlists`) and update (`PATCH /api/playlists/{id}`).
+struct PlaylistDraft: Encodable, Equatable {
+    var name: String
+    /// nil = no link: a new Spotify playlist is created on the first run.
+    var spotifyPlaylistId: String?
+    var isEnabled: Bool
+    var defaultEpisodeLimit: Int
+    var defaultPickFrom: String
+    var arrangement: String
+    var dateDirection: String
+
+    /// Same starting values as the web form's new-playlist defaults.
+    static let new = PlaylistDraft(
+        name: "",
+        spotifyPlaylistId: nil,
+        isEnabled: true,
+        defaultEpisodeLimit: 0,
+        defaultPickFrom: "newest",
+        arrangement: "by_position",
+        dateDirection: "oldest_first"
+    )
+
+    init(
+        name: String, spotifyPlaylistId: String?, isEnabled: Bool, defaultEpisodeLimit: Int,
+        defaultPickFrom: String, arrangement: String, dateDirection: String
+    ) {
+        self.name = name
+        self.spotifyPlaylistId = spotifyPlaylistId
+        self.isEnabled = isEnabled
+        self.defaultEpisodeLimit = defaultEpisodeLimit
+        self.defaultPickFrom = defaultPickFrom
+        self.arrangement = arrangement
+        self.dateDirection = dateDirection
+    }
+
+    init(_ playlist: Playlist) {
+        self.init(
+            name: playlist.name,
+            spotifyPlaylistId: playlist.spotifyPlaylistId.flatMap { $0.isEmpty ? nil : $0 },
+            isEnabled: playlist.isEnabled,
+            defaultEpisodeLimit: playlist.defaultEpisodeLimit,
+            defaultPickFrom: playlist.defaultPickFrom,
+            arrangement: playlist.arrangement,
+            dateDirection: playlist.dateDirection
+        )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name
+        case spotifyPlaylistId = "spotify_playlist_id"
+        case isEnabled = "is_enabled"
+        case defaultEpisodeLimit = "default_episode_limit"
+        case defaultPickFrom = "default_pick_from"
+        case arrangement
+        case dateDirection = "date_direction"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(name, forKey: .name)
+        // Always present: on PATCH, null unlinks and an absent key would
+        // leave the old link in place.
+        if let spotifyPlaylistId {
+            try c.encode(spotifyPlaylistId, forKey: .spotifyPlaylistId)
+        } else {
+            try c.encodeNil(forKey: .spotifyPlaylistId)
+        }
+        try c.encode(isEnabled, forKey: .isEnabled)
+        try c.encode(defaultEpisodeLimit, forKey: .defaultEpisodeLimit)
+        try c.encode(defaultPickFrom, forKey: .defaultPickFrom)
+        try c.encode(arrangement, forKey: .arrangement)
+        try c.encode(dateDirection, forKey: .dateDirection)
+    }
+}
+
+/// A Spotify playlist the user owns, offered as a link target (issue #245).
+struct SpotifyPlaylistOption: Codable, Identifiable, Hashable {
+    let id: String
+    let name: String
+    let imageUrl: String?
+    let itemCount: Int
+    /// The managed playlist already linked to it, if any.
+    let linkedPlaylistId: Int?
+}
+
+struct SpotifyPlaylistListResponse: Codable {
+    let items: [SpotifyPlaylistOption]
+    let total: Int
+    /// The listing stopped at the server's page cap with more left on Spotify.
+    let truncated: Bool?
+}

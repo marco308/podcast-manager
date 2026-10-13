@@ -33,17 +33,12 @@ xcodegen generate
 
 ## Key Patterns
 
-**API scope (intentionally read-mostly):**
+**API scope (parity with the web app):**
 
-The app is a day-to-day companion, not a second admin UI. It covers browsing and syncing podcasts, toggling `is_sequential`, adding/removing podcasts in an existing playlist, running playlists, and viewing/changing the job schedule. Everything that shapes a playlist is deliberately web-only:
+The app covers everything the web app does for playlists: creating, editing and deleting them (`PlaylistFormSheet`, including the Spotify-link picker from `GET /api/playlists/spotify-playlists`), adding/removing/reordering podcasts, each podcast's per-playlist rule (`AssignmentRuleSheet`) and running them. Plus browsing and syncing podcasts, toggling `is_sequential`, and viewing/changing the job schedule. The one backend endpoint it deliberately leaves out:
 
 | Backend endpoint not wrapped by `APIClient` | Why |
 |---|---|
-| `POST /api/playlists` (create) | One-off setup; the web form already validates the defaults/arrangement |
-| `PATCH /api/playlists/{id}` (rename, default episode limit / pick-from, arrangement, date direction, enabled) | Same |
-| `DELETE /api/playlists/{id}` | Destructive and rare; keep it behind the web confirm dialog |
-| `PATCH /api/playlists/{id}/podcasts/{podcast_id}` (per-assignment `episode_limit` / `pick_from` override) | Rule editing is web-only for now; iOS shows the resolved `rule` on each row (see `docs/design/assignment-rules.md`) |
-| `PUT /api/playlists/{id}/podcasts/reorder` | Depends on the dnd-kit drag UI; a list-reorder UX on iOS is real work for a rarely-used feature |
 | `DELETE /api/podcasts/{podcast_id}` (unfollow) | Unfollowing is a Spotify-side action; do it in the Spotify app or the web UI |
 
 If one of these is ever wanted on iOS, it is a plain addition to `APIClient` (the backend needs no change) plus the corresponding screen. Update this table when that happens.
@@ -54,7 +49,9 @@ If one of these is ever wanted on iOS, it is a plain addition to `APIClient` (th
 
 **Podcast Model:**
 - Custom `init(from:)` decoder with defaults for missing fields
-- Handles both `/api/podcasts` (full schema with `playlist_ids`, `created_at`) and `/api/playlists/{id}/podcasts` (subset with `position` and the resolved `rule`, no `playlist_ids`)
+- Handles both `/api/podcasts` (full schema with `playlist_ids`, `created_at`) and `/api/playlists/{id}/podcasts` (subset with `position`, the resolved `rule` and the raw `override`, no `playlist_ids`)
+- `PlaylistDraft` always encodes `spotify_playlist_id`, as `null` when unlinked, for the same reason: on `PATCH /api/playlists/{id}` an absent key keeps the old link
+- The rule sheet always PATCHes both override keys, with `null` for "inherit": the backend treats present-and-null as clear and an absent key as leave alone
 
 ## Gotchas
 
