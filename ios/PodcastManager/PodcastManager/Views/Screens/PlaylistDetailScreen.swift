@@ -119,6 +119,9 @@ struct PlaylistDetailScreen: View {
 
     private var settingsSection: some View {
         Section {
+            if playlist.isSleep {
+                LabeledContent("Kind") { SleepBadge() }
+            }
             LabeledContent("Arrangement", value: playlist.arrangementLabel)
             LabeledContent("Episodes per podcast", value: playlist.ruleSummary)
             LabeledContent("Status", value: playlist.isEnabled ? "Enabled" : "Disabled")
@@ -196,7 +199,7 @@ struct PlaylistDetailScreen: View {
     /// from the playlist default, if it does.
     private func ruleCaption(_ rule: AssignmentRule) -> some View {
         HStack(spacing: 6) {
-            Text(rule.summary)
+            Text(rule.summary(sleep: playlist.isSleep))
             if rule.isCustom {
                 ruleBadge("Custom", color: Color.accentColor)
             } else if rule.pickFromSource == "sequential" {

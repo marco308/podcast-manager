@@ -47,6 +47,11 @@ struct AssignmentRule: Codable, Hashable {
         episodeRuleSummary(limit: episodeLimit, pickFrom: pickFrom)
     }
 
+    /// `summary` with a sleep playlist's "played" wording.
+    func summary(sleep: Bool) -> String {
+        episodeRuleSummary(limit: episodeLimit, pickFrom: pickFrom, sleep: sleep)
+    }
+
     /// True when either part was set on the assignment itself.
     var isCustom: Bool {
         episodeLimitSource == "override" || pickFromSource == "override"

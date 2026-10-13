@@ -6,7 +6,8 @@ struct Playlist: Codable, Identifiable, Hashable {
     let isEnabled: Bool
     /// Default episodes per podcast: 0 = all unplayed, n >= 1 = at most n.
     let defaultEpisodeLimit: Int
-    /// Which end of a show's unplayed episodes to take from: "newest" | "oldest".
+    /// Which end of a show's episodes to take from: "newest" | "oldest", or
+    /// "random" on a sleep playlist.
     let defaultPickFrom: String
     /// How contributions are assembled: "by_position" | "by_date" | "shuffle".
     let arrangement: String
@@ -16,10 +17,16 @@ struct Playlist: Codable, Identifiable, Hashable {
     let lastUpdatedAt: String?
     let createdAt: String
     let podcastCount: Int
+    /// "standard" | "sleep" (issue #331). Optional: servers before sleep
+    /// playlists don't send it, and those playlists are all standard.
+    var kind: String? = nil
+
+    /// A sleep playlist plays only episodes already finished.
+    var isSleep: Bool { kind == PlaylistKind.sleep }
 
     /// e.g. "All unplayed", "Latest only · newest", "Up to 3 · oldest".
     var ruleSummary: String {
-        episodeRuleSummary(limit: defaultEpisodeLimit, pickFrom: defaultPickFrom)
+        episodeRuleSummary(limit: defaultEpisodeLimit, pickFrom: defaultPickFrom, sleep: isSleep)
     }
 
     /// Public Spotify URL, or nil until the first run has created the playlist.
@@ -40,15 +47,39 @@ struct Playlist: Codable, Identifiable, Hashable {
     }
 }
 
-/// Shared phrasing for playlist defaults and resolved assignment rules.
-func episodeRuleSummary(limit: Int, pickFrom: String) -> String {
-    let direction = pickFrom == "oldest" ? "oldest" : "newest"
+/// Playlist kinds and the values a sleep playlist starts from
+/// (docs/design/sleep-playlists.md).
+enum PlaylistKind {
+    static let standard = "standard"
+    static let sleep = "sleep"
+    static let sleepArrangement = "shuffle"
+    static let sleepPickFrom = "random"
+    static let sleepEpisodeLimit = 10
+}
+
+/// Shared phrasing for playlist defaults and resolved assignment rules. A
+/// sleep playlist's episodes are already played, so it says "played".
+func episodeRuleSummary(limit: Int, pickFrom: String, sleep: Bool = false) -> String {
+    let direction = switch pickFrom {
+    case "oldest": "oldest"
+    case "random": "random"
+    default: "newest"
+    }
     // The direction is shown even when unlimited: it still sets the order the
     // show's episodes are listened to within its group (matches the web UI).
-    switch limit {
-    case 0: return "All unplayed · \(direction)"
-    case 1: return "Latest only · \(direction)"
-    default: return "Up to \(limit) · \(direction)"
+    return "\(episodeLimitLabel(limit, sleep: sleep)) · \(direction)"
+}
+
+/// "All unplayed" / "Latest only" / "Up to 3", or the sleep wording
+/// ("All played", "Just 1 played", "Up to 10 played").
+func episodeLimitLabel(_ limit: Int, sleep: Bool = false) -> String {
+    switch (limit, sleep) {
+    case (0, false): return "All unplayed"
+    case (1, false): return "Latest only"
+    case (0, true): return "All played"
+    case (1, true): return "Just 1 played"
+    case (_, false): return "Up to \(limit)"
+    case (_, true): return "Up to \(limit) played"
     }
 }
 
@@ -92,6 +123,9 @@ struct PlaylistRunResult: Codable, Identifiable {
 /// /api/playlists`) and update (`PATCH /api/playlists/{id}`).
 struct PlaylistDraft: Encodable, Equatable {
     var name: String
+    /// "standard" | "sleep". Change it with `setKind(_:)`, which applies the
+    /// presets that go with it.
+    var kind: String = PlaylistKind.standard
     /// nil = no link: a new Spotify playlist is created on the first run.
     var spotifyPlaylistId: String?
     var isEnabled: Bool
@@ -134,10 +168,30 @@ struct PlaylistDraft: Encodable, Equatable {
             arrangement: playlist.arrangement,
             dateDirection: playlist.dateDirection
         )
+        kind = playlist.kind ?? PlaylistKind.standard
+    }
+
+    var isSleep: Bool { kind == PlaylistKind.sleep }
+
+    /// Switch kind the way the server and the web form do: becoming a sleep
+    /// playlist presets shuffle / random / 10 per show (all still editable);
+    /// going back to standard turns a random pick, which only sleep allows,
+    /// into newest.
+    mutating func setKind(_ newKind: String) {
+        guard newKind != kind else { return }
+        kind = newKind
+        if newKind == PlaylistKind.sleep {
+            arrangement = PlaylistKind.sleepArrangement
+            defaultPickFrom = PlaylistKind.sleepPickFrom
+            defaultEpisodeLimit = PlaylistKind.sleepEpisodeLimit
+        } else if defaultPickFrom == PlaylistKind.sleepPickFrom {
+            defaultPickFrom = "newest"
+        }
     }
 
     private enum CodingKeys: String, CodingKey {
         case name
+        case kind
         case spotifyPlaylistId = "spotify_playlist_id"
         case isEnabled = "is_enabled"
         case defaultEpisodeLimit = "default_episode_limit"
@@ -149,6 +203,7 @@ struct PlaylistDraft: Encodable, Equatable {
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(name, forKey: .name)
+        try c.encode(kind, forKey: .kind)
         // Always present: on PATCH, null unlinks and an absent key would
         // leave the old link in place.
         if let spotifyPlaylistId {

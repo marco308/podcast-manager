@@ -85,6 +85,29 @@ import Testing
     #expect(playlist.podcastCount == 5)
 }
 
+@Test func playlistKindDecodesAndDefaultsToStandard() async throws {
+    let base = """
+    "id": 2, "name": "Sleep", "is_enabled": true, "default_episode_limit": 10,
+    "default_pick_from": "random", "arrangement": "shuffle", "date_direction": "oldest_first",
+    "spotify_playlist_id": null, "last_updated_at": null, "created_at": "2026-10-13T00:00:00",
+    "podcast_count": 3
+    """
+    let decoder = JSONDecoder()
+    decoder.keyDecodingStrategy = .convertFromSnakeCase
+
+    let sleep = try decoder.decode(Playlist.self, from: Data("{\(base), \"kind\": \"sleep\"}".utf8))
+    #expect(sleep.isSleep)
+    #expect(sleep.ruleSummary == "Up to 10 played · random")
+
+    // A server from before sleep playlists sends no kind.
+    let old = try decoder.decode(Playlist.self, from: Data("{\(base)}".utf8))
+    #expect(old.kind == nil)
+    #expect(old.isSleep == false)
+    #expect(PlaylistDraft(old).kind == "standard")
+    #expect(episodeLimitLabel(0, sleep: true) == "All played")
+    #expect(episodeLimitLabel(0) == "All unplayed")
+}
+
 @Test func playlistPodcastRowDecodesRule() async throws {
     // Shape of a row from GET /api/playlists/{id}/podcasts.
     let json = """

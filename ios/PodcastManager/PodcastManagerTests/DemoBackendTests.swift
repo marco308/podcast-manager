@@ -117,6 +117,55 @@ struct DemoBackendTests {
         #expect(json?["default_episode_limit"] as? Int == 0)
     }
 
+    @Test func sleepPlaylistsFollowTheBackendRules() async throws {
+        let demo = DemoBackend()
+        var draft = PlaylistDraft.new
+        draft.name = "Sleep"
+        // Random is refused on a standard playlist.
+        draft.defaultPickFrom = "random"
+        await #expect(throws: APIError.self) { _ = try await demo.createPlaylist(draft) }
+
+        draft.setKind(PlaylistKind.sleep)
+        #expect(draft.arrangement == "shuffle")
+        #expect(draft.defaultPickFrom == "random")
+        #expect(draft.defaultEpisodeLimit == 10)
+        let sleep = try await demo.createPlaylist(draft)
+        #expect(sleep.isSleep)
+
+        // A sequential show doesn't get "oldest" on a sleep playlist.
+        let sequential = try #require(await demo.fetchPodcasts(limit: 100, offset: 0).items.first { $0.isSequential })
+        _ = try await demo.addPodcasts(playlistId: sleep.id, podcastIds: [sequential.id])
+        var row = try #require(try await demo.fetchPlaylistPodcasts(playlistId: sleep.id).items.first)
+        #expect(row.rule?.pickFrom == "random")
+        #expect(row.rule?.pickFromSource == "playlist")
+
+        // A random override is cleared when the playlist goes back to standard.
+        _ = try await demo.updateAssignment(
+            playlistId: sleep.id, podcastId: sequential.id,
+            override: AssignmentOverride(episodeLimit: nil, pickFrom: "random")
+        )
+        draft.setKind(PlaylistKind.standard)
+        #expect(draft.defaultPickFrom == "newest")
+        _ = try await demo.updatePlaylist(id: sleep.id, draft: draft)
+        row = try #require(try await demo.fetchPlaylistPodcasts(playlistId: sleep.id).items.first)
+        #expect(row.override?.pickFrom == nil)
+        await #expect(throws: APIError.self) {
+            _ = try await demo.updateAssignment(
+                playlistId: sleep.id, podcastId: sequential.id,
+                override: AssignmentOverride(episodeLimit: nil, pickFrom: "random")
+            )
+        }
+    }
+
+    @Test func playlistDraftSendsKind() throws {
+        var draft = PlaylistDraft.new
+        draft.name = "X"
+        draft.setKind(PlaylistKind.sleep)
+        let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(draft)) as? [String: Any]
+        #expect(json?["kind"] as? String == "sleep")
+        #expect(json?["default_pick_from"] as? String == "random")
+    }
+
     @Test func disabledPlaylistRefusesARun() async throws {
         let demo = DemoBackend()
         await #expect(throws: APIError.self) {

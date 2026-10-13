@@ -1,6 +1,6 @@
 # Sleep playlists
 
-Status: built, 2026-10-13 (backend + web; iOS follows).
+Status: built, 2026-10-13 (backend, web and iOS build 11).
 Tracking: #331
 
 ## Why
@@ -108,10 +108,13 @@ the Phase 1 select and in the locked re-check.
 - `pick_from` / `default_pick_from` accept `random` on sleep playlists only.
 - **Web:** kind picker on create and edit, a Sleep tag on the card, hide
   `date_direction`, offer `random` only on sleep.
-- **iOS:** decode `kind` as optional (installed builds must keep decoding).
-  `pickFrom` is already a plain `String`, so `random` decodes; old builds label
-  it "newest". Known gap: an old build's edit sheet only offers newest/oldest,
-  so saving a sleep playlist's defaults from it overwrites `random`.
+- **iOS:** `kind` decodes as optional (servers before #331 don't send it).
+  `PlaylistFormSheet` has the Standard/Sleep picker with the same presets as
+  the web form, `AssignmentRuleSheet` offers Random on sleep playlists only and
+  ignores the sequential hint there, and a moon badge marks sleep playlists.
+  Builds before 11 decode sleep playlists fine (`pickFrom` is a plain string)
+  but show them as standard; their edit sheet sends `random` back unchanged
+  unless the pick is edited.
 - **Docs:** CLAUDE.md, README and `site/` describe playlists as "unplayed
   only"; add the sleep kind.
 

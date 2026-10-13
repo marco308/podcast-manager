@@ -13,6 +13,9 @@ struct PlaylistRow: View {
                     Text(playlist.name)
                         .font(.headline)
 
+                    if playlist.isSleep {
+                        SleepBadge()
+                    }
                     if !playlist.isEnabled {
                         Text("Disabled")
                             .font(.caption2)
