@@ -82,14 +82,24 @@ a serial out of order is harmful, playing news out of order is not.
 
 ### Fetching
 
-Spotify returns show episodes newest-first with a `total`. Fetch cost is kept
-proportional to the rule:
+Spotify returns show episodes with a `total`, usually newest-first, but some
+shows (serials, typically) come back oldest-first and the response does not
+say which. The first page decides: its first and last dated episodes give the
+listing's direction (`listed_oldest_first`). Fetch cost is kept proportional
+to the rule:
 
-- `pick_from = newest`, limit `n`: walk pages from offset 0, stop once `n`
-  unplayed episodes are in hand.
-- `pick_from = oldest`, limit `n`: read the first page for `total`, then walk
-  pages backwards from the tail, stop once `n` unplayed are in hand.
+- limit `n`, wanted episodes at the head of the listing (`newest` on a
+  newest-first show, `oldest` on an oldest-first one): walk pages from
+  offset 0, stop once `n` unplayed episodes are in hand.
+- limit `n`, wanted episodes at the far end: take `total` from the first
+  page, then walk pages backwards from the tail, stop once `n` unplayed are
+  in hand.
 - limit `0` (all): walk from offset 0 up to the 500-episode cap, as before.
+
+Whatever the listing's direction, the fetch hands back newest-first. Within a
+show, that order is the only thing that separates episodes released on the
+same day. Reading an oldest-first listing as newest-first put Bear Hunt's Ep 2
+(released the same day as Ep 1) ahead of Ep 1.
 
 `podcast.unplayed_episodes` is only written when the walk saw the whole
 catalogue (issue #155); a short walk never overwrites it.
