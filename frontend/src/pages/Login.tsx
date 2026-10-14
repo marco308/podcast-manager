@@ -38,7 +38,13 @@ export function Login() {
         }}
       >
         <Space direction="vertical" size="large" style={{ width: '100%' }}>
-          <img src="/icon.svg" alt="" width={72} height={72} style={{ display: 'block', margin: '0 auto' }} />
+          <img
+            src="/icon.svg"
+            alt=""
+            width={72}
+            height={72}
+            style={{ display: 'block', margin: '0 auto' }}
+          />
           <Title level={2} style={{ marginBottom: 0 }}>
             Podcast Manager
           </Title>
