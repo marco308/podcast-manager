@@ -14,6 +14,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
+# Which commit this image is, reported by /api/health. CI passes the SHA, and a
+# local build leaves "unknown". Set late so it doesn't bust the layer cache.
+ARG GIT_SHA=unknown
+ENV GIT_SHA=$GIT_SHA
+
 # Create data directory for SQLite
 RUN mkdir -p /app/data
 

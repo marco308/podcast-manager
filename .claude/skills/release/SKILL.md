@@ -36,7 +36,7 @@ Use judgement on top of that:
 
 ### Cutting it
 
-1. Write `docs/releases/vX.Y.Z.md`: a short intro, **Highlights** for users (not a PR list, since GitHub appends that), and **Upgrading** (migrations, config, re-login, anything else to do). Base it on the PR bodies since the last tag (`git log vLAST..origin/main`). Land it on `main` through a PR, and follow the style of the earlier files in `docs/releases/`.
+1. In one PR, set `backend/VERSION` to `X.Y.Z`. It is the only place the version lives: the API reports it at `/api/health` and in Settings, and the Release workflow refuses a tag that doesn't match it. In the same PR, write `docs/releases/vX.Y.Z.md`: a short intro, **Highlights** for users (not a PR list, since GitHub appends that), and **Upgrading** (migrations, config, re-login, anything else to do). Base it on the PR bodies since the last tag (`git log vLAST..origin/main`). Land it on `main` through a PR, and follow the style of the earlier files in `docs/releases/`.
 2. Once CI on `main` is green for that commit, tag it:
    ```bash
    git fetch origin && git tag -a vX.Y.Z origin/main -m "Podcast Manager X.Y.Z" && git push origin vX.Y.Z
