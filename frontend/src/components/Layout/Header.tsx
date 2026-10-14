@@ -33,7 +33,7 @@ export function Header() {
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <span style={{ fontSize: 24 }}>🎧</span>
+        <img src="/icon.svg" alt="" width={28} height={28} style={{ display: 'block' }} />
         <Text strong style={{ fontSize: 18 }}>
           Podcast Manager
         </Text>

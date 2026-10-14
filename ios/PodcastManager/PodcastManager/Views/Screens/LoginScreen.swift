@@ -9,9 +9,10 @@ struct LoginScreen: View {
         VStack(spacing: 32) {
             Spacer()
 
-            Image(systemName: "mic.fill")
-                .font(.system(size: 64))
-                .foregroundStyle(Color.accentColor)
+            Image("Logo")
+                .resizable()
+                .frame(width: 96, height: 96)
+                .accessibilityHidden(true)
 
             VStack(spacing: 8) {
                 Text("Podcast Manager")
