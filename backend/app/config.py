@@ -2,10 +2,23 @@
 
 import urllib.parse
 from functools import lru_cache
+from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _read_version() -> str:
+    """The release version, from ``backend/VERSION``.
+
+    That file is the one place the version lives. The release workflow
+    refuses a tag that doesn't match it, so bump it in the release-notes PR.
+    """
+    try:
+        return (Path(__file__).resolve().parent.parent / "VERSION").read_text().strip() or "0.0.0"
+    except OSError:
+        return "0.0.0"
 
 
 class Settings(BaseSettings):
@@ -19,7 +32,10 @@ class Settings(BaseSettings):
 
     # Application
     APP_NAME: str = "Podcast Manager"
-    APP_VERSION: str = "1.0.0"
+    APP_VERSION: str = _read_version()
+    # The commit the image was built from. CI passes it as a build arg; a
+    # local build leaves it "unknown".
+    GIT_SHA: str = "unknown"
     DEBUG: bool = False
     # Log every SQL statement. Separate from DEBUG so turning on debug logging
     # doesn't also turn this on; bound parameters are never logged either way

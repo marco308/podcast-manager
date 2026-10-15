@@ -230,4 +230,5 @@ async def health_check() -> dict:
         "status": "healthy",
         "app": settings.APP_NAME,
         "version": settings.APP_VERSION,
+        "commit": settings.GIT_SHA,
     }

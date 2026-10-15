@@ -51,6 +51,14 @@ jobs:
           fi
           MAJOR="${BASH_REMATCH[1]}" MINOR="${BASH_REMATCH[2]}" PRE="${BASH_REMATCH[4]}"
 
+          # backend/VERSION is what the running API reports, so the tag has
+          # to agree with it at the tagged commit. Bump it in the release-notes PR.
+          FILE_VERSION=$(git show "${TAG}:backend/VERSION" 2>/dev/null | tr -d '[:space:]')
+          if [[ "$FILE_VERSION" != "$VERSION" ]]; then
+            echo "::error file=backend/VERSION::says '${FILE_VERSION}', tag says ${VERSION}. Bump backend/VERSION in the release-notes PR, merge it, and tag that commit."
+            exit 1
+          fi
+
           # Only main's commits have published images to promote.
           SHA=$(git rev-parse "${TAG}^{commit}")
           if ! git merge-base --is-ancestor "$SHA" origin/main; then
