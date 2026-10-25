@@ -10,6 +10,10 @@ greenlet>=3.5.6,<4.0.0
 
 # HTTP client for Spotify API
 httpx>=0.28.1,<1.0.0
+# CA bundle httpx trusts. 2026.10.19 drops emSign ECC Root CA - G3 after the
+# eMudhra intermediate-key compromise (anyone could forge certs chaining to it).
+# Transitive via httpx, pinned here so the floor can't silently regress.
+certifi>=2026.10.19
 
 # Background jobs
 apscheduler>=3.11.3,<4.0.0
