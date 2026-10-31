@@ -19,7 +19,7 @@ certifi>=2026.10.19
 apscheduler>=3.11.3,<4.0.0
 # IANA zone data for TIMEZONE: the slim image need not ship /usr/share/zoneinfo,
 # and zoneinfo falls back to this package.
-tzdata>=2026.5
+tzdata>=2026.6
 
 # Security and encryption
 cryptography>=50.0.2
