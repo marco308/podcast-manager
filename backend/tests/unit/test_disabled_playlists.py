@@ -20,12 +20,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from app.routers import playlists as playlists_module
 from app.database import Base
 from app.jobs import locks, scheduler
 from app.models import Playlist, User
 from app.models.playlist import ALL_EPISODES, Arrangement, DateDirection
 from app.rate_limit import limiter
+from app.routers import playlists as playlists_module
 from app.routers.playlists import run_playlist_update
 from app.services.playlist_builder import PlaylistBuilder, PlaylistUpdateResult
 

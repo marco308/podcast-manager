@@ -19,9 +19,8 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from app.models import Base
 from app.jobs import scheduler
-from app.models import Podcast
+from app.models import Base, Podcast
 from app.models.sync_log import SyncLog, SyncStatus
 from app.routers.podcasts import get_podcast, update_podcast
 from app.schemas.podcast import PodcastUpdate

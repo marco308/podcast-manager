@@ -7,11 +7,10 @@ outage produced an empty build, wiped the playlist, and reported success.
 """
 
 from datetime import date
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
-from types import SimpleNamespace
 
 from app.models.playlist import ALL_EPISODES, Arrangement, DateDirection, Playlist
 from app.services.playlist_builder import (

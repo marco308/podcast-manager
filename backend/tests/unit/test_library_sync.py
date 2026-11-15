@@ -26,12 +26,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from app.routers import podcasts as podcasts_module
 from app.database import Base
 from app.jobs import locks, scheduler
 from app.models import Playlist, PlaylistPodcast, Podcast, User
 from app.models.sync_log import SyncLog, SyncStatus
 from app.rate_limit import limiter
+from app.routers import podcasts as podcasts_module
 from app.routers.podcasts import sync_podcasts
 from app.services.encryption import get_encryption_service
 from app.services.playlist_builder import PlaylistBuilder

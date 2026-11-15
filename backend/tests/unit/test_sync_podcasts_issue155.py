@@ -18,10 +18,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from app.routers import podcasts as podcasts_module
 from app.database import Base
 from app.models import Playlist, PlaylistPodcast, Podcast, User
 from app.rate_limit import limiter
+from app.routers import podcasts as podcasts_module
 from app.routers.podcasts import UNSUBSCRIBE_GRACE, sync_podcasts
 from app.services.encryption import get_encryption_service
 

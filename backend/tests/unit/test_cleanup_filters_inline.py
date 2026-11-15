@@ -109,9 +109,7 @@ async def test_cleanup_does_not_call_per_episode_endpoint():
         path = request.url.path
         calls.append(path)
         if path.startswith("/v1/episodes/"):
-            raise AssertionError(
-                f"Cleanup must not call /episodes/{{id}} after PR2; saw {path}"
-            )
+            raise AssertionError(f"Cleanup must not call /episodes/{{id}} after PR2; saw {path}")
         if path.endswith("/items") and request.method == "GET":
             return httpx.Response(200, json=_make_items_payload())
         if path.endswith("/items") and request.method == "DELETE":
@@ -123,15 +121,11 @@ async def test_cleanup_does_not_call_per_episode_endpoint():
         spotify = SpotifyService(access_token="tok", client=client)
 
         # Replay the cleanup inner loop: fetch -> filter -> remove.
-        tracks_data = await spotify.get_playlist_tracks(
-            "playlist123", limit=50, offset=0, cleanup_mode=True
-        )
+        tracks_data = await spotify.get_playlist_tracks("playlist123", limit=50, offset=0, cleanup_mode=True)
         played = _played_uris_from_items(tracks_data.get("items", []))
         assert played == ["spotify:episode:played1", "spotify:episode:played2"]
 
-        await spotify.remove_tracks_from_playlist(
-            "playlist123", played, cleanup_mode=True
-        )
+        await spotify.remove_tracks_from_playlist("playlist123", played, cleanup_mode=True)
 
     assert any(p.endswith("/items") for p in calls)
     assert not any(p.startswith("/v1/episodes/") for p in calls)

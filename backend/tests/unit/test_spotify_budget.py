@@ -73,6 +73,7 @@ async def test_throttle_does_not_sleep_below_threshold():
 @pytest.mark.asyncio
 async def test_cleanup_mode_aborts_on_long_retry_after():
     """cleanup_mode=True must raise CleanupBudgetExceeded for Retry-After > 60s."""
+
     def _handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(429, headers={"Retry-After": "120"}, json={})
 

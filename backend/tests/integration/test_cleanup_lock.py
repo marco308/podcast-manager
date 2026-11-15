@@ -188,12 +188,8 @@ async def test_cleanup_skips_when_rebuild_recent():
     ):
         await scheduler.remove_played_episodes_from_playlists()
 
-    assert spotify_instances == 0, (
-        "cleanup must short-circuit before instantiating SpotifyService"
-    )
-    assert not locks.playlist_write_lock.locked(), (
-        "cleanup must not have acquired the write lock"
-    )
+    assert spotify_instances == 0, "cleanup must short-circuit before instantiating SpotifyService"
+    assert not locks.playlist_write_lock.locked(), "cleanup must not have acquired the write lock"
 
 
 @pytest.mark.asyncio
@@ -228,9 +224,7 @@ async def test_cleanup_runs_when_rebuild_stale():
     ):
         await scheduler.remove_played_episodes_from_playlists()
 
-    assert lock_acquired_during_run, (
-        "cleanup should have taken the write lock past the stale gate"
-    )
+    assert lock_acquired_during_run, "cleanup should have taken the write lock past the stale gate"
     # No users / playlists in our fake DB → SpotifyService isn't built,
     # but we did get past the recency gate. The lock acquisition above
     # is the operative assertion.
@@ -250,7 +244,8 @@ async def test_manual_run_takes_same_lock():
 
     # The @limiter.limit decorator wraps the original handler; unwrap.
     handler = getattr(
-        playlists_router.run_all_playlist_updates, "__wrapped__",
+        playlists_router.run_all_playlist_updates,
+        "__wrapped__",
         playlists_router.run_all_playlist_updates,
     )
 
@@ -361,13 +356,13 @@ async def test_manual_run_returns_409_when_lock_is_held_too_long():
     with (
         patch("app.routers.playlists.PlaylistBuilder.update_all_playlists", _fake_update_all),
         patch("app.routers.playlists.WRITE_LOCK_WAIT_SECONDS", 0.05),
+        pytest.raises(HTTPException) as exc_info,
     ):
-        with pytest.raises(HTTPException) as exc_info:
-            await handler(
-                request=MagicMock(),
-                session=MagicMock(user_id=user.id),
-                db=fake_db,
-            )
+        await handler(
+            request=MagicMock(),
+            session=MagicMock(user_id=user.id),
+            db=fake_db,
+        )
 
     assert exc_info.value.status_code == 409
     assert not ran, "the update must not run when the lock could not be acquired"
