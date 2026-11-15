@@ -419,18 +419,27 @@ function PlaylistFormModalContent({ open, playlist, onClose, onSaved }: Playlist
             name="spotify_playlist_id"
             label="Spotify playlist"
             extra={
-              spotifyUrl ? (
-                <span>
-                  Currently linked to{' '}
-                  <a href={spotifyUrl} target="_blank" rel="noopener noreferrer">
-                    this Spotify playlist <ExportOutlined />
-                  </a>
-                  . Clearing this leaves that playlist alone on Spotify and creates a new one on the
-                  next run.
-                </span>
-              ) : (
-                'Leave empty and a new Spotify playlist is created on the first run, or pick one of your own playlists to take it over'
-              )
+              <>
+                {spotifyUrl ? (
+                  <span>
+                    Currently linked to{' '}
+                    <a href={spotifyUrl} target="_blank" rel="noopener noreferrer">
+                      this Spotify playlist <ExportOutlined />
+                    </a>
+                    . Clearing this leaves that playlist alone on Spotify and creates a new one on
+                    the next run.
+                  </span>
+                ) : (
+                  'Leave empty and a new Spotify playlist is created on the first run, or pick one of your own playlists to take it over'
+                )}
+                {spotifyPlaylists.data?.truncated && (
+                  // The server stops at 20 pages of 50 (issue #311).
+                  <div>
+                    Only the first 1,000 playlists in your Spotify library were checked, so some of
+                    yours may be missing from this list.
+                  </div>
+                )}
+              </>
             }
           >
             <Select<string>
@@ -446,7 +455,7 @@ function PlaylistFormModalContent({ open, playlist, onClose, onSaved }: Playlist
               }
               // Only playlists the user owns are listed; one already linked to
               // another managed playlist is shown but can't be picked.
-              options={(spotifyPlaylists.data ?? []).map((sp) => {
+              options={(spotifyPlaylists.data?.items ?? []).map((sp) => {
                 const linkedElsewhere =
                   sp.linked_playlist_id !== null && sp.linked_playlist_id !== playlist?.id;
                 return {
@@ -457,7 +466,7 @@ function PlaylistFormModalContent({ open, playlist, onClose, onSaved }: Playlist
                 };
               })}
               optionRender={(option) => {
-                const sp = spotifyPlaylists.data?.find((p) => p.id === option.value);
+                const sp = spotifyPlaylists.data?.items.find((p) => p.id === option.value);
                 if (!sp) return option.label;
                 const linkedElsewhere =
                   sp.linked_playlist_id !== null && sp.linked_playlist_id !== playlist?.id;
