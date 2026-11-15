@@ -153,8 +153,8 @@ class _NoopSpotify:
     def __init__(self, *_a: object, **_kw: object) -> None:
         self.api_calls_used = 0
 
-    def reset_api_counter(self) -> None:
-        self.api_calls_used = 0
+    def set_access_token(self, access_token: str) -> None:
+        pass
 
     async def __aenter__(self) -> _NoopSpotify:
         return self

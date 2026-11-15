@@ -77,7 +77,7 @@ class TestBuildRefusesEmptyWrite:
         builder._fetch_unplayed = AsyncMock(side_effect=EpisodeFetchError("boom"))
 
         with pytest.raises(PlaylistBuildError):
-            await builder.build_playlist(_make_playlist())
+            await builder._build_playlist_content(_make_playlist())
 
     @pytest.mark.asyncio
     async def test_update_playlist_does_not_write_when_all_fetches_fail(self):
@@ -100,7 +100,7 @@ class TestBuildRefusesEmptyWrite:
         """A playlist with nothing assigned legitimately builds to []."""
         builder = _builder_with_podcasts()
 
-        assert await builder.build_playlist(_make_playlist()) == []
+        assert await builder._build_playlist_content(_make_playlist()) == ([], [])
 
 
 class TestPartialFailures:

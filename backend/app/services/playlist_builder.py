@@ -241,7 +241,7 @@ class PlaylistBuilder:
         else:
             # Refresh the cached client's token so any subsequent reads
             # (and future shared-client write paths) see the new value.
-            self._spotify._access_token = access_token
+            self._spotify.set_access_token(access_token)
             self._spotify._client = self._http_client
         return self._spotify
 
@@ -598,21 +598,6 @@ class PlaylistBuilder:
             for slot, episode in zip(slots, oldest_first, strict=True):
                 ordered[slot] = episode
         return ordered
-
-    async def build_playlist(self, playlist: Playlist) -> list[str]:
-        """Build playlist content based on assigned podcasts and episode mode.
-
-        Args:
-            playlist: The playlist configuration.
-
-        Returns:
-            List of episode URIs for the playlist.
-
-        Raises:
-            PlaylistBuildError: if every assigned podcast failed to fetch.
-        """
-        uris, _failed = await self._build_playlist_content(playlist)
-        return uris
 
     async def _build_playlist_content(self, playlist: Playlist) -> tuple[list[str], list[str]]:
         """Build playlist content, reporting which podcasts failed to fetch.

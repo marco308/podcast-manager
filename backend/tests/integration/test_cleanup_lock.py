@@ -205,7 +205,6 @@ async def test_cleanup_runs_when_rebuild_stale():
         spotify_instances += 1
         client = MagicMock()
         client.api_calls_used = 0
-        client.reset_api_counter = MagicMock()
         return client
 
     lock_acquired_during_run = False

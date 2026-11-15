@@ -73,7 +73,8 @@ settings = get_settings()
 # label them, rather than presenting them as the viewer's local time.
 scheduler = AsyncIOScheduler(timezone=settings.TIMEZONE)
 
-# Track last run times in-memory for interval jobs
+# In-memory last run times, for the interval jobs only: the jobs in
+# _SYNCLOG_JOB_TYPES take theirs from the SyncLog table.
 _last_run_times: dict[str, datetime] = {}
 
 
@@ -320,7 +321,6 @@ async def update_all_playlists() -> None:
     Uses a separate DB session per user so that Spotify API calls for one user
     don't hold a write lock that blocks the rest of the application.
     """
-    _record_run("daily_playlist_update")
     logger.info("Starting daily playlist update job")
 
     # Pull the library first so the rebuild sees today's subscriptions and
@@ -674,10 +674,9 @@ async def get_job_status() -> list[dict]:
 
         # UTCDateTime and _record_run both yield aware datetimes, so
         # isoformat() already carries the offset — no manual "Z" (issue #156).
-        # SyncLog is the only source for the jobs that write it: _record_run
-        # fires before the row exists (the cleanup recency gate returns before
-        # writing one at all), so falling back to the in-memory time would
-        # report a run that did no work and carry no status.
+        # SyncLog is the only source for the jobs that write it: a cleanup run
+        # stopped by the recency gate writes no row, did no work and has no
+        # status, so it must not show up as the last run.
         job_types = _SYNCLOG_JOB_TYPES.get(job.id)
         if job_types is not None:
             runs = {t: synclog_last_runs[t] for t in job_types if t in synclog_last_runs}
@@ -890,7 +889,6 @@ async def remove_played_episodes_from_playlists() -> None:
     playlist it missed instead of re-cleaning the same head of the list
     and starving the tail (issue #182).
     """
-    _record_run("remove_played_episodes")
     logger.info("Starting remove played episodes job")
 
     # Recency gate (issue #89, PR3): if a rebuild completed successfully
@@ -1045,7 +1043,6 @@ async def remove_played_episodes_from_playlists() -> None:
                     continue
 
                 spotify_client = SpotifyService(access_token=access_token)
-                spotify_client.reset_api_counter()
 
                 try:
                     # Reuse one httpx client for the whole user (issue #182) —
@@ -1121,8 +1118,8 @@ async def remove_played_episodes_from_playlists() -> None:
                                         batch = played_uris[i : i + 50]
                                         try:
                                             # Refresh at the write boundary (PR1 wiring).
-                                            spotify_client._access_token = await token_manager.get_token(
-                                                min_remaining_seconds=300
+                                            spotify_client.set_access_token(
+                                                await token_manager.get_token(min_remaining_seconds=300)
                                             )
                                             await spotify_client.remove_tracks_from_playlist(
                                                 spotify_playlist_id,

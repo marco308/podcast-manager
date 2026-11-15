@@ -121,8 +121,8 @@ class _RecordingSpotify:
         self._page_counts: dict[str, int] = {}
         _RecordingSpotify.instances.append(self)
 
-    def reset_api_counter(self) -> None:
-        self.api_calls_used = 0
+    def set_access_token(self, access_token: str) -> None:
+        pass
 
     async def __aenter__(self) -> _RecordingSpotify:
         return self
