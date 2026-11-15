@@ -26,7 +26,7 @@ from app.models.podcast import Podcast
 from app.models.session import Session
 from app.models.user import User
 from app.rate_limit import limiter
-from app.routers._deps import spotify_client
+from app.routers._deps import ReauthRequired, sign_out_for_reauth, spotify_client
 from app.routers.auth import get_current_user_id, validate_csrf_token
 from app.schemas.playlist import (
     DB_ID_MAX,
@@ -45,6 +45,7 @@ from app.schemas.playlist import (
     SpotifyPlaylistOptionListResponse,
 )
 from app.services.assignment_rules import resolve_rule
+from app.services.encryption import is_unreadable_credentials
 from app.services.playlist_builder import PlaylistBuilder, spotify_playlist_description
 from app.services.spotify import REQUEST_MAX_RETRY_AFTER_SECONDS
 from app.services.token_manager import TokenManager
@@ -427,6 +428,8 @@ async def update_playlist(
                     description=spotify_playlist_description(update_data.name),
                     on_unauthorized=token_manager.force_refresh,
                 )
+            except ReauthRequired:
+                raise
             except Exception as e:
                 if not _is_not_found(e):
                     logger.exception(f"Failed to rename Spotify playlist {playlist.spotify_playlist_id}: {e}")
@@ -495,6 +498,8 @@ async def delete_playlist(
                     playlist.spotify_playlist_id,
                     on_unauthorized=token_manager.force_refresh,
                 )
+            except ReauthRequired:
+                raise
             except Exception as e:
                 # Already gone on Spotify is the outcome we wanted.
                 if not _is_not_found(e):
@@ -810,6 +815,9 @@ async def run_playlist_update(
     # response is sent (see get_db). No-op on the failure path.
     await db.commit()
 
+    if result.exception is not None and is_unreadable_credentials(result.exception):
+        raise await sign_out_for_reauth(db, session.user_id)
+
     if not result.success and not result.partial:
         # Log the detail; don't hand raw exception text to the client (issue #161).
         logger.error(f"Manual run failed for playlist '{playlist.name}': {result.error}")
@@ -868,6 +876,11 @@ async def run_all_playlist_updates(
     # Persist the builder's flushed writes (last_updated_at) before the
     # response is sent (see get_db).
     await db.commit()
+
+    # Unreadable credentials fail every playlist the same way, and only a
+    # fresh sign-in fixes them (issue #308).
+    if any(r.exception is not None and is_unreadable_credentials(r.exception) for r in results):
+        raise await sign_out_for_reauth(db, session.user_id)
 
     skipped = [r for r in results if r.skipped]
     partial = [r for r in results if r.partial]

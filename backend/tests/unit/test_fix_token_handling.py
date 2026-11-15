@@ -14,7 +14,8 @@
   into bare 500s.
 - Unreadable stored credentials returned 401 but left the session valid, so
   the web client's redirect to /login bounced straight back to /. The session
-  is now deleted and the cookies cleared.
+  is now deleted and the cookies cleared — also when only the refresh token
+  is unreadable and the failure surfaces inside a 401 retry (issue #308).
 - The token refresh job's first run was one interval after startup.
 """
 
@@ -411,6 +412,138 @@ async def test_decrypt_failure_deletes_sessions_and_requires_reauth(maker, monke
     assert exc_info.value.status_code == 401
     async with maker() as db:
         assert (await db.execute(select(Session))).scalars().all() == []
+
+
+def _two_sessions():
+    now = datetime.now(UTC)
+    return (
+        Session(session_id_hash=hash_session_id("web"), user_id=1, csrf_token="c", expires_at=now + timedelta(days=1)),
+        Session(session_id_hash=hash_session_id("ios"), user_id=1, csrf_token="c", expires_at=now + timedelta(days=1)),
+    )
+
+
+async def _sessions_left(maker):
+    async with maker() as db:
+        return (await db.execute(select(Session))).scalars().all()
+
+
+@pytest.mark.asyncio
+async def test_unreadable_refresh_token_is_not_sent_to_spotify(caplog):
+    """Issue #308: the refresh token fails to decrypt inside force_refresh."""
+    user = _user_row()
+    refresh = AsyncMock(return_value=_rotation())
+    p1, p2, p3, p4 = _patched(user, refresh)
+    encryption = _encryption()
+
+    def _decrypt(ciphertext):
+        if ciphertext == user.refresh_token:
+            raise TokenDecryptionError("bad refresh token")
+        return ciphertext.removeprefix("enc:")
+
+    encryption.decrypt.side_effect = _decrypt
+    with (
+        p1,
+        patch.object(token_manager_module, "get_encryption_service", return_value=encryption),
+        p3,
+        p4,
+        caplog.at_level(logging.ERROR),
+        pytest.raises(TokenDecryptionError),
+    ):
+        await TokenManager(1).force_refresh("cached-access")
+
+    refresh.assert_not_awaited()
+    assert any("refresh token" in r.message and "sign in again" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_unreadable_refresh_token_during_401_retry_signs_out(maker, monkeypatch):
+    """The access token decrypts, Spotify 401s it, and the refresh token doesn't (#308)."""
+    await _seed(maker, *_two_sessions())
+    tm = _wire_spotify(monkeypatch, _expired_old_token(lambda _r: httpx.Response(200, json={"items": [], "total": 0})))
+    tm.force_refresh.side_effect = TokenDecryptionError("bad refresh token")
+
+    async with maker() as db:
+        with pytest.raises(ReauthRequired) as exc_info:
+            await sync_podcasts(request=MagicMock(), session=SESSION, db=db)
+
+    assert exc_info.value.status_code == 401
+    assert await _sessions_left(maker) == []
+    # The sync lock was released on the way out.
+    assert not scheduler.locks.library_sync_lock.locked()
+
+
+@pytest.mark.asyncio
+async def test_rename_with_unreadable_refresh_token_signs_out_rather_than_502(maker, monkeypatch):
+    """The rename's broad ``except`` must not turn the sign-out into a 502."""
+    from app.models import Playlist
+    from app.routers.playlists import update_playlist
+    from app.schemas.playlist import PlaylistUpdate
+
+    await _seed(maker, *_two_sessions(), Playlist(user_id=1, name="Old", spotify_playlist_id="sp1"))
+    tm = _wire_spotify(monkeypatch, _expired_old_token(lambda _r: httpx.Response(200)))
+    tm.force_refresh.side_effect = TokenDecryptionError("bad refresh token")
+
+    async with maker() as db:
+        with pytest.raises(ReauthRequired):
+            await update_playlist(1, PlaylistUpdate(name="New"), session=SESSION, db=db)
+
+    assert await _sessions_left(maker) == []
+    async with maker() as db:
+        assert (await db.execute(select(Playlist.name))).scalar_one() == "Old"
+
+
+@pytest.mark.asyncio
+async def test_manual_run_with_unreadable_credentials_signs_out(maker, monkeypatch):
+    """A run's builder reports the failure as a result; the route signs out."""
+    from app.models import Playlist
+    from app.routers import playlists as playlists_module
+    from app.services.playlist_builder import EpisodeFetchError, PlaylistUpdateResult
+
+    await _seed(maker, *_two_sessions(), Playlist(user_id=1, name="P", spotify_playlist_id="sp1"))
+    monkeypatch.setattr(scheduler.locks, "playlist_write_lock", asyncio.Lock())
+    try:
+        raise EpisodeFetchError("Show: wrapped") from TokenDecryptionError("bad refresh token")
+    except EpisodeFetchError as e:
+        failure = e
+    builder = MagicMock()
+    builder.update_playlist = AsyncMock(
+        return_value=PlaylistUpdateResult(
+            playlist_id=1, playlist_name="P", success=False, episode_count=0, error=str(failure), exception=failure
+        )
+    )
+    monkeypatch.setattr(playlists_module, "PlaylistBuilder", MagicMock(return_value=builder))
+
+    async with maker() as db:
+        with pytest.raises(ReauthRequired):
+            await playlists_module.run_playlist_update(request=MagicMock(), playlist_id=1, session=SESSION, db=db)
+
+    assert await _sessions_left(maker) == []
+
+
+def test_jobs_classify_unreadable_credentials_apart_from_spotify_errors():
+    """A credentials failure outranks the Spotify errors around it (#308)."""
+    request = httpx.Request("GET", "https://api.spotify.com/v1/x")
+    rate_limited = httpx.HTTPStatusError("429", request=request, response=httpx.Response(429, request=request))
+    try:
+        raise RuntimeError("wrapped") from TokenDecryptionError("bad refresh token")
+    except RuntimeError as e:
+        wrapped = e
+
+    assert (
+        scheduler._classify_failure(
+            playlists_attempted=2,
+            playlists_failed=2,
+            error_messages=["a", "b"],
+            exceptions=[rate_limited, wrapped],
+        )
+        == scheduler.CREDENTIALS_UNREADABLE_FAILURE_CODE
+    )
+    assert (
+        scheduler._classify_failure(
+            playlists_attempted=1, playlists_failed=1, error_messages=["a"], exceptions=[rate_limited]
+        )
+        == "rate_limit"
+    )
 
 
 @pytest.mark.asyncio
