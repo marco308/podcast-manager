@@ -46,7 +46,6 @@ body {
     border-color 0.3s ease;
 }
 
-
 /* Loading spinner centering */
 .ant-spin-nested-loading > div > .ant-spin {
   max-height: none;
