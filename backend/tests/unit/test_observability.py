@@ -180,6 +180,18 @@ class TestAccessLog:
         [record] = _records(caplog, HTTP_LOGGER)
         assert (record.route, record.status) == ("unmatched", 404)
 
+    def test_healthcheck_polls_are_counted_but_not_logged(self, client, caplog):
+        """The healthcheck runs every few seconds; its successes would bury
+        real requests in Loki, but they still reach the metrics."""
+        with caplog.at_level(logging.INFO, logger=HTTP_LOGGER):
+            response = client.get("/api/health")
+        assert response.status_code == 200
+        assert _records(caplog, HTTP_LOGGER) == []
+        sample = REGISTRY.get_sample_value(
+            "http_requests_total", {"method": "GET", "route": "/api/health", "status": "200"}
+        )
+        assert sample and sample >= 1
+
 
 # --- /metrics -----------------------------------------------------------------
 

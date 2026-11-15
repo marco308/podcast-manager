@@ -26,6 +26,12 @@ from datetime import UTC, datetime
 from app import metrics
 
 HTTP_LOGGER = "podcast_manager.http"
+
+# Polled routes whose successful calls get no access line: the Docker
+# healthcheck hits /api/health every few seconds and Prometheus scrapes
+# /metrics on its interval, which would bury real requests in Loki. They still
+# count in http_requests_total, and a failing call is still logged.
+QUIET_ROUTES = frozenset({"/api/health", "/metrics"})
 EVENTS_LOGGER = "podcast_manager.events"
 ERROR_LOGGER = "podcast_manager.error"
 
@@ -236,14 +242,15 @@ class ObservabilityMiddleware:
             method = scope["method"]
             route = route_template(scope)
             metrics.observe_request(method, route, status, duration)
-            _http_logger.info(
-                f"{method} {route} {status}",
-                extra={
-                    "method": method,
-                    "route": route,
-                    "status": status,
-                    "duration_ms": round(duration * 1000, 2),
-                    "request_id": request_id,
-                },
-            )
+            if not (route in QUIET_ROUTES and status < 400):
+                _http_logger.info(
+                    f"{method} {route} {status}",
+                    extra={
+                        "method": method,
+                        "route": route,
+                        "status": status,
+                        "duration_ms": round(duration * 1000, 2),
+                        "request_id": request_id,
+                    },
+                )
             request_id_var.reset(token)
