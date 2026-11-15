@@ -5,7 +5,7 @@ from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,6 +19,10 @@ def _read_version() -> str:
         return (Path(__file__).resolve().parent.parent / "VERSION").read_text().strip() or "0.0.0"
     except OSError:
         return "0.0.0"
+
+
+# Where a Docker/Swarm secret named ``metrics_token`` is mounted.
+DOCKER_METRICS_TOKEN_SECRET = Path("/run/secrets/metrics_token")
 
 
 class Settings(BaseSettings):
@@ -42,6 +46,16 @@ class Settings(BaseSettings):
     # (the engine uses hide_parameters), since they include session-ID hashes
     # and CSRF tokens.
     SQL_ECHO: bool = False
+    # "json" (one JSON object per line) or "text". Unset: text with DEBUG,
+    # json otherwise; see ``log_format``.
+    LOG_FORMAT: str = ""
+
+    # Bearer token for GET /metrics. Empty: /metrics answers 404, as if the
+    # route didn't exist. Read from the environment first, then from the file
+    # named by METRICS_TOKEN_FILE, then from the Docker secret
+    # /run/secrets/metrics_token if one is mounted.
+    METRICS_TOKEN: str = ""
+    METRICS_TOKEN_FILE: str = ""
 
     # Database
     DATABASE_URL: str = "sqlite+aiosqlite:///./data/podcast_manager.db"
@@ -97,6 +111,39 @@ class Settings(BaseSettings):
                 f"TIMEZONE={value!r} is not a known IANA time zone name (e.g. 'UTC', 'Europe/London')"
             ) from e
         return value
+
+    @field_validator("LOG_FORMAT")
+    @classmethod
+    def _valid_log_format(cls, value: str) -> str:
+        value = value.strip().lower()
+        if value not in ("", "json", "text"):
+            raise ValueError(f"LOG_FORMAT={value!r} must be 'json' or 'text'")
+        return value
+
+    @property
+    def log_format(self) -> str:
+        """The effective log format: LOG_FORMAT, else text locally (DEBUG) and json in production."""
+        return self.LOG_FORMAT or ("text" if self.DEBUG else "json")
+
+    @model_validator(mode="after")
+    def _metrics_token_from_file(self) -> "Settings":
+        """Fill METRICS_TOKEN from a secret file when the environment leaves it empty.
+
+        An explicitly named METRICS_TOKEN_FILE that can't be read fails
+        startup; the default Docker secret path is only used if it exists.
+        """
+        if self.METRICS_TOKEN.strip():
+            self.METRICS_TOKEN = self.METRICS_TOKEN.strip()
+            return self
+        if self.METRICS_TOKEN_FILE:
+            path = Path(self.METRICS_TOKEN_FILE)
+            try:
+                self.METRICS_TOKEN = path.read_text().strip()
+            except OSError as e:
+                raise ValueError(f"METRICS_TOKEN_FILE={self.METRICS_TOKEN_FILE!r} could not be read") from e
+        elif DOCKER_METRICS_TOKEN_SECRET.is_file():
+            self.METRICS_TOKEN = DOCKER_METRICS_TOKEN_SECRET.read_text().strip()
+        return self
 
     @field_validator("FRONTEND_URL")
     @classmethod

@@ -8,6 +8,7 @@ dying mid-run (issue #161).
 """
 
 import logging
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -16,8 +17,10 @@ from datetime import UTC, datetime
 import httpx
 from sqlalchemy import select
 
+from app import metrics
 from app.database import async_session_maker
 from app.models.sync_log import SyncLog, SyncStatus
+from app.observability import log_event
 from app.services.encryption import is_unreadable_credentials
 
 logger = logging.getLogger(__name__)
@@ -85,8 +88,12 @@ async def sync_log_run(job_type: str) -> AsyncIterator[SyncLogRun]:
     ``FAILED`` and the exception propagates; if it returns without an
     outcome, that is a bug in the job, and the row is still closed out as
     ``FAILED`` rather than left ``RUNNING``.
+
+    Every exit also emits the ``job_run`` event on ``podcast_manager.events``
+    and updates the job metrics, so no job can finish unobserved.
     """
     run = SyncLogRun(job_type)
+    started = time.monotonic()
     try:
         async with async_session_maker() as db:
             sync_log = SyncLog(job_type=job_type, status=SyncStatus.RUNNING, started_at=datetime.now(UTC))
@@ -106,6 +113,33 @@ async def sync_log_run(job_type: str) -> AsyncIterator[SyncLogRun]:
         if run.outcome is None:
             run.fail("Job ended without recording an outcome")
         await finalise_sync_log(run.id, **run.outcome)
+        _observe_run(run, time.monotonic() - started)
+
+
+def _observe_run(run: SyncLogRun, duration_seconds: float) -> None:
+    """Emit the run's ``job_run`` event and update the job metrics.
+
+    Ids and counts only: ``details`` can carry playlist and show names, so it
+    stays in the SyncLog row. Never raises, like ``finalise_sync_log``.
+    """
+    try:
+        outcome = run.outcome or {}
+        ok = outcome.get("status") is SyncStatus.SUCCESS
+        result = "ok" if ok else "error"
+        metrics.record_job_run(run.job_type, result, time.time())
+        log_event(
+            "job_run",
+            outcome=result,
+            job_type=run.job_type,
+            sync_log_id=run.id,
+            failure_code=outcome.get("failure_code"),
+            playlists_attempted=outcome.get("playlists_attempted"),
+            playlists_failed=outcome.get("playlists_failed"),
+            api_calls_used=outcome.get("api_calls_used"),
+            duration_ms=round(duration_seconds * 1000, 1),
+        )
+    except Exception as e:
+        logger.error(f"Failed to record {run.job_type} run metrics: {e}")
 
 
 async def finalise_sync_log(

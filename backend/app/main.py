@@ -1,19 +1,29 @@
 """FastAPI Application Entry Point."""
 
+import hmac
 import logging
-import sys
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
+from app import metrics
 from app.config import get_settings
 from app.jobs import locks
 from app.jobs.scheduler import init_scheduler, shutdown_scheduler
+from app.observability import (
+    ERROR_LOGGER,
+    REQUEST_ID_HEADER,
+    REQUEST_ID_SCOPE_KEY,
+    ObservabilityMiddleware,
+    configure_logging,
+    current_request_id,
+    route_template,
+)
 from app.rate_limit import limiter
 from app.routers import auth_router, jobs_router, playlists_router, podcasts_router
 from app.routers._deps import ReauthRequired, reauth_required_handler
@@ -21,21 +31,12 @@ from app.schemas.common import HealthResponse
 
 settings = get_settings()
 
-# Configure logging
-logging.basicConfig(
-    level=logging.DEBUG if settings.DEBUG else logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-    ],
-)
-
-# Reduce noise from third-party libraries
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("httpcore").setLevel(logging.WARNING)
-logging.getLogger("apscheduler").setLevel(logging.INFO)
+# One stdout handler for every logger: JSON in production, text with DEBUG
+# (LOG_FORMAT overrides). See app/observability.py.
+configure_logging(settings.log_format, logging.DEBUG if settings.DEBUG else logging.INFO)
 
 logger = logging.getLogger(__name__)
+error_logger = logging.getLogger(ERROR_LOGGER)
 
 
 @asynccontextmanager
@@ -99,7 +100,16 @@ if settings.DEBUG:
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Handle uncaught exceptions globally."""
-    logger.exception(f"Unhandled exception for {request.method} {request.url}: {exc}")
+    # The observability middleware has already returned by the time
+    # ServerErrorMiddleware calls this, so the id comes from the scope.
+    request_id = request.scope.get(REQUEST_ID_SCOPE_KEY) or current_request_id()
+    route = route_template(request.scope)
+    # Route template, not the URL: the query string is never logged.
+    error_logger.error(
+        f"Unhandled {type(exc).__name__} in {request.method} {route}",
+        exc_info=exc,
+        extra={"method": request.method, "route": route, "request_id": request_id},
+    )
     # This handler runs outside CORSMiddleware, so without these headers the
     # browser hides the 500 behind a CORS/network error (issue #182). Mirror
     # the middleware config: echo the Origin only if it's one we allow, and
@@ -107,6 +117,8 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
     # ServerErrorMiddleware sits outside SecurityHeadersMiddleware, so add
     # the security headers here too.
     headers = security_headers(request.url.path)
+    if request_id:
+        headers[REQUEST_ID_HEADER] = request_id
     origin = request.headers.get("origin")
     if origin and origin in cors_origins:
         headers |= {
@@ -119,6 +131,7 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
         content={
             "detail": "An internal server error occurred. Please try again later.",
             "path": str(request.url.path),
+            "request_id": request_id,
         },
         headers=headers,
     )
@@ -214,8 +227,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Added last, so outermost: CORS preflights and rejections get the headers too.
+# Added after the others, so outermost: CORS preflights and rejections get the headers too.
 app.add_middleware(SecurityHeadersMiddleware)
+
+# Outermost of all: every response (security-header and CORS rejections
+# included) is timed, counted, logged and carries X-Request-ID.
+app.add_middleware(ObservabilityMiddleware)
 
 # Include routers
 app.include_router(auth_router, prefix="/api")
@@ -233,3 +250,24 @@ async def health_check() -> dict:
         "version": settings.APP_VERSION,
         "commit": settings.GIT_SHA,
     }
+
+
+def _bearer_token(request: Request) -> str | None:
+    scheme, _, token = request.headers.get("authorization", "").partition(" ")
+    return token.strip() if scheme.lower() == "bearer" and token.strip() else None
+
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics_endpoint(request: Request) -> Response:
+    """Prometheus scrape endpoint, guarded by ``METRICS_TOKEN``.
+
+    The API host is reachable from the internet, so without a configured
+    token, or without the right bearer, this answers the same 404 as a route
+    that doesn't exist rather than revealing it.
+    """
+    expected = get_settings().METRICS_TOKEN
+    provided = _bearer_token(request)
+    if not expected or provided is None or not hmac.compare_digest(provided.encode(), expected.encode()):
+        raise HTTPException(status_code=404, detail="Not Found")
+    body, content_type = metrics.render()
+    return Response(content=body, media_type=content_type)

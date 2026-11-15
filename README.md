@@ -155,6 +155,15 @@ Spotify tokens are stored encrypted with `ENCRYPTION_KEY`. Keep it stable: chang
 
 `DEBUG=true` turns on debug logging and serves the API docs at `/api/docs`; they are off otherwise. `SQL_ECHO=true` logs SQL statements, without their parameters.
 
+Logs go to stdout, one line per record: JSON by default, plain text with `DEBUG=true`. `LOG_FORMAT=json` or `LOG_FORMAT=text` overrides either. Every response carries an `X-Request-ID` header (an incoming one is kept if it is short and plain), and the same id is on every log line for that request.
+
+```bash
+METRICS_TOKEN=            # bearer token for GET /metrics (Prometheus); unset, /metrics is a 404
+# METRICS_TOKEN_FILE=     # or read it from a file; a Docker secret at /run/secrets/metrics_token also works
+```
+
+`/metrics` is at the server root, not under `/api`. Scrape it with `Authorization: Bearer <token>`; without the right token it answers 404. It reports request counts and durations per route, job runs per job type and outcome with the time of the last one, and Spotify API calls by status.
+
 ### Local development
 
 ```bash

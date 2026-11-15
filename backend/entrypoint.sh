@@ -31,6 +31,10 @@ alembic upgrade head
 # FORWARDED_ALLOW_IPS to its address (comma-separated IPs or CIDRs).
 FORWARDED_ALLOW_IPS="${FORWARDED_ALLOW_IPS:-127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7}"
 
+# --no-access-log: the app writes its own access line per request on the
+# podcast_manager.http logger (route template, status, duration, request id),
+# so uvicorn's would only duplicate it, with the raw path and query string.
+#
 # Serve over HTTPS when certs are mounted (local mkcert setup); otherwise
 # plain HTTP behind whatever TLS-terminating proxy is in front.
 if [ -f /app/certs/localhost+2.pem ] && [ -f /app/certs/localhost+2-key.pem ]; then
@@ -40,10 +44,11 @@ if [ -f /app/certs/localhost+2.pem ] && [ -f /app/certs/localhost+2-key.pem ]; t
         --port 8000 \
         --proxy-headers \
         --forwarded-allow-ips "$FORWARDED_ALLOW_IPS" \
+        --no-access-log \
         --ssl-keyfile=/app/certs/localhost+2-key.pem \
         --ssl-certfile=/app/certs/localhost+2.pem
 fi
 
 echo "Starting uvicorn..."
 exec uvicorn app.main:app --host 0.0.0.0 --port 8000 \
-    --proxy-headers --forwarded-allow-ips "$FORWARDED_ALLOW_IPS"
+    --proxy-headers --forwarded-allow-ips "$FORWARDED_ALLOW_IPS" --no-access-log
