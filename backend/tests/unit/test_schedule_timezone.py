@@ -19,8 +19,9 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import Settings
-from app.jobs import scheduler
+from app.jobs import schedule, scheduler
 from app.models import Base
+from tests.job_patches import patch_job_sessions
 
 
 @pytest_asyncio.fixture
@@ -54,45 +55,45 @@ class TestSetting:
 
 class TestTriggers:
     def test_every_trigger_uses_the_configured_zone(self):
-        with patch.object(scheduler.settings, "TIMEZONE", "Europe/London"):
-            trigger = scheduler._update_trigger([(6, 0), (18, 0)])
+        with patch.object(schedule.settings, "TIMEZONE", "Europe/London"):
+            trigger = schedule.update_trigger([(6, 0), (18, 0)])
         for cron in trigger.triggers:
             assert str(cron.timezone) == "Europe/London"
 
     def test_six_am_london_in_summer_is_five_utc(self):
-        with patch.object(scheduler.settings, "TIMEZONE", "Europe/London"):
-            trigger = scheduler._update_trigger([(6, 0)])
+        with patch.object(schedule.settings, "TIMEZONE", "Europe/London"):
+            trigger = schedule.update_trigger([(6, 0)])
         fire = trigger.get_next_fire_time(None, datetime(2026, 7, 1, 0, 0, tzinfo=UTC))
         assert fire.astimezone(ZoneInfo("Europe/London")).hour == 6
         assert fire.astimezone(UTC).hour == 5
 
     def test_six_am_london_in_winter_is_six_utc(self):
-        with patch.object(scheduler.settings, "TIMEZONE", "Europe/London"):
-            trigger = scheduler._update_trigger([(6, 0)])
+        with patch.object(schedule.settings, "TIMEZONE", "Europe/London"):
+            trigger = schedule.update_trigger([(6, 0)])
         fire = trigger.get_next_fire_time(None, datetime(2026, 12, 1, 0, 0, tzinfo=UTC))
         assert fire.astimezone(UTC).hour == 6
 
     def test_times_read_back_unchanged(self):
         """The reported hour and minute are the zone's wall clock, not UTC."""
-        with patch.object(scheduler.settings, "TIMEZONE", "America/New_York"):
-            trigger = scheduler._update_trigger([(6, 0), (21, 30)])
-        assert scheduler._trigger_times(trigger) == [(6, 0), (21, 30)]
+        with patch.object(schedule.settings, "TIMEZONE", "America/New_York"):
+            trigger = schedule.update_trigger([(6, 0), (21, 30)])
+        assert schedule.trigger_times(trigger) == [(6, 0), (21, 30)]
 
 
 @pytest.mark.asyncio
 async def test_status_reports_the_zone(maker):
-    with patch.object(scheduler.settings, "TIMEZONE", "Europe/London"):
+    with patch.object(schedule.settings, "TIMEZONE", "Europe/London"):
         job = SimpleNamespace(
             id="daily_playlist_update",
             name="Daily Library Sync & Playlist Update",
             next_run_time=None,
-            trigger=scheduler._update_trigger([(6, 0)]),
+            trigger=schedule.update_trigger([(6, 0)]),
         )
         fake_scheduler = MagicMock()
         fake_scheduler.get_jobs.return_value = [job]
         with (
-            patch.object(scheduler, "async_session_maker", maker),
-            patch.object(scheduler, "scheduler", fake_scheduler),
+            patch_job_sessions(maker),
+            patch("app.jobs.schedule.scheduler", fake_scheduler),
         ):
             [info] = await scheduler.get_job_status()
 

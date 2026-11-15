@@ -21,13 +21,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base
-from app.jobs import locks, scheduler
+from app.jobs import cleanup, locks, scheduler
 from app.models import Playlist, User
 from app.models.playlist import ALL_EPISODES, Arrangement, DateDirection
 from app.rate_limit import limiter
 from app.routers import playlists as playlists_module
 from app.routers.playlists import run_playlist_update
 from app.services.playlist_builder import PlaylistBuilder, PlaylistUpdateResult
+from tests.job_patches import JOB_MODULES_WITH_SESSIONS
 
 SESSION = SimpleNamespace(user_id=1)
 
@@ -142,13 +143,14 @@ def _patch_cleanup_boundaries(monkeypatch, *, still_enabled: set[int]):
         def add(self, _obj):
             return None
 
-    monkeypatch.setattr(scheduler, "async_session_maker", lambda: _FakeSession())
-    monkeypatch.setattr(scheduler, "_still_enabled_playlist_ids", AsyncMock(return_value=still_enabled))
+    for module in JOB_MODULES_WITH_SESSIONS:
+        monkeypatch.setattr(f"{module}.async_session_maker", lambda: _FakeSession())
+    monkeypatch.setattr(cleanup, "_still_enabled_playlist_ids", AsyncMock(return_value=still_enabled))
 
     token_manager = MagicMock()
     token_manager.get_token = AsyncMock(return_value="token")
     token_manager.force_refresh = AsyncMock(return_value="token")
-    monkeypatch.setattr(scheduler, "TokenManager", MagicMock(return_value=token_manager))
+    monkeypatch.setattr(cleanup, "TokenManager", MagicMock(return_value=token_manager))
 
     client = MagicMock()
     client.api_calls_used = 0
@@ -164,7 +166,7 @@ def _patch_cleanup_boundaries(monkeypatch, *, still_enabled: set[int]):
         instances += 1
         return client
 
-    monkeypatch.setattr(scheduler, "SpotifyService", MagicMock(side_effect=_ctor))
+    monkeypatch.setattr(cleanup, "SpotifyService", MagicMock(side_effect=_ctor))
 
     return (lambda: instances), client
 
@@ -330,8 +332,9 @@ class TestCleanupRechecksUnderTheLock:
                 db.add(Playlist(user_id=1, name="Off", is_enabled=False))
                 await db.commit()
 
-            monkeypatch.setattr(scheduler, "async_session_maker", maker)
-            assert await scheduler._still_enabled_playlist_ids() == {1}
+            for module in JOB_MODULES_WITH_SESSIONS:
+                monkeypatch.setattr(f"{module}.async_session_maker", maker)
+            assert await cleanup._still_enabled_playlist_ids() == {1}
         finally:
             await engine.dispose()
 
@@ -342,8 +345,9 @@ class TestCleanupRechecksUnderTheLock:
         def _boom():
             raise RuntimeError("db gone")
 
-        monkeypatch.setattr(scheduler, "async_session_maker", _boom)
-        assert await scheduler._still_enabled_playlist_ids() is None
+        for module in JOB_MODULES_WITH_SESSIONS:
+            monkeypatch.setattr(f"{module}.async_session_maker", _boom)
+        assert await cleanup._still_enabled_playlist_ids() is None
 
     @pytest.mark.asyncio
     async def test_playlist_disabled_before_the_lock_is_not_cleaned(self, monkeypatch):

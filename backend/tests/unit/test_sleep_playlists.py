@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base
-from app.jobs import scheduler
+from app.jobs import cleanup
 from app.models import Playlist, PlaylistPodcast, Podcast, SleepEpisode, User
 from app.models.playlist import Arrangement, PickFrom, PlaylistKind
 from app.routers.playlists import create_playlist, update_playlist, update_playlist_podcast
@@ -135,7 +135,7 @@ class TestCleanupSkipsSleep:
             ]
         )
         await db.commit()
-        result = await db.execute(select(Playlist.name).where(scheduler._cleanup_candidates()))
+        result = await db.execute(select(Playlist.name).where(cleanup._cleanup_candidates()))
         assert result.scalars().all() == ["Std"]
 
 

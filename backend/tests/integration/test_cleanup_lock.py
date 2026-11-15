@@ -35,8 +35,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.jobs import locks, scheduler
+from app.jobs import cleanup, locks, scheduler
 from app.models.sync_log import SyncStatus
+from tests.job_patches import patch_job_sessions
 
 
 @pytest.fixture(autouse=True)
@@ -68,7 +69,7 @@ def _make_session_factory(*, recent_rebuild_at: datetime | None, users: list = N
     - swallows commit / add silently
     """
     users = users or []
-    cutoff = datetime.now(UTC) - scheduler.CLEANUP_RECENCY_WINDOW
+    cutoff = datetime.now(UTC) - cleanup.CLEANUP_RECENCY_WINDOW
     gate_row = recent_rebuild_at if (recent_rebuild_at is not None and recent_rebuild_at > cutoff) else None
 
     class _FakeResult:
@@ -149,7 +150,7 @@ async def test_cleanup_waits_for_rebuild_lock():
     # the lock.
     session_factory = _make_session_factory(recent_rebuild_at=None, users=[])
 
-    with patch("app.jobs.scheduler.async_session_maker", session_factory):
+    with patch_job_sessions(session_factory):
         rebuild_task = asyncio.create_task(fake_rebuild_holding_lock())
         # Yield so the rebuild task actually starts and takes the lock
         # before cleanup begins.
@@ -183,8 +184,8 @@ async def test_cleanup_skips_when_rebuild_recent():
         return MagicMock()
 
     with (
-        patch("app.jobs.scheduler.async_session_maker", session_factory),
-        patch("app.jobs.scheduler.SpotifyService", side_effect=_spotify_ctor),
+        patch_job_sessions(session_factory),
+        patch("app.jobs.cleanup.SpotifyService", side_effect=_spotify_ctor),
     ):
         await scheduler.remove_played_episodes_from_playlists()
 
@@ -217,8 +218,8 @@ async def test_cleanup_runs_when_rebuild_stale():
         return await original_acquire()
 
     with (
-        patch("app.jobs.scheduler.async_session_maker", session_factory),
-        patch("app.jobs.scheduler.SpotifyService", side_effect=_spotify_ctor),
+        patch_job_sessions(session_factory),
+        patch("app.jobs.cleanup.SpotifyService", side_effect=_spotify_ctor),
         patch.object(locks.playlist_write_lock, "acquire", _spy_acquire),
     ):
         await scheduler.remove_played_episodes_from_playlists()

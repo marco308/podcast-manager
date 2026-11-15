@@ -22,7 +22,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from app.jobs.scheduler import _played_uris_from_items
+from app.jobs.cleanup import _played_uris_from_items
 from app.services.spotify import SpotifyService
 
 

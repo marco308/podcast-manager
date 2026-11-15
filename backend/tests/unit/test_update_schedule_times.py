@@ -19,10 +19,11 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.jobs import scheduler
+from app.jobs import schedule, scheduler
 from app.models import Base
 from app.models.settings import AppSetting
 from app.routers.jobs import UpdateScheduleRequest
+from tests.job_patches import patch_job_sessions
 
 
 @pytest_asyncio.fixture
@@ -45,12 +46,12 @@ async def _settings(maker) -> dict[str, str]:
 
 class TestTrigger:
     def test_one_time_is_a_plain_cron_trigger(self):
-        assert isinstance(scheduler._update_trigger([(4, 0)]), CronTrigger)
+        assert isinstance(schedule.update_trigger([(4, 0)]), CronTrigger)
 
     def test_several_times_fire_at_each(self):
-        trigger = scheduler._update_trigger([(4, 0), (13, 30), (19, 15)])
+        trigger = schedule.update_trigger([(4, 0), (13, 30), (19, 15)])
         assert isinstance(trigger, OrTrigger)
-        assert scheduler._trigger_times(trigger) == [(4, 0), (13, 30), (19, 15)]
+        assert schedule.trigger_times(trigger) == [(4, 0), (13, 30), (19, 15)]
 
         now = datetime(2026, 9, 23, 5, 0, tzinfo=UTC)
         fires = []
@@ -61,12 +62,12 @@ class TestTrigger:
         assert fires == [(13, 30), (19, 15), (4, 0), (13, 30)]
 
     def test_times_are_sorted_and_deduplicated(self):
-        assert scheduler.normalise_update_times([(13, 0), (4, 0), (13, 0)]) == [(4, 0), (13, 0)]
+        assert schedule.normalise_update_times([(13, 0), (4, 0), (13, 0)]) == [(4, 0), (13, 0)]
 
     @pytest.mark.parametrize("times", [[], [(1, 0), (2, 0), (3, 0), (4, 0)]])
     def test_empty_or_too_many_times_are_rejected(self, times):
         with pytest.raises(ValueError):
-            scheduler.normalise_update_times(times)
+            schedule.normalise_update_times(times)
 
 
 class TestRequest:
@@ -101,8 +102,8 @@ class TestPersistence:
     async def test_reschedule_persists_the_list_and_the_legacy_keys(self, maker):
         fake_scheduler = MagicMock()
         with (
-            patch.object(scheduler, "async_session_maker", maker),
-            patch.object(scheduler, "scheduler", fake_scheduler),
+            patch_job_sessions(maker),
+            patch("app.jobs.schedule.scheduler", fake_scheduler),
         ):
             await scheduler.reschedule_playlist_update([(19, 0), (7, 30)])
 
@@ -112,7 +113,7 @@ class TestPersistence:
             "playlist_update_minute": "30",
         }
         trigger = fake_scheduler.reschedule_job.call_args.kwargs["trigger"]
-        assert scheduler._trigger_times(trigger) == [(7, 30), (19, 0)]
+        assert schedule.trigger_times(trigger) == [(7, 30), (19, 0)]
 
     @pytest.mark.asyncio
     async def test_load_reads_the_list(self, maker):
@@ -120,8 +121,8 @@ class TestPersistence:
             db.add(AppSetting(key="playlist_update_times", value="04:00,16:00"))
             db.add(AppSetting(key="playlist_update_hour", value="9"))
             await db.commit()
-        with patch.object(scheduler, "async_session_maker", maker):
-            assert await scheduler._load_update_times() == [(4, 0), (16, 0)]
+        with patch_job_sessions(maker):
+            assert await schedule.load_update_times() == [(4, 0), (16, 0)]
 
     @pytest.mark.asyncio
     async def test_load_falls_back_to_the_legacy_keys(self, maker):
@@ -130,8 +131,8 @@ class TestPersistence:
             db.add(AppSetting(key="playlist_update_hour", value="5"))
             db.add(AppSetting(key="playlist_update_minute", value="45"))
             await db.commit()
-        with patch.object(scheduler, "async_session_maker", maker):
-            assert await scheduler._load_update_times() == [(5, 45)]
+        with patch_job_sessions(maker):
+            assert await schedule.load_update_times() == [(5, 45)]
 
 
 @pytest.mark.asyncio
@@ -140,13 +141,13 @@ async def test_status_reports_every_time_and_keeps_the_legacy_field(maker):
         id="daily_playlist_update",
         name="Daily Library Sync & Playlist Update",
         next_run_time=None,
-        trigger=scheduler._update_trigger([(4, 0), (16, 30)]),
+        trigger=schedule.update_trigger([(4, 0), (16, 30)]),
     )
     fake_scheduler = MagicMock()
     fake_scheduler.get_jobs.return_value = [job]
     with (
-        patch.object(scheduler, "async_session_maker", maker),
-        patch.object(scheduler, "scheduler", fake_scheduler),
+        patch_job_sessions(maker),
+        patch("app.jobs.schedule.scheduler", fake_scheduler),
     ):
         [info] = await scheduler.get_job_status()
 
