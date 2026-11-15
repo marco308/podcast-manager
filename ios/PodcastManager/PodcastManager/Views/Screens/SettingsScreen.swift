@@ -94,12 +94,13 @@ struct SettingsScreen: View {
 
                                 if let lastRun = job.lastRun {
                                     HStack(spacing: 4) {
-                                        Image(systemName: "checkmark.circle")
+                                        Image(systemName: job.lastRunSymbol)
                                             .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                        Text("Last: \(relativeTime(lastRun))")
+                                            .foregroundStyle(job.lastRunFailed ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                                            .accessibilityLabel(job.lastRunAccessibilityLabel)
+                                        Text(job.lastRunFailed ? "Last: \(relativeTime(lastRun)), failed" : "Last: \(relativeTime(lastRun))")
                                             .font(.caption)
-                                            .foregroundStyle(.secondary)
+                                            .foregroundStyle(job.lastRunFailed ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
                                     }
                                 }
 
