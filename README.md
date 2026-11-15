@@ -67,9 +67,9 @@ Each installation serves one Spotify account: registration closes once the first
 
 ## Screenshots
 
-**Dashboard.** Library and playlist stats, with one-click sync and update.
+**Run sheet.** Whether last night's rebuild worked, when the next one runs, and any shows not in a playlist yet, then every playlist with its shows and the rule each will follow. A playlist whose last update was partial or failed says why. Sync and Update All are one click away.
 
-![Dashboard](docs/screenshots/dashboard-light.png)
+![Run sheet](docs/screenshots/dashboard-light.png)
 
 **Podcasts.** Searchable card and table views, with inline playlist assignment, the sequential toggle, archiving and unfollowing.
 
@@ -79,7 +79,7 @@ Each installation serves one Spotify account: registration closes once the first
 
 ![Playlists](docs/screenshots/playlists-light.png)
 
-**Playlist detail.** A playlist's settings and the rule each show will follow on the next rebuild: the playlist default, the sequential hint, or a custom override. Editing podcasts, order and overrides starts here.
+**Playlist detail.** A playlist's settings, its last run, and the rule each show will follow on the next rebuild. Open a show's row to see whether that rule comes from the playlist default, the sequential hint, or a custom override. Editing podcasts, order and overrides starts here.
 
 ![Playlist detail](docs/screenshots/playlist-detail-light.png)
 
@@ -90,7 +90,7 @@ Each installation serves one Spotify account: registration closes once the first
 <details>
 <summary>Dark theme</summary>
 
-![Dashboard, dark](docs/screenshots/dashboard-dark.png)
+![Run sheet, dark](docs/screenshots/dashboard-dark.png)
 ![Podcasts, dark](docs/screenshots/podcasts-dark.png)
 ![Playlists, dark](docs/screenshots/playlists-dark.png)
 ![Playlist detail, dark](docs/screenshots/playlist-detail-dark.png)
@@ -107,7 +107,7 @@ npm run screenshots -- --login        # one-off: complete the Spotify login in t
 npm run screenshots                   # writes docs/screenshots/*.png, light and dark
 ```
 
-The saved session lives in the gitignored `frontend/.screenshots-auth.json`. Account details are masked automatically. Rerun `npm run screenshots` whenever the UI changes.
+The saved session lives in the gitignored `frontend/.screenshots-auth.json`. Account details are masked automatically. Rerun `npm run screenshots` whenever the UI changes. To use your installed Chrome instead of downloading Playwright's Chromium, set `PLAYWRIGHT_CHANNEL=chrome`.
 
 ## Setup
 

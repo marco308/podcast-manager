@@ -16,6 +16,8 @@
 //   SCREENSHOTS_DIR   output folder (default ../docs/screenshots, relative to frontend/)
 //   SCREENSHOT_SCALE  device scale factor, 2 for retina-crisp images (default 1)
 //   SCREENSHOT_MASK   extra comma-separated CSS selectors to black out on every page
+//   PLAYWRIGHT_CHANNEL use an installed browser instead of Playwright's Chromium,
+//                     e.g. "chrome" (skips `npx playwright install chromium`)
 //
 // The header identity (display name / Spotify ID) on every page and the account
 // details on the Settings page are masked by default so the images can be
@@ -36,6 +38,7 @@ const SCALE = Number(process.env.SCREENSHOT_SCALE ?? '1');
 const AUTH_FILE = path.join(frontendDir, '.screenshots-auth.json');
 const VIEWPORT = { width: 1440, height: 900 };
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
+const CHANNEL = process.env.PLAYWRIGHT_CHANNEL || undefined;
 
 const extraMask = (process.env.SCREENSHOT_MASK ?? '')
   .split(',')
@@ -71,7 +74,7 @@ const THEMES = ['light', 'dark'];
 
 async function launch({ headless }) {
   try {
-    return await chromium.launch({ headless });
+    return await chromium.launch({ headless, channel: CHANNEL });
   } catch (err) {
     if (/Executable doesn't exist|browserType.launch/.test(String(err))) {
       console.error(
@@ -155,7 +158,8 @@ async function capture() {
           fullPage: false,
           animations: 'disabled',
           mask: [...GLOBAL_MASK, ...mask, ...extraMask].map((selector) => page.locator(selector)),
-          maskColor: theme === 'dark' ? '#303030' : '#d9d9d9',
+          // The theme's raised surface (src/index.css --raised).
+          maskColor: theme === 'dark' ? '#272C33' : '#E8EAEE',
         });
         console.log(`wrote ${path.relative(process.cwd(), file)}`);
       }
