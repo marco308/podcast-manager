@@ -40,6 +40,19 @@ CLEANUP_MODE_RETRY_AFTER_LIMIT = 60
 # 429 — a playlist build holds ``playlist_write_lock`` while it waits.
 MAX_RETRY_AFTER_SECONDS = 300
 
+# The same cap for a client serving an HTTP request (``routers/_deps.py`` and
+# the manual playlist runs). A job can afford to wait minutes; a request
+# sleeping that long holds its lock and a connection well past any proxy
+# timeout, so it fails fast and the user retries (issue #314).
+REQUEST_MAX_RETRY_AFTER_SECONDS = 10
+
+# Sliding-window throttle state, shared by every ``SpotifyService`` in the
+# process. Spotify's limit applies to the app as a whole, so a manual sync
+# and a scheduled job running together have to pace against one window;
+# with a window each, both could run at full speed (issue #314). Same
+# single-process assumption as the locks in ``jobs/locks.py``.
+_shared_request_timestamps: deque[float] = deque()
+
 # A multi-batch playlist replace that fails after its first write is retried
 # once as a whole (see ``replace_playlist_items``).
 REPLACE_PLAYLIST_ATTEMPTS = 2
@@ -68,22 +81,33 @@ class SpotifyService:
     own client for backward compatibility.
     """
 
-    def __init__(self, access_token: str | None = None, client: httpx.AsyncClient | None = None) -> None:
+    def __init__(
+        self,
+        access_token: str | None = None,
+        client: httpx.AsyncClient | None = None,
+        *,
+        max_retry_after: int = MAX_RETRY_AFTER_SECONDS,
+    ) -> None:
         """Initialize Spotify service.
 
         Args:
             access_token: Optional access token for authenticated requests.
             client: Optional shared httpx.AsyncClient to reuse across calls.
+            max_retry_after: Longest 429 ``Retry-After`` (seconds) to sleep
+                through before giving up. Request paths pass
+                :data:`REQUEST_MAX_RETRY_AFTER_SECONDS`.
         """
         self._access_token = access_token
         self._settings = get_settings()
         self._client = client
         self._owns_client = False
 
-        # Sliding-window throttle state (issue #89, PR2). Per-instance so
-        # each user's SpotifyService tracks its own budget — Spotify
-        # rate-limits per access token, not globally.
-        self._request_timestamps: deque[float] = deque()
+        self._max_retry_after = max_retry_after
+
+        # Sliding-window throttle state (issue #89, PR2): one window for the
+        # whole process, see ``_shared_request_timestamps``. The call counter
+        # below stays per instance, since it reports one run's traffic.
+        self._request_timestamps = _shared_request_timestamps
         self.api_calls_used: int = 0
 
     async def __aenter__(self) -> "SpotifyService":
@@ -196,7 +220,8 @@ class SpotifyService:
         The new token is also kept on the instance so later calls use it.
         Without the callback, 401 stays a hard failure — existing behaviour.
 
-        A 429 whose ``Retry-After`` exceeds :data:`MAX_RETRY_AFTER_SECONDS`
+        A 429 whose ``Retry-After`` exceeds the instance's ``max_retry_after``
+        (:data:`MAX_RETRY_AFTER_SECONDS` unless the caller chose a shorter one)
         is not slept through: the 429 is raised straight away as an
         ``httpx.HTTPStatusError``.
 
@@ -243,12 +268,12 @@ class SpotifyService:
                     f"Spotify Retry-After {raw_retry_after}s exceeds cleanup limit {CLEANUP_MODE_RETRY_AFTER_LIMIT}s"
                 )
 
-            if raw_retry_after > MAX_RETRY_AFTER_SECONDS:
+            if raw_retry_after > self._max_retry_after:
                 # Sleeping the cap and retrying only earns another 429 while
                 # holding the caller's locks; give up now and let the 429
                 # surface through raise_for_status below.
                 logger.warning(
-                    f"Spotify requested {raw_retry_after}s wait — over the {MAX_RETRY_AFTER_SECONDS}s cap, not retrying"
+                    f"Spotify requested {raw_retry_after}s wait — over the {self._max_retry_after}s cap, not retrying"
                 )
                 break
             retry_after = raw_retry_after

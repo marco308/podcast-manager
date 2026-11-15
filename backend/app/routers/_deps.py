@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.session import Session
 from app.routers.auth import clear_session_cookies
 from app.services.encryption import TokenDecryptionError
-from app.services.spotify import SpotifyService
+from app.services.spotify import REQUEST_MAX_RETRY_AFTER_SECONDS, SpotifyService
 from app.services.token_manager import TokenManager
 
 logger = logging.getLogger(__name__)
@@ -55,6 +55,10 @@ async def spotify_client(db: AsyncSession, user_id: int) -> tuple[SpotifyService
     can reach Spotify any more — and :class:`ReauthRequired` clears the
     cookies, leaving the client on a working login page.
 
+    The client gives up on a 429 sooner than a job's would
+    (``REQUEST_MAX_RETRY_AFTER_SECONDS``): the request is holding a
+    connection, and often a lock, while it sleeps.
+
     Raises:
         ReauthRequired: the stored credentials could not be decrypted.
     """
@@ -68,4 +72,4 @@ async def spotify_client(db: AsyncSession, user_id: int) -> tuple[SpotifyService
         await db.execute(delete(Session).where(Session.user_id == user_id))
         await db.commit()
         raise ReauthRequired() from None
-    return SpotifyService(access_token=token), token_manager
+    return SpotifyService(access_token=token, max_retry_after=REQUEST_MAX_RETRY_AFTER_SECONDS), token_manager
