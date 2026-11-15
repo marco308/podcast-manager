@@ -9,7 +9,6 @@ import type {
   PlaylistPodcastListResponse,
   PlaylistRunResult,
   PlaylistRunAllResult,
-  SpotifyPlaylistOption,
   SpotifyPlaylistOptionListResponse,
 } from '../types';
 
@@ -20,12 +19,13 @@ export const playlistsApi = {
     return response.data.items;
   },
 
-  // Spotify playlists the user owns, for linking an existing one
-  async listSpotifyPlaylists(): Promise<SpotifyPlaylistOption[]> {
+  // Spotify playlists the user owns, for linking an existing one. Returns the
+  // whole response so the picker can say when the server's page cap cut it short.
+  async listSpotifyPlaylists(): Promise<SpotifyPlaylistOptionListResponse> {
     const response = await apiClient.get<SpotifyPlaylistOptionListResponse>(
       '/playlists/spotify-playlists'
     );
-    return response.data.items;
+    return response.data;
   },
 
   // Get a single managed playlist
