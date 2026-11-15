@@ -1,4 +1,5 @@
 import AuthenticationServices
+import CryptoKit
 import Foundation
 import SwiftUI
 
@@ -43,9 +44,22 @@ class AuthService {
 
     func login() {
         error = nil
+        // PKCE for the exchange code (issue #307): the server only redeems
+        // the code from the callback URL together with this verifier, which
+        // stays in memory here, so the URL alone is worth nothing to anything
+        // else that sees it.
+        let pkce = PKCE()
         guard let base = ServerConfig.baseURL,
-              let loginURL = URL(string: "\(base.absoluteString)/api/auth/login?redirect_scheme=podcastmanager")
+              var components = URLComponents(string: "\(base.absoluteString)/api/auth/login")
         else {
+            error = "Enter your server URL first"
+            return
+        }
+        components.queryItems = [
+            URLQueryItem(name: "redirect_scheme", value: "podcastmanager"),
+            URLQueryItem(name: "code_challenge", value: pkce.challenge),
+        ]
+        guard let loginURL = components.url else {
             error = "Enter your server URL first"
             return
         }
@@ -82,7 +96,7 @@ class AuthService {
                 }
 
                 do {
-                    let creds = try await APIClient.shared.exchangeMobileAuthCode(code)
+                    let creds = try await APIClient.shared.exchangeMobileAuthCode(code, codeVerifier: pkce.verifier)
 
                     // A failed Keychain write must not look like a successful
                     // login — without credentials every request would 401 and
@@ -184,6 +198,33 @@ class AuthService {
         KeychainService.clearAll()
         isAuthenticated = false
         currentUser = nil
+    }
+}
+
+/// A PKCE verifier and its S256 challenge (RFC 7636).
+struct PKCE {
+    let verifier: String
+    let challenge: String
+
+    init() {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        // Fall back to the system generator if SecRandom fails; both are CSPRNGs.
+        if SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) != errSecSuccess {
+            bytes = (0..<32).map { _ in UInt8.random(in: .min ... .max) }
+        }
+        self.init(verifier: Self.base64URL(Data(bytes)))
+    }
+
+    init(verifier: String) {
+        self.verifier = verifier
+        challenge = Self.base64URL(Data(SHA256.hash(data: Data(verifier.utf8))))
+    }
+
+    private static func base64URL(_ data: Data) -> String {
+        data.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
     }
 }
 
