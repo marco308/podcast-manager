@@ -1,6 +1,6 @@
 Podcast Manager is the companion app to a self-hosted server that each user runs for themselves. Signing in needs that server and a Spotify account allowlisted by the server's own Spotify developer app, so a review account can't be provided.
 
-To review the app without a server, tap "Try the demo" on the sign-in screen. The demo uses built-in sample data (all shows are made up), needs no account, and exercises every screen: Podcasts, Playlists (creating, editing and deleting one, running it, adding, removing and reordering shows, and each show's settings) and Settings.
+HOW TO REVIEW: on the first screen, tap the "Try the demo" button directly below "Sign in with Spotify". No server, account or password is needed: it signs you straight into the full app. The demo uses built-in sample data (all shows are made up), needs no account, and exercises every screen: Podcasts, Playlists (creating, editing and deleting one, running it, adding, removing and reordering shows, and each show's settings) and Settings.
 
 Account deletion: Settings > Delete Account. In the demo it runs the same confirmation flow and returns to the sign-in screen.
 
