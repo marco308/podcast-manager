@@ -17,6 +17,7 @@ from app.jobs.scheduler import init_scheduler, shutdown_scheduler
 from app.rate_limit import limiter
 from app.routers import auth_router, jobs_router, playlists_router, podcasts_router
 from app.routers._deps import ReauthRequired, reauth_required_handler
+from app.schemas.common import HealthResponse
 
 settings = get_settings()
 
@@ -223,7 +224,7 @@ app.include_router(playlists_router, prefix="/api")
 app.include_router(jobs_router, prefix="/api")
 
 
-@app.get("/api/health")
+@app.get("/api/health", response_model=HealthResponse)
 async def health_check() -> dict:
     """Health check endpoint."""
     return {

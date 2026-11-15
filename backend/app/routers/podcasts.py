@@ -20,11 +20,13 @@ from app.models.session import Session
 from app.rate_limit import limiter
 from app.routers._deps import spotify_client
 from app.routers.auth import get_current_user_id, validate_csrf_token
+from app.schemas.common import MessageResponse
 from app.schemas.playlist import DB_ID_MAX
 from app.schemas.podcast import (
     PodcastListResponse,
     PodcastResponse,
     PodcastUpdate,
+    SyncResponse,
 )
 from app.services.library_sync import UNSUBSCRIBE_GRACE, sync_library
 
@@ -214,7 +216,7 @@ async def update_podcast(
     return _build_podcast_response(podcast, pids)
 
 
-@router.delete("/{podcast_id}")
+@router.delete("/{podcast_id}", response_model=MessageResponse)
 async def unfollow_podcast(
     podcast_id: str,
     session: Session = Depends(validate_csrf_token),
@@ -252,7 +254,7 @@ async def _unfollow_podcast(podcast_id: str, session: Session, db: AsyncSession)
     return {"message": f"Successfully unfollowed '{podcast.name}'"}
 
 
-@router.post("/sync")
+@router.post("/sync", response_model=SyncResponse)
 @limiter.limit("1/5minutes")
 async def sync_podcasts(
     request: Request,

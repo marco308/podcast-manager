@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.models.playlist import ALL_EPISODES, Arrangement, DateDirection, PickFrom, PlaylistKind
 from app.services.assignment_rules import RuleSource
@@ -93,6 +93,72 @@ class PlaylistUpdate(BaseModel):
     default_pick_from: PickFrom | None = None
     arrangement: Arrangement | None = None
     date_direction: DateDirection | None = None
+
+    @model_validator(mode="after")
+    def _no_explicit_nulls(self) -> "PlaylistUpdate":
+        """Refuse ``null`` on a field a playlist can't be without (issue #310).
+
+        ``None`` is the default so that an absent field means "leave it
+        alone", but a field sent as ``null`` used to be read the same way and
+        the client got a 200 for a no-op. Only ``spotify_playlist_id`` gives
+        ``null`` a meaning (unlink). Neither client sends ``null`` for the
+        others: iOS encodes them from non-optional values, and the web form
+        can only clear the Spotify link.
+        """
+        nulled = sorted(
+            field
+            for field in self.model_fields_set
+            if field not in PLAYLIST_UPDATE_NULLABLE and getattr(self, field) is None
+        )
+        if nulled:
+            raise ValueError(f"{', '.join(nulled)} cannot be null; leave the field out to keep its current value")
+        return self
+
+
+# Fields of ``PlaylistUpdate`` where a present ``null`` means something.
+PLAYLIST_UPDATE_NULLABLE = frozenset({"spotify_playlist_id"})
+
+
+class RunPlaylistResponse(BaseModel):
+    """``POST /playlists/{id}/run``.
+
+    ``skipped`` and ``partial`` are only sent when true (the route is served
+    with ``response_model_exclude_unset``), as before the model existed.
+    """
+
+    message: str
+    playlist_id: int
+    episode_count: int
+    # A disabled playlist was left untouched.
+    skipped: bool | None = None
+    # The playlist was written, but from incomplete data.
+    partial: bool | None = None
+
+
+class RunAllPlaylistResult(BaseModel):
+    """One playlist's outcome in ``POST /playlists/run-all``."""
+
+    playlist_id: int
+    playlist_name: str
+    success: bool
+    episode_count: int
+    error: str | None
+    partial: bool
+    skipped: bool
+
+
+class RunAllPlaylistsResponse(BaseModel):
+    """``POST /playlists/run-all``."""
+
+    message: str
+    results: list[RunAllPlaylistResult]
+
+
+class AddPodcastsResponse(BaseModel):
+    """``POST /playlists/{id}/podcasts``."""
+
+    message: str
+    added: int
 
 
 class PlaylistListResponse(BaseModel):

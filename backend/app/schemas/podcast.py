@@ -49,3 +49,17 @@ class PodcastListResponse(BaseModel):
 
     items: list[PodcastResponse]
     total: int
+
+
+class SyncResponse(BaseModel):
+    """``POST /podcasts/sync``."""
+
+    message: str
+    synced: int
+    new: int
+    # Gone from the Spotify library: marked now, removed after the grace period.
+    missing: int
+    removed: int
+    # True when the walk didn't look like a whole snapshot, so nothing was
+    # marked or retired; the counts don't mean what they usually do.
+    reconcile_skipped: bool
