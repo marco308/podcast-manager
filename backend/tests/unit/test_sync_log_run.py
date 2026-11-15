@@ -29,6 +29,12 @@ async def maker(tmp_path):
         await engine.dispose()
 
 
+def _blow_up(message: str) -> None:
+    """Raise from a helper, so the code after ``pytest.raises`` isn't read as
+    unreachable by static analysis (it runs: pytest.raises swallows this)."""
+    raise RuntimeError(message)
+
+
 async def _only_row(maker) -> SyncLog:
     async with maker() as db:
         [row] = (await db.execute(select(SyncLog))).scalars().all()
@@ -61,7 +67,7 @@ async def test_row_is_running_inside_the_block_and_finalised_after(maker):
 async def test_an_exception_fails_the_row_and_propagates(maker):
     with pytest.raises(RuntimeError, match="kaboom"):
         async with sync_log_run("playlist_update"):
-            raise RuntimeError("kaboom")
+            _blow_up("kaboom")
 
     row = await _only_row(maker)
     assert row.status is SyncStatus.FAILED
@@ -74,7 +80,7 @@ async def test_an_outcome_recorded_before_the_exception_is_kept(maker):
     with pytest.raises(RuntimeError):
         async with sync_log_run("playlist_update") as run:
             run.fail("Failed reading users: db down")
-            raise RuntimeError("later")
+            _blow_up("later")
 
     assert (await _only_row(maker)).details == "Failed reading users: db down"
 
