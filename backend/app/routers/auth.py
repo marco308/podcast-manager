@@ -20,6 +20,7 @@ from app.jobs import locks
 from app.models.session import Session
 from app.models.user import User
 from app.rate_limit import limiter
+from app.schemas.common import MessageResponse
 from app.schemas.user import UserResponse
 from app.services.account import AccountDeletionResult, delete_account
 from app.services.encryption import get_encryption_service
@@ -437,6 +438,14 @@ class MobileExchangeResponse(BaseModel):
     csrf_token: str
 
 
+class CsrfTokenResponse(BaseModel):
+    csrf_token: str
+
+
+class AuthStatusResponse(BaseModel):
+    authenticated: bool
+
+
 # Key on client IP, not the default session-cookie key: this endpoint is
 # unauthenticated, so an attacker could rotate forged session_id cookies to
 # get a fresh bucket per request — bypassing the limit and growing slowapi's
@@ -487,7 +496,7 @@ async def get_me(
     return user
 
 
-@router.delete("/me")
+@router.delete("/me", response_model=MessageResponse)
 async def delete_me(
     response: Response,
     session: Session = Depends(validate_csrf_token),
@@ -538,7 +547,7 @@ async def _delete_holding_job_locks(db: AsyncSession, user_id: int, busy: HTTPEx
             lock.release()
 
 
-@router.get("/csrf-token")
+@router.get("/csrf-token", response_model=CsrfTokenResponse)
 async def get_csrf_token(
     session: Session = Depends(get_current_session),
 ) -> dict[str, str]:
@@ -550,7 +559,7 @@ async def get_csrf_token(
     return {"csrf_token": session.csrf_token}
 
 
-@router.post("/logout")
+@router.post("/logout", response_model=MessageResponse)
 async def logout(
     response: Response,
     session: Session = Depends(validate_csrf_token),
@@ -564,7 +573,7 @@ async def logout(
     return {"message": "Logged out successfully"}
 
 
-@router.get("/status")
+@router.get("/status", response_model=AuthStatusResponse)
 async def auth_status(
     session_id: str | None = Cookie(None, alias=COOKIE_NAME),
     db: AsyncSession = Depends(get_db),

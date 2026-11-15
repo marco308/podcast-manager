@@ -28,8 +28,10 @@ from app.models.user import User
 from app.rate_limit import limiter
 from app.routers._deps import ReauthRequired, sign_out_for_reauth, spotify_client
 from app.routers.auth import get_current_user_id, validate_csrf_token
+from app.schemas.common import MessageResponse
 from app.schemas.playlist import (
     DB_ID_MAX,
+    AddPodcastsResponse,
     AssignmentOverride,
     AssignmentOverrideUpdate,
     AssignmentRule,
@@ -41,6 +43,8 @@ from app.schemas.playlist import (
     PlaylistPodcastResponse,
     PlaylistResponse,
     PlaylistUpdate,
+    RunAllPlaylistsResponse,
+    RunPlaylistResponse,
     SpotifyPlaylistOption,
     SpotifyPlaylistOptionListResponse,
 )
@@ -478,7 +482,7 @@ async def update_playlist(
     return _build_playlist_response(playlist, count)
 
 
-@router.delete("/{playlist_id}")
+@router.delete("/{playlist_id}", response_model=MessageResponse)
 async def delete_playlist(
     playlist_id: PlaylistId,
     remove_from_spotify: bool = Query(False, description="Also delete (unfollow) the playlist on Spotify"),
@@ -639,7 +643,7 @@ async def update_playlist_podcast(
     return _build_assignment_response(playlist, podcast, assignment)
 
 
-@router.post("/{playlist_id}/podcasts")
+@router.post("/{playlist_id}/podcasts", response_model=AddPodcastsResponse)
 async def add_podcasts_to_playlist(
     playlist_id: PlaylistId,
     data: PlaylistPodcastAdd,
@@ -697,7 +701,7 @@ async def add_podcasts_to_playlist(
     return {"message": f"Added {added} podcast(s) to playlist", "added": added}
 
 
-@router.delete("/{playlist_id}/podcasts/{podcast_id}")
+@router.delete("/{playlist_id}/podcasts/{podcast_id}", response_model=MessageResponse)
 async def remove_podcast_from_playlist(
     playlist_id: PlaylistId,
     podcast_id: PodcastId,
@@ -723,7 +727,7 @@ async def remove_podcast_from_playlist(
     return {"message": "Podcast removed from playlist"}
 
 
-@router.put("/{playlist_id}/podcasts/reorder")
+@router.put("/{playlist_id}/podcasts/reorder", response_model=MessageResponse)
 async def reorder_playlist_podcasts(
     playlist_id: PlaylistId,
     data: PlaylistPodcastReorder,
@@ -768,7 +772,12 @@ async def reorder_playlist_podcasts(
 # --- Playlist run endpoints ---
 
 
-@router.post("/{playlist_id}/run")
+@router.post(
+    "/{playlist_id}/run",
+    response_model=RunPlaylistResponse,
+    # skipped and partial are only sent when set, as before the model existed.
+    response_model_exclude_unset=True,
+)
 @limiter.limit("3/10minutes")
 async def run_playlist_update(
     request: Request,
@@ -857,7 +866,7 @@ async def run_playlist_update(
     }
 
 
-@router.post("/run-all")
+@router.post("/run-all", response_model=RunAllPlaylistsResponse)
 @limiter.limit("1/5minutes")
 async def run_all_playlist_updates(
     request: Request,

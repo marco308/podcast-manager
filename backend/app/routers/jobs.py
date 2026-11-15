@@ -15,15 +15,50 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/jobs", tags=["Jobs"])
 
 
-@router.get("/status")
-async def jobs_status(user_id: int = Depends(get_current_user_id)) -> dict:
-    """Get scheduler job statuses."""
-    return {"jobs": await get_job_status()}
-
-
 class ScheduleTime(BaseModel):
     hour: int = Field(ge=0, le=23)
     minute: int = Field(ge=0, le=59)
+
+
+class JobStatus(BaseModel):
+    """One scheduled job, as built by ``get_job_status``.
+
+    The fields with a default are only sent for some jobs (the route uses
+    ``response_model_exclude_unset``): the ``schedule*`` fields for cron
+    jobs, ``max_schedule_times`` for the configurable one,
+    ``interval_minutes`` for interval jobs and ``last_run_failed_steps`` when
+    a step of the last run failed.
+    """
+
+    id: str
+    name: str
+    next_run: str | None
+    last_run: str | None
+    last_run_status: str | None
+    type: str
+    is_configurable: bool
+    # First run time only, for installed iOS builds that know just one.
+    schedule: ScheduleTime | None = None
+    schedule_times: list[ScheduleTime] | None = None
+    schedule_timezone: str | None = None
+    max_schedule_times: int | None = None
+    interval_minutes: int | None = None
+    last_run_failed_steps: list[str] | None = None
+
+
+class JobsStatusResponse(BaseModel):
+    jobs: list[JobStatus]
+
+
+class UpdateScheduleResponse(BaseModel):
+    message: str
+    next_run: str
+
+
+@router.get("/status", response_model=JobsStatusResponse, response_model_exclude_unset=True)
+async def jobs_status(user_id: int = Depends(get_current_user_id)) -> dict:
+    """Get scheduler job statuses."""
+    return {"jobs": await get_job_status()}
 
 
 class UpdateScheduleRequest(BaseModel):
@@ -47,7 +82,7 @@ class UpdateScheduleRequest(BaseModel):
         return [(self.hour, self.minute)]
 
 
-@router.put("/schedule")
+@router.put("/schedule", response_model=UpdateScheduleResponse)
 @limiter.limit("10/hour")
 async def update_schedule(
     request: Request,
