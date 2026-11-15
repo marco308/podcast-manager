@@ -22,7 +22,7 @@ import {
 import { Link, useParams } from 'react-router';
 import dayjs from 'dayjs';
 import { usePlaylist, usePlaylistPodcasts, useRunPlaylistWithFeedback } from '../hooks';
-import { LoadingSpinner, PlaylistFormModal, SleepTag } from '../components';
+import { LastRunTag, LoadingSpinner, PlaylistFormModal, SleepTag } from '../components';
 import { getErrorMessage } from '../api';
 import {
   arrangementLabel,
@@ -328,12 +328,22 @@ export function PlaylistDetail() {
             )}
           </Descriptions.Item>
           <Descriptions.Item label="Last updated">
-            {playlist.last_updated_at ? (
-              <Tooltip title={dayjs(playlist.last_updated_at).format('YYYY-MM-DD HH:mm:ss')}>
-                {dayjs(playlist.last_updated_at).fromNow()}
-              </Tooltip>
-            ) : (
-              'Never'
+            <Space size={6} wrap>
+              {playlist.last_updated_at ? (
+                <Tooltip title={dayjs(playlist.last_updated_at).format('YYYY-MM-DD HH:mm:ss')}>
+                  {dayjs(playlist.last_updated_at).fromNow()}
+                </Tooltip>
+              ) : (
+                'Never'
+              )}
+              <LastRunTag playlist={playlist} />
+            </Space>
+            {playlist.last_run_error && playlist.last_run_status !== 'success' && (
+              <div>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {playlist.last_run_error}
+                </Text>
+              </div>
             )}
           </Descriptions.Item>
         </Descriptions>

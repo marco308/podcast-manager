@@ -29,7 +29,7 @@ import {
   useRunPlaylistWithFeedback,
   useRunAllPlaylistsWithFeedback,
 } from '../hooks';
-import { LoadingSpinner, PlaylistFormModal, SleepTag } from '../components';
+import { LastRunTag, LoadingSpinner, PlaylistFormModal, SleepTag } from '../components';
 import { getErrorMessage } from '../api';
 import { arrangementLabel, ruleSummary, spotifyPlaylistUrl } from '../utils/playlistLabels';
 import type { Playlist } from '../types';
@@ -85,6 +85,7 @@ export function Playlists() {
             <Text strong>{name}</Text>
           </Link>
           {record.kind === 'sleep' && <SleepTag style={{ marginLeft: 8 }} />}
+          <LastRunTag playlist={record} style={{ marginLeft: 8 }} />
           {isMobile && (
             <div style={{ marginTop: 4 }}>
               <Tag color="blue">

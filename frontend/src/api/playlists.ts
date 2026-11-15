@@ -1,4 +1,5 @@
 import apiClient from './client';
+import { jobsApi } from './jobs';
 import type {
   AssignmentOverrideUpdate,
   Playlist,
@@ -7,10 +8,50 @@ import type {
   PlaylistListResponse,
   PlaylistPodcast,
   PlaylistPodcastListResponse,
+  JobRun,
   PlaylistRunResult,
   PlaylistRunAllResult,
+  RunAccepted,
   SpotifyPlaylistOptionListResponse,
 } from '../types';
+
+// A manual run that finished without updating anything. failureCode is the
+// run's SyncLog failure_code: "credentials_unreadable" means the user has to
+// sign in again.
+export class RunFailedError extends Error {
+  failureCode: string | null;
+
+  constructor(message: string, failureCode: string | null) {
+    super(message);
+    this.name = 'RunFailedError';
+    this.failureCode = failureCode;
+  }
+}
+
+// Manual runs are started async (issue #242): the server answers 202 with a
+// run id at once and the result is polled, so a long rebuild isn't cut off
+// by the proxy's 30s timeout. A server that predates async runs ignores the
+// header and answers 200 with the result itself.
+const RESPOND_ASYNC = { Prefer: 'respond-async' };
+
+function runFailed(run: JobRun): RunFailedError {
+  return new RunFailedError(
+    run.message || 'Failed to update playlist. Check Run History in Settings for details.',
+    run.failure_code
+  );
+}
+
+async function startRun<T>(url: string): Promise<T | JobRun> {
+  const response = await apiClient.post<T | RunAccepted>(url, undefined, {
+    headers: RESPOND_ASYNC,
+  });
+  if (response.status !== 202) return response.data as T;
+  return jobsApi.waitForRun((response.data as RunAccepted).run_id);
+}
+
+function isJobRun(value: unknown): value is JobRun {
+  return typeof value === 'object' && value !== null && 'job_type' in value;
+}
 
 export const playlistsApi = {
   // List all managed playlists
@@ -54,16 +95,31 @@ export const playlistsApi = {
     });
   },
 
-  // Manually trigger a single playlist update
+  // Manually trigger a single playlist update and wait for its result.
+  // Resolves for an update, a partial update and a skip, as the synchronous
+  // endpoint did; rejects with RunFailedError if nothing was written.
   async run(id: number): Promise<PlaylistRunResult> {
-    const response = await apiClient.post<PlaylistRunResult>(`/playlists/${id}/run`);
-    return response.data;
+    const outcome = await startRun<PlaylistRunResult>(`/playlists/${id}/run`);
+    if (!isJobRun(outcome)) return outcome;
+    const result = outcome.results?.[0];
+    if (!result || (!result.success && !result.partial)) throw runFailed(outcome);
+    return {
+      message: outcome.message ?? '',
+      playlist_id: result.playlist_id,
+      episode_count: result.episode_count,
+      skipped: result.skipped || undefined,
+      partial: result.partial || undefined,
+    };
   },
 
-  // Trigger all playlist updates
+  // Trigger all playlist updates and wait for the per-playlist results.
   async runAll(): Promise<PlaylistRunAllResult> {
-    const response = await apiClient.post<PlaylistRunAllResult>('/playlists/run-all');
-    return response.data;
+    const outcome = await startRun<PlaylistRunAllResult>('/playlists/run-all');
+    if (!isJobRun(outcome)) return outcome;
+    if (!outcome.results || outcome.failure_code === 'credentials_unreadable') {
+      throw runFailed(outcome);
+    }
+    return { message: outcome.message ?? '', results: outcome.results };
   },
 
   // Get podcasts assigned to a playlist

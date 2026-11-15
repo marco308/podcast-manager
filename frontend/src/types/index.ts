@@ -73,9 +73,19 @@ export interface Playlist {
   arrangement: Arrangement;
   date_direction: DateDirection;
   podcast_count: number;
+  // When the Spotify playlist was last written.
   last_updated_at: string | null;
+  // Outcome of the last build, written or not (issue #246). "partial" was
+  // written from incomplete data; "failed" left the playlist unchanged.
+  // last_run_error is a short, client-safe reason. Null until the first
+  // build after the server upgrade.
+  last_run_status?: LastRunStatus | null;
+  last_run_error?: string | null;
+  last_run_at?: string | null;
   created_at: string;
 }
+
+export type LastRunStatus = 'success' | 'partial' | 'failed';
 
 export interface PlaylistCreate {
   name: string;
@@ -264,15 +274,48 @@ export interface PlaylistRunResult {
   partial?: boolean;
 }
 
+export interface PlaylistRunOutcome {
+  playlist_id: number;
+  playlist_name: string;
+  success: boolean;
+  episode_count: number;
+  error: string | null;
+  skipped: boolean;
+  partial: boolean;
+}
+
 export interface PlaylistRunAllResult {
   message: string;
-  results: {
-    playlist_id: number;
-    playlist_name: string;
-    success: boolean;
-    episode_count: number;
-    error: string | null;
-    skipped: boolean;
-    partial: boolean;
-  }[];
+  results: PlaylistRunOutcome[];
+}
+
+// 202 from POST /playlists/{id}/run or /run-all with Prefer: respond-async.
+export interface RunAccepted {
+  run_id: number;
+  status: string;
+  message: string;
+}
+
+// A recorded job run (a SyncLog row): GET /jobs/runs and /jobs/runs/{id}.
+export interface JobRun {
+  id: number;
+  // playlist_update, library_sync, cleanup or manual_playlist_update
+  job_type: string;
+  status: 'running' | 'success' | 'failed';
+  details: string | null;
+  // Why a run failed: interrupted, credentials_unreadable, rate_limit,
+  // token_expired, playlist_write_failed, partial, unknown, ...
+  failure_code: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  playlists_attempted: number | null;
+  playlists_failed: number | null;
+  api_calls_used: number | null;
+  // Set on a finished manual run: what the synchronous endpoints return.
+  message: string | null;
+  results: PlaylistRunOutcome[] | null;
+}
+
+export interface JobRunListResponse {
+  runs: JobRun[];
 }

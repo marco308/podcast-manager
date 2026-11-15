@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { playlistsApi } from '../api';
 import type { AssignmentOverrideUpdate, PlaylistCreate, PlaylistUpdate } from '../types';
 import { podcastKeys } from './usePodcasts';
+import { jobKeys } from './useJobs';
 
 // Query key factory for playlists
 export const playlistKeys = {
@@ -102,11 +103,14 @@ export function useRunPlaylist() {
 
   return useMutation({
     mutationFn: (id: number) => playlistsApi.run(id),
-    onSuccess: () => {
+    // Settled, not success: a failed run records its outcome on the
+    // playlist (last_run_status) and in Run History too.
+    onSettled: () => {
       // A run touches last_updated_at (list + detail) and, when it reads a
       // show's whole catalogue, the podcast's unplayed count.
       queryClient.invalidateQueries({ queryKey: playlistKeys.all });
       queryClient.invalidateQueries({ queryKey: podcastKeys.all });
+      queryClient.invalidateQueries({ queryKey: jobKeys.all });
     },
   });
 }
@@ -117,11 +121,12 @@ export function useRunAllPlaylists() {
 
   return useMutation({
     mutationFn: playlistsApi.runAll,
-    onSuccess: () => {
+    onSettled: () => {
       // Same as a single run, for every playlist: an open detail page needs
       // its last_updated_at too, not just the list.
       queryClient.invalidateQueries({ queryKey: playlistKeys.all });
       queryClient.invalidateQueries({ queryKey: podcastKeys.all });
+      queryClient.invalidateQueries({ queryKey: jobKeys.all });
     },
   });
 }
