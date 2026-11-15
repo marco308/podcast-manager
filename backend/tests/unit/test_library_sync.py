@@ -26,15 +26,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from app.routers import podcasts as podcasts_module
 from app.database import Base
-from app.jobs import locks, scheduler
+from app.jobs import locks, schedule, scheduler
 from app.models import Playlist, PlaylistPodcast, Podcast, User
 from app.models.sync_log import SyncLog, SyncStatus
 from app.rate_limit import limiter
+from app.routers import podcasts as podcasts_module
 from app.routers.podcasts import sync_podcasts
 from app.services.encryption import get_encryption_service
 from app.services.playlist_builder import PlaylistBuilder
+from tests.job_patches import patch_job_sessions
 
 
 @pytest.fixture(autouse=True)
@@ -293,9 +294,9 @@ class TestConcurrentSyncsAreSerialised:
                 await db.commit()
 
             with (
-                patch("app.jobs.scheduler.async_session_maker", maker),
-                patch("app.jobs.scheduler.TokenManager", MagicMock(return_value=token_manager)),
-                patch("app.jobs.scheduler.SpotifyService", MagicMock(return_value=client)),
+                patch_job_sessions(maker),
+                patch("app.jobs.playlist_update.TokenManager", MagicMock(return_value=token_manager)),
+                patch("app.jobs.playlist_update.SpotifyService", MagicMock(return_value=client)),
             ):
                 await scheduler.sync_all_libraries()
 
@@ -319,10 +320,10 @@ class TestLibrarySyncJob:
                 await db.commit()
 
             with (
-                patch("app.jobs.scheduler.async_session_maker", maker),
-                patch("app.jobs.scheduler.TokenManager", MagicMock(return_value=token_manager)),
+                patch_job_sessions(maker),
+                patch("app.jobs.playlist_update.TokenManager", MagicMock(return_value=token_manager)),
                 patch(
-                    "app.jobs.scheduler.SpotifyService",
+                    "app.jobs.playlist_update.SpotifyService",
                     MagicMock(return_value=_spotify_returning(_page("kept"))),
                 ),
             ):
@@ -351,8 +352,8 @@ class TestLibrarySyncJob:
                 await db.commit()
 
             with (
-                patch("app.jobs.scheduler.async_session_maker", maker),
-                patch("app.jobs.scheduler.TokenManager", MagicMock(return_value=token_manager)),
+                patch_job_sessions(maker),
+                patch("app.jobs.playlist_update.TokenManager", MagicMock(return_value=token_manager)),
             ):
                 await scheduler.sync_all_libraries()
 
@@ -396,7 +397,7 @@ class TestJobStatusFoldsInTheSyncStep:
                 )
                 await db.commit()
 
-            with patch("app.jobs.scheduler.async_session_maker", maker):
+            with patch_job_sessions(maker):
                 info = self._daily_job_info(await _job_status_with_daily_job())
 
             assert info["last_run_status"] == "failed"
@@ -419,7 +420,7 @@ class TestJobStatusFoldsInTheSyncStep:
                 )
                 await db.commit()
 
-            with patch("app.jobs.scheduler.async_session_maker", maker):
+            with patch_job_sessions(maker):
                 info = self._daily_job_info(await _job_status_with_daily_job())
 
             assert info["last_run_status"] == "success"
@@ -436,7 +437,7 @@ async def _job_status_with_daily_job() -> list[dict]:
         next_run_time=None,
         trigger=CronTrigger(hour=3, minute=0),
     )
-    with patch.object(scheduler.scheduler, "get_jobs", MagicMock(return_value=[job])):
+    with patch.object(schedule.scheduler, "get_jobs", MagicMock(return_value=[job])):
         return await scheduler.get_job_status()
 
 
@@ -453,9 +454,9 @@ class TestDailyJobRunsTheSync:
             order.append("rebuild-finalised")
 
         with (
-            patch("app.jobs.scheduler.sync_all_libraries", fake_sync),
-            patch("app.jobs.scheduler._finalise_sync_log", fake_finalise),
-            patch("app.jobs.scheduler.async_session_maker", _empty_session_factory()),
+            patch("app.jobs.playlist_update.sync_all_libraries", fake_sync),
+            patch("app.jobs.sync_log.finalise_sync_log", fake_finalise),
+            patch_job_sessions(_empty_session_factory()),
         ):
             await scheduler.update_all_playlists()
 
@@ -470,9 +471,9 @@ class TestDailyJobRunsTheSync:
             raise RuntimeError("Spotify unreachable")
 
         with (
-            patch("app.jobs.scheduler.sync_all_libraries", exploding_sync),
-            patch("app.jobs.scheduler._finalise_sync_log", finalise),
-            patch("app.jobs.scheduler.async_session_maker", _empty_session_factory()),
+            patch("app.jobs.playlist_update.sync_all_libraries", exploding_sync),
+            patch("app.jobs.sync_log.finalise_sync_log", finalise),
+            patch_job_sessions(_empty_session_factory()),
         ):
             await scheduler.update_all_playlists()
 

@@ -22,4 +22,4 @@ description: Spotify Web API constraints for podcast-manager: the Dev Mode batch
 
 **Playlist replace:** `replace_playlist_items` is a PUT of the first 100 URIs then POST appends; Spotify has no transactional replace. A failure after the PUT landed (the playlist is now truncated) retries the whole replace once; a failed PUT or a 429 is raised as is.
 
-**`remove_played_episodes` job** (every 30 min, `jobs/scheduler.py`): reads playlist tracks with a `fields` mask that includes `resume_point(fully_played)`, so played episodes are filtered inline with no per-episode fetch. Each run is capped by `CLEANUP_API_CALL_BUDGET` (200 calls, a constant in `scheduler.py`).
+**`remove_played_episodes` job** (every 30 min, `jobs/cleanup.py`): reads playlist tracks with a `fields` mask that includes `resume_point(fully_played)`, so played episodes are filtered inline with no per-episode fetch. Each run is capped by `CLEANUP_API_CALL_BUDGET` (200 calls, a constant in `scheduler.py`).

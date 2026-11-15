@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI, HTTPException
@@ -372,3 +373,66 @@ class TestLinkAndRename:
         assert (result.name, result.spotify_playlist_id) == ("New", OWN_ID)
         spotify.update_playlist_details.assert_awaited_once()
         assert spotify.update_playlist_details.await_args.args[0] == OWN_ID
+
+
+def _spotify_status_error(status: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("PUT", "https://api.spotify.com/v1/playlists/x")
+    return httpx.HTTPStatusError("err", request=request, response=httpx.Response(status, request=request))
+
+
+class TestLinkPushesName:
+    """Linking a Spotify playlist pushes the managed name to it (issue #313)."""
+
+    @pytest.fixture
+    def spotify(self, monkeypatch):
+        client = MagicMock()
+        client.update_playlist_details = AsyncMock()
+        token_manager = MagicMock(get_token=AsyncMock(return_value="token"), force_refresh=AsyncMock())
+        monkeypatch.setattr(playlists_module, "spotify_client", AsyncMock(return_value=(client, token_manager)))
+        monkeypatch.setattr(playlists_module, "_check_spotify_playlist_link", AsyncMock())
+        return client
+
+    @pytest.mark.asyncio
+    async def test_link_alone_pushes_the_current_name(self, db, spotify):
+        result = await update_playlist(1, PlaylistUpdate(spotify_playlist_id=OWN_ID), session=SESSION, db=db)
+
+        assert (result.name, result.spotify_playlist_id) == ("Playlist", OWN_ID)
+        spotify.update_playlist_details.assert_awaited_once()
+        call = spotify.update_playlist_details.await_args
+        assert call.args == (OWN_ID,)
+        assert call.kwargs["name"] == "Playlist"
+        assert "Playlist" in call.kwargs["description"]
+
+    @pytest.mark.asyncio
+    async def test_link_spotify_failure_saves_nothing(self, db, spotify):
+        spotify.update_playlist_details.side_effect = _spotify_status_error(500)
+
+        with pytest.raises(HTTPException) as exc:
+            await update_playlist(
+                1, PlaylistUpdate(spotify_playlist_id=OWN_ID, is_enabled=False), session=SESSION, db=db
+            )
+
+        assert exc.value.status_code == 502
+        await db.rollback()  # what get_db does with the failed request
+        playlist = await db.get(Playlist, 1)
+        await db.refresh(playlist)
+        assert (playlist.spotify_playlist_id, playlist.is_enabled) == (None, True)
+
+    @pytest.mark.asyncio
+    async def test_link_to_missing_spotify_playlist_links_locally(self, db, spotify):
+        spotify.update_playlist_details.side_effect = _spotify_status_error(404)
+
+        result = await update_playlist(1, PlaylistUpdate(spotify_playlist_id=OWN_ID), session=SESSION, db=db)
+
+        assert result.spotify_playlist_id == OWN_ID
+
+    @pytest.mark.asyncio
+    async def test_unlink_and_unchanged_link_push_nothing(self, db, spotify):
+        await update_playlist(1, PlaylistUpdate(spotify_playlist_id=OWN_ID), session=SESSION, db=db)
+        spotify.update_playlist_details.reset_mock()
+
+        await update_playlist(1, PlaylistUpdate(spotify_playlist_id=OWN_ID), session=SESSION, db=db)
+        result = await update_playlist(1, PlaylistUpdate(spotify_playlist_id=None), session=SESSION, db=db)
+
+        assert result.spotify_playlist_id is None
+        spotify.update_playlist_details.assert_not_awaited()

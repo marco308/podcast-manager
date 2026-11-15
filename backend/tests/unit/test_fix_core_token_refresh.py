@@ -30,6 +30,7 @@ import pytest
 
 from app.jobs import scheduler
 from app.services.token_manager import TokenManager
+from tests.job_patches import patch_job_sessions
 
 
 class _FakeResult:
@@ -117,7 +118,7 @@ async def test_job_asks_token_manager_for_the_full_threshold():
     manager.get_token = get_token
 
     with (
-        patch("app.jobs.scheduler.async_session_maker", _scheduler_session_factory([1])),
+        patch_job_sessions(_scheduler_session_factory([1])),
         patch("app.jobs.scheduler.TokenManager", return_value=manager) as ctor,
     ):
         await scheduler.refresh_all_tokens()
@@ -156,7 +157,7 @@ async def test_token_with_forty_minutes_left_is_actually_refreshed():
         return _FakeSession([user])
 
     with (
-        patch("app.jobs.scheduler.async_session_maker", _scheduler_session_factory([1])),
+        patch_job_sessions(_scheduler_session_factory([1])),
         patch("app.services.token_manager.async_session_maker", _tm_session_factory),
         patch("app.services.token_manager.get_encryption_service", return_value=encryption),
         patch("app.services.token_manager.SpotifyService.refresh_access_token", refresh),
@@ -192,7 +193,7 @@ async def test_token_with_ample_life_is_left_alone():
         return _FakeSession([user])
 
     with (
-        patch("app.jobs.scheduler.async_session_maker", _scheduler_session_factory([1])),
+        patch_job_sessions(_scheduler_session_factory([1])),
         patch("app.services.token_manager.async_session_maker", _tm_session_factory),
         patch("app.services.token_manager.get_encryption_service", return_value=encryption),
         patch("app.services.token_manager.SpotifyService.refresh_access_token", refresh),
@@ -230,7 +231,7 @@ async def test_job_never_calls_spotify_refresh_directly():
     direct_refresh = AsyncMock()
 
     with (
-        patch("app.jobs.scheduler.async_session_maker", _scheduler_session_factory([1, 2])),
+        patch_job_sessions(_scheduler_session_factory([1, 2])),
         patch("app.jobs.scheduler.TokenManager", return_value=manager),
         patch("app.services.spotify.SpotifyService.refresh_access_token", direct_refresh),
     ):
@@ -273,7 +274,7 @@ async def test_refresh_holds_the_per_user_lock_for_the_whole_refresh():
         return _FakeSession([user])
 
     with (
-        patch("app.jobs.scheduler.async_session_maker", _scheduler_session_factory([1])),
+        patch_job_sessions(_scheduler_session_factory([1])),
         patch("app.services.token_manager.async_session_maker", _tm_session_factory),
         patch("app.services.token_manager.get_encryption_service", return_value=encryption),
         patch("app.services.token_manager.SpotifyService.refresh_access_token", side_effect=_refresh),
@@ -299,7 +300,7 @@ async def test_one_user_failing_does_not_abort_the_rest():
             return "fresh-access"
 
     with (
-        patch("app.jobs.scheduler.async_session_maker", _scheduler_session_factory([1, 2, 3])),
+        patch_job_sessions(_scheduler_session_factory([1, 2, 3])),
         patch("app.jobs.scheduler.TokenManager", _Manager),
     ):
         await scheduler.refresh_all_tokens()
@@ -315,8 +316,7 @@ async def test_db_read_failure_ends_the_job_quietly():
     manager.get_token = AsyncMock()
 
     with (
-        patch(
-            "app.jobs.scheduler.async_session_maker",
+        patch_job_sessions(
             _scheduler_session_factory([1], raises=RuntimeError("db down")),
         ),
         patch("app.jobs.scheduler.TokenManager", return_value=manager),

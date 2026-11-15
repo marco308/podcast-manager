@@ -19,12 +19,12 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from app.models import Base
-from app.jobs import scheduler
-from app.models import Podcast
+from app.jobs import scheduler, status
+from app.models import Base, Podcast
 from app.models.sync_log import SyncLog, SyncStatus
 from app.routers.podcasts import get_podcast, update_podcast
 from app.schemas.podcast import PodcastUpdate
+from tests.job_patches import patch_job_sessions
 
 
 @pytest_asyncio.fixture
@@ -98,9 +98,9 @@ async def test_cleanup_last_run_survives_a_restart(maker):
 
     # A fresh process: nothing recorded in memory yet.
     with (
-        patch.object(scheduler, "async_session_maker", maker),
-        patch.object(scheduler, "scheduler", fake_scheduler),
-        patch.object(scheduler, "_last_run_times", {}),
+        patch_job_sessions(maker),
+        patch("app.jobs.schedule.scheduler", fake_scheduler),
+        patch.object(status, "_last_run_times", {}),
     ):
         [info] = await scheduler.get_job_status()
 
@@ -121,9 +121,9 @@ async def test_cleanup_with_no_synclog_row_reports_no_last_run(maker):
     fake_scheduler.get_jobs.return_value = [job]
 
     with (
-        patch.object(scheduler, "async_session_maker", maker),
-        patch.object(scheduler, "scheduler", fake_scheduler),
-        patch.object(scheduler, "_last_run_times", {"remove_played_episodes": datetime.now(UTC)}),
+        patch_job_sessions(maker),
+        patch("app.jobs.schedule.scheduler", fake_scheduler),
+        patch.object(status, "_last_run_times", {"remove_played_episodes": datetime.now(UTC)}),
     ):
         [info] = await scheduler.get_job_status()
 

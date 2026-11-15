@@ -26,7 +26,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.database import async_session_maker
 from app.models.user import User
-from app.services.encryption import get_encryption_service
+from app.services.encryption import TokenDecryptionError, get_encryption_service
 from app.services.spotify import SpotifyService
 
 logger = logging.getLogger(__name__)
@@ -138,6 +138,10 @@ class TokenManager:
         Args:
             rejected_token: The bearer token that got the 401. ``None``
                 refreshes unconditionally.
+
+        Raises:
+            RuntimeError: if the user no longer exists.
+            TokenDecryptionError: if a stored token can't be decrypted.
         """
         lock = self._lock_for(self._user_id)
         async with lock, async_session_maker() as db:
@@ -167,7 +171,13 @@ class TokenManager:
         a few times (a busy SQLite is the likely cause), and a final failure
         is logged at CRITICAL before it propagates.
         """
-        refresh_token = self._encryption.decrypt(user.refresh_token)
+        try:
+            refresh_token = self._encryption.decrypt(user.refresh_token)
+        except TokenDecryptionError:
+            # Not a Spotify failure: nothing was sent, and no retry can help.
+            # Only a fresh sign-in replaces the stored credentials (issue #308).
+            logger.error("Stored Spotify refresh token could not be decrypted; the user must sign in again")
+            raise
         spotify = SpotifyService()
         token_data = await spotify.refresh_access_token(refresh_token)
 

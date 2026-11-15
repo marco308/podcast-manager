@@ -208,6 +208,9 @@ async def update_podcast(
         if update_data.is_archived:
             await db.execute(delete(PlaylistPodcast).where(PlaylistPodcast.podcast_id == podcast.id))
 
+    # Set by hand although the column has ``onupdate``: a value the database
+    # fills in is expired after the commit, and reading it for the response
+    # would then lazy-load outside the async context (MissingGreenlet).
     podcast.updated_at = datetime.now(UTC)
 
     await db.commit()  # persist before the response is sent (see get_db)
@@ -277,27 +280,17 @@ async def sync_podcasts(
     """
     spotify, token_manager = await spotify_client(db, session.user_id)
 
-    try:
-        await asyncio.wait_for(locks.library_sync_lock.acquire(), timeout=SYNC_LOCK_WAIT_SECONDS)
-    except TimeoutError:
-        logger.info("Manual sync rejected — library_sync_lock held by another sync")
-        raise HTTPException(
-            status_code=409,
-            detail="A library sync is already running. Please try again shortly.",
-        ) from None
-
-    try:
-        result = await sync_library(db, spotify, on_unauthorized=token_manager.force_refresh)
-        await db.commit()  # persist before the response is sent (see get_db)
-    except httpx.HTTPError as e:
-        # A partial walk reconciles nothing; get_db rolls the upserts back.
-        logger.warning(f"Library sync failed talking to Spotify: {e}")
-        raise HTTPException(
-            status_code=502,
-            detail="Could not load your podcasts from Spotify. Please try again.",
-        ) from None
-    finally:
-        locks.library_sync_lock.release()
+    async with _library_sync_lock("A library sync is already running. Please try again shortly."):
+        try:
+            result = await sync_library(db, spotify, on_unauthorized=token_manager.force_refresh)
+            await db.commit()  # persist before the response is sent (see get_db)
+        except httpx.HTTPError as e:
+            # A partial walk reconciles nothing; get_db rolls the upserts back.
+            logger.warning(f"Library sync failed talking to Spotify: {e}")
+            raise HTTPException(
+                status_code=502,
+                detail="Could not load your podcasts from Spotify. Please try again.",
+            ) from None
 
     message = "Sync completed"
     if result.removed:

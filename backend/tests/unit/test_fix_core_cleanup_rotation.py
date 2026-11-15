@@ -22,6 +22,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.jobs import scheduler
+from tests.job_patches import patch_job_sessions
 
 
 def _normalise(stmt) -> str:
@@ -121,8 +122,8 @@ class _RecordingSpotify:
         self._page_counts: dict[str, int] = {}
         _RecordingSpotify.instances.append(self)
 
-    def reset_api_counter(self) -> None:
-        self.api_calls_used = 0
+    def set_access_token(self, access_token: str) -> None:
+        pass
 
     async def __aenter__(self) -> _RecordingSpotify:
         return self
@@ -178,15 +179,14 @@ async def _run(*, playlist_count: int, budget: int, rotation_offset: str | None 
     persist = AsyncMock()
 
     with (
-        patch(
-            "app.jobs.scheduler.async_session_maker",
+        patch_job_sessions(
             _session_factory(playlist_count=playlist_count, rotation_offset=rotation_offset),
         ),
-        patch("app.jobs.scheduler.TokenManager", _Manager),
-        patch("app.jobs.scheduler.SpotifyService", _spotify_factory(pages)),
-        patch("app.jobs.scheduler.CLEANUP_API_CALL_BUDGET", budget),
-        patch("app.jobs.scheduler._persist_cleanup_rotation_offset", persist),
-        patch("app.jobs.scheduler._finalise_cleanup_log", finalise),
+        patch("app.jobs.cleanup.TokenManager", _Manager),
+        patch("app.jobs.cleanup.SpotifyService", _spotify_factory(pages)),
+        patch("app.jobs.cleanup.CLEANUP_API_CALL_BUDGET", budget),
+        patch("app.jobs.cleanup._persist_cleanup_rotation_offset", persist),
+        patch("app.jobs.sync_log.finalise_sync_log", finalise),
     ):
         await scheduler.remove_played_episodes_from_playlists()
 

@@ -35,10 +35,8 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements*.txt
       - run: pip install -r requirements-dev.txt
-      # ruff also covers scripts/ (tests/ still has pre-existing violations
-      # and is excluded until it is cleaned up — see issue #178).
-      - run: ruff check app scripts
-      - run: ruff format --check app scripts
+      - run: ruff check app scripts tests
+      - run: ruff format --check app scripts tests
       - run: pytest tests --cov --cov-report=term --cov-report=json
       # One copy of the coverage report feeds the README badge (coverage-badge
       # job below); 3.15 because that is what the Docker image runs.
