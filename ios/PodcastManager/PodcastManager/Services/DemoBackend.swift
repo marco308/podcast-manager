@@ -335,6 +335,7 @@ actor DemoBackend {
                 name: "Daily Library Sync & Playlist Update",
                 nextRun: iso(nextDailyRun(after: now)),
                 lastRun: iso(lastDailyRun),
+                lastRunStatus: "success",
                 type: "cron",
                 isConfigurable: true,
                 schedule: scheduleTimes.first,

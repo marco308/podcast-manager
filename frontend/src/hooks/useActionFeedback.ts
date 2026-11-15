@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { App } from 'antd';
-import { getErrorMessage } from '../api';
+import { getErrorMessage, RunFailedError } from '../api';
+import { useAuth } from '../context/AuthContext';
 import { syncResultSummary } from '../utils/syncSummary';
 import { useSyncPodcasts } from './usePodcasts';
 import { useRunAllPlaylists, useRunPlaylist } from './usePlaylists';
@@ -30,10 +31,27 @@ export function useSyncPodcastsWithFeedback() {
   return { sync, isPending: syncPodcasts.isPending };
 }
 
+// Reports a failed run. Stored Spotify credentials that can't be read only
+// come right with a fresh sign-in, so that case signs out to the login page
+// (an async run can't sign the session out itself: its request has already
+// answered).
+function useReportRunError() {
+  const { message } = App.useApp();
+  const { logout } = useAuth();
+
+  return (err: unknown) => {
+    message.error(getErrorMessage(err));
+    if (err instanceof RunFailedError && err.failureCode === 'credentials_unreadable') {
+      void logout();
+    }
+  };
+}
+
 // Rebuild every enabled playlist and summarise the per-playlist results.
 export function useRunAllPlaylistsWithFeedback() {
   const { message } = App.useApp();
   const runAllPlaylists = useRunAllPlaylists();
+  const reportError = useReportRunError();
 
   const runAll = async () => {
     try {
@@ -59,7 +77,7 @@ export function useRunAllPlaylistsWithFeedback() {
         message.success(summary);
       }
     } catch (err: unknown) {
-      message.error(getErrorMessage(err));
+      reportError(err);
     }
   };
 
@@ -71,6 +89,7 @@ export function useRunAllPlaylistsWithFeedback() {
 export function useRunPlaylistWithFeedback() {
   const { message } = App.useApp();
   const runPlaylist = useRunPlaylist();
+  const reportError = useReportRunError();
   const [runningIds, setRunningIds] = useState<ReadonlySet<number>>(() => new Set());
 
   const run = async (id: number) => {
@@ -85,7 +104,7 @@ export function useRunPlaylistWithFeedback() {
         message.success(result.message);
       }
     } catch (err: unknown) {
-      message.error(getErrorMessage(err));
+      reportError(err);
     } finally {
       setRunningIds((prev) => {
         const next = new Set(prev);

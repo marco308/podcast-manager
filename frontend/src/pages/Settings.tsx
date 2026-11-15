@@ -26,6 +26,7 @@ import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { useAuth, useTheme, useJobs, useUpdateJobSchedule, useHealth } from '../hooks';
 import { getErrorMessage } from '../api';
+import { RunHistoryCard } from '../components';
 import type { ThemePreference } from '../context';
 import type { Job, JobSchedule } from '../types';
 
@@ -337,6 +338,8 @@ export function Settings() {
           />
         )}
       </Card>
+
+      <RunHistoryCard style={{ marginBottom: 24 }} />
 
       <Card title="About">
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>

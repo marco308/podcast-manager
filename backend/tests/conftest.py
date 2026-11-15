@@ -13,6 +13,11 @@ _DUMMY_FERNET_KEY = "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE="
 os.environ.setdefault("SPOTIFY_CLIENT_ID", "test-client-id")
 os.environ.setdefault("SPOTIFY_CLIENT_SECRET", "test-client-secret")
 os.environ.setdefault("ENCRYPTION_KEY", _DUMMY_FERNET_KEY)
+# Never the developer's real database: code that opens its own session
+# (the SyncLog bookkeeping of a manual run, say) without a test patching it
+# would otherwise write to ./data/podcast_manager.db. Each in-memory
+# connection is a fresh, empty database, so such a write simply fails.
+os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite://")
 
 import pytest  # noqa: E402
 

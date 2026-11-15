@@ -53,8 +53,13 @@ class SyncLogRun:
         playlists_attempted: int = 0,
         playlists_failed: int = 0,
         api_calls_used: int | None = None,
+        outcome: dict | None = None,
     ) -> None:
-        """Record the outcome written when the ``sync_log_run`` block exits."""
+        """Record the outcome written when the ``sync_log_run`` block exits.
+
+        ``outcome`` is a manual run's client-facing result (see
+        ``SyncLog.outcome``); the scheduled jobs leave it out.
+        """
         self.outcome = {
             "status": status,
             "details": details,
@@ -63,6 +68,8 @@ class SyncLogRun:
             "playlists_failed": playlists_failed,
             "api_calls_used": api_calls_used,
         }
+        if outcome is not None:
+            self.outcome["outcome"] = outcome
 
     def fail(self, details: str, failure_code: str = "unknown") -> None:
         """Shorthand for a failed outcome with nothing counted."""
@@ -110,6 +117,7 @@ async def finalise_sync_log(
     playlists_attempted: int = 0,
     playlists_failed: int = 0,
     api_calls_used: int | None = None,
+    outcome: dict | None = None,
 ) -> None:
     """Write the final outcome onto a RUNNING SyncLog row.
 
@@ -130,6 +138,7 @@ async def finalise_sync_log(
                 sync_log.playlists_attempted = playlists_attempted
                 sync_log.playlists_failed = playlists_failed
                 sync_log.api_calls_used = api_calls_used
+                sync_log.outcome = outcome
                 await db.commit()
         except Exception as e:
             logger.error(f"Failed to update sync log: {e}")

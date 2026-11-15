@@ -19,12 +19,21 @@ from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.playlist import Arrangement, DateDirection, PickFrom, Playlist, PlaylistKind
+from app.models.playlist import (
+    LAST_RUN_ERROR_MAX_LENGTH,
+    Arrangement,
+    DateDirection,
+    LastRunStatus,
+    PickFrom,
+    Playlist,
+    PlaylistKind,
+)
 from app.models.playlist_podcast import PlaylistPodcast
 from app.models.podcast import Podcast
 from app.models.sleep_episode import SleepEpisode
 from app.models.user import User
 from app.services.assignment_rules import ResolvedRule, resolve_rule
+from app.services.encryption import is_unreadable_credentials
 from app.services.spotify import MAX_RETRY_AFTER_SECONDS, SpotifyService
 from app.services.token_manager import TokenManager
 
@@ -38,6 +47,46 @@ PAGE_SIZE = 50
 
 # Decides whether a raw Spotify episode belongs in a build.
 EpisodeFilter = Callable[[dict[str, Any] | None], bool]
+
+
+def describe_build_failure(exc: BaseException) -> str:
+    """A client-safe line for a failed build, stored as ``last_run_error``.
+
+    Built from the exception's type and HTTP status, never its text, which
+    can hold anything Spotify or a library put in it (issue #161).
+    """
+    if is_unreadable_credentials(exc):
+        return "The stored Spotify sign-in could not be read. Sign in again."
+    if isinstance(exc, PlaylistBuildError):
+        return "No podcast's episodes could be fetched, so the playlist was left unchanged."
+    http_error = _find_http_status_error(exc)
+    if http_error is not None:
+        status = http_error.response.status_code
+        if status == 429:
+            return "Spotify's rate limit was hit, so the playlist was left unchanged."
+        if status == 401:
+            return "Spotify refused the sign-in, so the playlist was left unchanged."
+        return f"Spotify returned an error ({status}), so the playlist was left unchanged."
+    return "The update failed, so the playlist was left unchanged. Check the server logs for details."
+
+
+def _find_http_status_error(exc: BaseException) -> httpx.HTTPStatusError | None:
+    """The first ``httpx.HTTPStatusError`` in ``exc``'s cause/context chain."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        if isinstance(current, httpx.HTTPStatusError):
+            return current
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return None
+
+
+def _clip(text: str) -> str:
+    """Fit ``text`` into ``playlists.last_run_error``."""
+    if len(text) <= LAST_RUN_ERROR_MAX_LENGTH:
+        return text
+    return text[: LAST_RUN_ERROR_MAX_LENGTH - 1] + "…"
 
 
 def spotify_playlist_description(name: str) -> str:
@@ -782,7 +831,16 @@ class PlaylistBuilder:
             # playlist's Spotify calls, so every other writer (a rotated
             # refresh token, any request) timed out with "database is
             # locked" until the whole run finished.
-            playlist.last_updated_at = datetime.now(UTC)
+            now = datetime.now(UTC)
+            playlist.last_updated_at = now
+            # The build's outcome travels in the same commit (issue #246).
+            playlist.last_run_at = now
+            if failed_podcasts:
+                playlist.last_run_status = LastRunStatus.PARTIAL.value
+                playlist.last_run_error = _clip(f"Episodes could not be fetched for: {', '.join(failed_podcasts)}")
+            else:
+                playlist.last_run_status = LastRunStatus.SUCCESS.value
+                playlist.last_run_error = None
             if playlist.kind == PlaylistKind.SLEEP.value:
                 await self._record_sleep_served(episode_uris)
             await self._db.commit()
@@ -820,6 +878,8 @@ class PlaylistBuilder:
                 await self._db.refresh(playlist)
             except Exception as refresh_error:
                 logger.warning(f"Could not reload playlist '{playlist_name}' after rollback: {refresh_error}")
+            else:
+                await self._record_failed_run(playlist, e)
             return PlaylistUpdateResult(
                 playlist_id=playlist_id,
                 playlist_name=playlist_name,
@@ -828,6 +888,26 @@ class PlaylistBuilder:
                 error=str(e),
                 exception=e,
             )
+
+    async def _record_failed_run(self, playlist: Playlist, exc: BaseException) -> None:
+        """Store a failed build as the playlist's last run (issue #246).
+
+        Best effort: the run has already failed, and a failure to record that
+        must not turn into a second one.
+        """
+        playlist_id = playlist.id
+        try:
+            playlist.last_run_status = LastRunStatus.FAILED.value
+            playlist.last_run_error = describe_build_failure(exc)
+            playlist.last_run_at = datetime.now(UTC)
+            await self._db.commit()
+        except Exception as record_error:
+            logger.warning(f"Could not record the failed run of playlist {playlist_id}: {record_error}")
+            try:
+                await self._db.rollback()
+                await self._db.refresh(playlist)
+            except Exception as reload_error:
+                logger.warning(f"Could not reload playlist {playlist_id} after that: {reload_error}")
 
     async def update_all_playlists(self) -> list[PlaylistUpdateResult]:
         """Update all enabled playlists.

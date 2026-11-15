@@ -29,5 +29,5 @@ export {
   useRunAllPlaylistsWithFeedback,
   useRunPlaylistWithFeedback,
 } from './useActionFeedback';
-export { useJobs, useUpdateJobSchedule, jobKeys } from './useJobs';
+export { useJobs, useJobRuns, useUpdateJobSchedule, jobKeys } from './useJobs';
 export { useHealth, healthKeys } from './useHealth';

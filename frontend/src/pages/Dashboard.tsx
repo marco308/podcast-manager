@@ -14,7 +14,7 @@ import {
   useSyncPodcastsWithFeedback,
   useRunAllPlaylistsWithFeedback,
 } from '../hooks';
-import { LoadingSpinner, SleepTag } from '../components';
+import { LastRunTag, LoadingSpinner, SleepTag } from '../components';
 import { ruleSummary, spotifyPlaylistUrl } from '../utils/playlistLabels';
 
 const { Title, Text } = Typography;
@@ -178,11 +178,14 @@ export function Dashboard() {
                     <Text type="secondary" style={{ fontSize: 12 }}>
                       {playlist.podcast_count} podcast{playlist.podcast_count !== 1 ? 's' : ''}
                     </Text>
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      {playlist.last_updated_at
-                        ? `Updated ${dayjs(playlist.last_updated_at).fromNow()}`
-                        : 'Never updated'}
-                    </Text>
+                    <Space size={4} wrap>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        {playlist.last_updated_at
+                          ? `Updated ${dayjs(playlist.last_updated_at).fromNow()}`
+                          : 'Never updated'}
+                      </Text>
+                      <LastRunTag playlist={playlist} />
+                    </Space>
                     {!playlist.is_enabled && (
                       <Tag color="default" style={{ width: 'fit-content' }}>
                         Disabled

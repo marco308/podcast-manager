@@ -5,6 +5,11 @@ struct Job: Codable, Identifiable {
     let name: String
     let nextRun: String?
     let lastRun: String?
+    /// How the run `lastRun` refers to ended: "success", "failed" (which
+    /// covers a run interrupted by a restart) or "running". Only the jobs
+    /// that record their runs send it, and older servers never do, so it is
+    /// optional and any other value is treated as unknown (issue #246).
+    var lastRunStatus: String? = nil
     let type: String
     let isConfigurable: Bool
     /// First run time only; `scheduleTimes` has them all.
@@ -17,6 +22,29 @@ struct Job: Codable, Identifiable {
     /// Sent on cron jobs only; absent from servers before #287.
     var scheduleTimezone: String? = nil
     let intervalMinutes: Int?
+
+    /// The icon next to "Last: …". A checkmark only for a run known to have
+    /// succeeded; a failed or interrupted run must not look like a good one.
+    var lastRunSymbol: String {
+        switch lastRunStatus {
+        case "success": return "checkmark.circle"
+        case "failed": return "exclamationmark.triangle.fill"
+        case "running": return "arrow.triangle.2.circlepath"
+        default: return "clock.arrow.circlepath"
+        }
+    }
+
+    var lastRunFailed: Bool { lastRunStatus == "failed" }
+
+    /// Spoken with the icon, which carries the outcome on its own.
+    var lastRunAccessibilityLabel: String {
+        switch lastRunStatus {
+        case "success": return "Last run succeeded"
+        case "failed": return "Last run failed"
+        case "running": return "Running now"
+        default: return "Last run"
+        }
+    }
 
     /// The run times, falling back to `schedule` for older servers.
     var runTimes: [JobSchedule] {

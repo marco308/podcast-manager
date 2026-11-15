@@ -3,7 +3,7 @@
 from datetime import datetime
 from enum import Enum as PyEnum
 
-from sqlalchemy import Enum, Integer, String, Text
+from sqlalchemy import JSON, Enum, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -42,6 +42,12 @@ class SyncLog(Base):
     playlists_attempted: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     playlists_failed: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     api_calls_used: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
+    # A manual run's client-facing result, ``{"message": str, "results":
+    # [...]}`` with one entry per playlist, as the synchronous run endpoints
+    # return it — so ``GET /api/jobs/runs/{id}`` can report an async run's
+    # outcome (issue #242). NULL for the scheduled jobs.
+    outcome: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
 
     def __repr__(self) -> str:
         return f"<SyncLog(id={self.id}, job_type={self.job_type}, status={self.status})>"

@@ -57,7 +57,9 @@ For example, a Morning playlist with defaults "latest only, newest" gets today's
 | **Token refresh** | At startup, then every 45 minutes | Refreshes Spotify access tokens before they expire |
 | **Session cleanup** | Every hour | Removes expired login sessions |
 
-The Settings page shows each job's next run and the result of its last one, including which step failed if part of a run did.
+The Settings page shows each job's next run and the result of its last one, including which step failed if part of a run did, and a **Run History** table of recent runs (scheduled and manual) with how each ended. A playlist whose last update failed, or was written from incomplete data because some podcasts couldn't be reached, carries a red or orange tag next to its last-updated time.
+
+Running a playlist (or **Update All**) from the web app starts the rebuild in the background and reports the result when it finishes, so a long rebuild isn't cut off by a proxy timeout.
 
 ### Single-user by design
 

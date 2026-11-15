@@ -32,6 +32,13 @@ struct PlaylistRow: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+                if let problem = playlist.lastRunProblem {
+                    Label(problem, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(playlist.lastRunStatus == "failed" ? .red : .orange)
+                        .accessibilityHint(playlist.lastRunError ?? "")
+                }
             }
 
             Spacer()

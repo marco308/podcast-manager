@@ -20,6 +20,21 @@ struct Playlist: Codable, Identifiable, Hashable {
     /// "standard" | "sleep" (issue #331). Optional: servers before sleep
     /// playlists don't send it, and those playlists are all standard.
     var kind: String? = nil
+    /// Outcome of the last build (issue #246): "success", "partial" (written
+    /// from incomplete data) or "failed" (left unchanged), with a short
+    /// reason. Optional: older servers don't send them.
+    var lastRunStatus: String? = nil
+    var lastRunError: String? = nil
+    var lastRunAt: String? = nil
+
+    /// The last build didn't go cleanly; a successful or unknown one is nil.
+    var lastRunProblem: String? {
+        switch lastRunStatus {
+        case "partial": return "Incomplete"
+        case "failed": return "Last update failed"
+        default: return nil
+        }
+    }
 
     /// A sleep playlist plays only episodes already finished.
     var isSleep: Bool { kind == PlaylistKind.sleep }

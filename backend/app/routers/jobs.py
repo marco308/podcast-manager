@@ -1,14 +1,21 @@
 """Jobs API router."""
 
 import logging
+from datetime import datetime
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, Field, model_validator
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.database import get_db
 from app.jobs.scheduler import MAX_PLAYLIST_UPDATE_TIMES, get_job_status, reschedule_playlist_update
 from app.models.session import Session
+from app.models.sync_log import SyncLog
 from app.rate_limit import limiter
 from app.routers.auth import get_current_user_id, validate_csrf_token
+from app.schemas.playlist import DB_ID_MAX, RunAllPlaylistResult
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +55,91 @@ class JobStatus(BaseModel):
 
 class JobsStatusResponse(BaseModel):
     jobs: list[JobStatus]
+
+
+# Bounds on ``GET /jobs/runs?limit=``.
+RUN_HISTORY_DEFAULT_LIMIT = 20
+RUN_HISTORY_MAX_LIMIT = 100
+
+
+class JobRun(BaseModel):
+    """One recorded job run: a SyncLog row (issues #246, #242).
+
+    ``job_type`` is ``playlist_update``, ``library_sync``, ``cleanup`` or
+    ``manual_playlist_update``. ``status`` is ``running``, ``success`` or
+    ``failed``; ``failure_code`` says why a run failed (``interrupted`` for
+    one the process died under, ``credentials_unreadable`` when the user
+    has to sign in again). ``message`` and ``results`` are only set on a
+    finished manual run: the message and per-playlist outcomes the
+    synchronous run endpoints return.
+    """
+
+    id: int
+    job_type: str
+    status: str
+    details: str | None
+    failure_code: str | None
+    started_at: datetime | None
+    completed_at: datetime | None
+    playlists_attempted: int | None
+    playlists_failed: int | None
+    api_calls_used: int | None
+    message: str | None = None
+    results: list[RunAllPlaylistResult] | None = None
+
+
+class JobRunListResponse(BaseModel):
+    runs: list[JobRun]
+
+
+def _job_run(row: SyncLog) -> JobRun:
+    outcome = row.outcome if isinstance(row.outcome, dict) else {}
+    return JobRun(
+        id=row.id,
+        job_type=row.job_type,
+        status=row.status.value,
+        details=row.details,
+        failure_code=row.failure_code,
+        started_at=row.started_at,
+        completed_at=row.completed_at,
+        playlists_attempted=row.playlists_attempted,
+        playlists_failed=row.playlists_failed,
+        api_calls_used=row.api_calls_used,
+        message=outcome.get("message"),
+        results=outcome.get("results"),
+    )
+
+
+@router.get("/runs", response_model=JobRunListResponse)
+async def list_job_runs(
+    job_type: Annotated[str | None, Query(max_length=50)] = None,
+    limit: Annotated[int, Query(ge=1, le=RUN_HISTORY_MAX_LIMIT)] = RUN_HISTORY_DEFAULT_LIMIT,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> JobRunListResponse:
+    """Recent job runs, newest first, optionally of one ``job_type`` (issue #246).
+
+    SyncLog has no owner column: the deployment is single-user by
+    construction (see CLAUDE.md), like the podcasts table.
+    """
+    query = select(SyncLog).order_by(SyncLog.started_at.desc(), SyncLog.id.desc()).limit(limit)
+    if job_type:
+        query = query.where(SyncLog.job_type == job_type)
+    rows = (await db.execute(query)).scalars().all()
+    return JobRunListResponse(runs=[_job_run(row) for row in rows])
+
+
+@router.get("/runs/{run_id}", response_model=JobRun)
+async def get_job_run(
+    run_id: Annotated[int, Path(ge=1, le=DB_ID_MAX)],
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> JobRun:
+    """One job run, for polling an async manual run until it finishes (issue #242)."""
+    row = await db.get(SyncLog, run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return _job_run(row)
 
 
 class UpdateScheduleResponse(BaseModel):
