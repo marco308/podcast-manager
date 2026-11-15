@@ -77,11 +77,32 @@ struct LoginScreen: View {
             )
 
             // For anyone without a server yet, including App Review
-            // (issue #264): the whole app against sample data.
-            Button("Try the demo") {
-                Task { await authService.startDemo() }
+            // (issue #264): the whole app against sample data. A full-width
+            // button with a line saying what it does, not a text link: App
+            // Review stopped at this screen with the link in plain view
+            // (issue #267, Guideline 2.1(a)).
+            VStack(spacing: 8) {
+                Button {
+                    Task { await authService.startDemo() }
+                } label: {
+                    Text("Try the demo")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .foregroundStyle(.green)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(.green, lineWidth: 2)
+                        )
+                }
+                .accessibilityHint("Opens the app with sample data. No server or account needed.")
+
+                Text("No server or account needed. Explore every screen with sample shows.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
             }
-            .font(.subheadline.weight(.semibold))
+            .padding(.horizontal, 32)
             .disabled(authService.isLoading)
 
             if let error = authService.error {
