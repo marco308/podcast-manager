@@ -176,10 +176,7 @@ class TokenManager:
         except TokenDecryptionError:
             # Not a Spotify failure: nothing was sent, and no retry can help.
             # Only a fresh sign-in replaces the stored credentials (issue #308).
-            logger.error(
-                "Stored Spotify refresh token for user %s could not be decrypted; the user must sign in again",
-                self._user_id,
-            )
+            logger.error("Stored Spotify refresh token could not be decrypted; the user must sign in again")
             raise
         spotify = SpotifyService()
         token_data = await spotify.refresh_access_token(refresh_token)

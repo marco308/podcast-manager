@@ -57,7 +57,9 @@ async def sign_out_for_reauth(db: AsyncSession, user_id: int) -> ReauthRequired:
     returned :class:`ReauthRequired`, whose handler clears the cookies,
     leaving the client on a working login page.
     """
-    logger.warning(f"Stored credentials for user {user_id} could not be decrypted; signing out to force reauth")
+    # No user id in the message: the deployment has one user, and the id came
+    # from the request's session, so it is kept out of the log (CodeQL).
+    logger.warning("Stored Spotify credentials could not be decrypted; signing out to force reauth")
     # Drop anything the request had pending; it is failing anyway.
     await db.rollback()
     await db.execute(delete(Session).where(Session.user_id == user_id))
