@@ -173,3 +173,26 @@ import Testing
     #expect(podcast.rule == nil)
     #expect(podcast.position == nil)
 }
+
+@Test func jobScheduleTimezoneDecodesAndIsOptional() async throws {
+    let base = """
+    "id": "daily_playlist_update", "name": "Daily Library Sync & Playlist Update",
+    "next_run": null, "last_run": null, "type": "cron", "is_configurable": true,
+    "schedule": {"hour": 6, "minute": 0},
+    "schedule_times": [{"hour": 6, "minute": 0}, {"hour": 18, "minute": 30}],
+    "max_schedule_times": 3
+    """
+    let decoder = JSONDecoder()
+    decoder.keyDecodingStrategy = .convertFromSnakeCase
+
+    let job = try decoder.decode(
+        Job.self, from: Data("{\(base), \"schedule_timezone\": \"Europe/London\"}".utf8)
+    )
+    #expect(job.scheduleTimezone == "Europe/London")
+    #expect(job.runTimesLabel == "06:00, 18:30")
+
+    // A server from before #287 sends no schedule_timezone.
+    let old = try decoder.decode(Job.self, from: Data("{\(base)}".utf8))
+    #expect(old.scheduleTimezone == nil)
+    #expect(old.runTimesLabel == "06:00, 18:30")
+}

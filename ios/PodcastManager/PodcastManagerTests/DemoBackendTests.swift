@@ -166,6 +166,14 @@ struct DemoBackendTests {
         #expect(json?["default_pick_from"] as? String == "random")
     }
 
+    @Test func jobsStatusSendsTheScheduleTimezone() async throws {
+        let demo = DemoBackend()
+        let jobs = await demo.jobsStatus().jobs
+        let cron = try #require(jobs.first { $0.type == "cron" })
+        #expect(cron.scheduleTimezone == TimeZone.current.identifier)
+        #expect(jobs.filter { $0.type == "interval" }.allSatisfy { $0.scheduleTimezone == nil })
+    }
+
     @Test func disabledPlaylistRefusesARun() async throws {
         let demo = DemoBackend()
         await #expect(throws: APIError.self) {

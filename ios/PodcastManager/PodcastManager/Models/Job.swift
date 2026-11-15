@@ -13,11 +13,20 @@ struct Job: Codable, Identifiable {
     /// the library sync + playlist update more than once a day.
     var scheduleTimes: [JobSchedule]? = nil
     var maxScheduleTimes: Int? = nil
+    /// IANA zone the cron times are wall-clock times in (e.g. "Europe/London").
+    /// Sent on cron jobs only; absent from servers before #287.
+    var scheduleTimezone: String? = nil
     let intervalMinutes: Int?
 
     /// The run times, falling back to `schedule` for older servers.
     var runTimes: [JobSchedule] {
         scheduleTimes ?? schedule.map { [$0] } ?? []
+    }
+
+    /// "06:00, 18:00", or nil when the job has no run times.
+    var runTimesLabel: String? {
+        let times = runTimes.map { String(format: "%02d:%02d", $0.hour, $0.minute) }
+        return times.isEmpty ? nil : times.joined(separator: ", ")
     }
 }
 

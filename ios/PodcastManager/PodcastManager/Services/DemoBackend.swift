@@ -340,6 +340,9 @@ actor DemoBackend {
                 schedule: scheduleTimes.first,
                 scheduleTimes: scheduleTimes,
                 maxScheduleTimes: 3,
+                // nextDailyRun works in the device's calendar, so that is the
+                // zone the demo's times are in.
+                scheduleTimezone: TimeZone.current.identifier,
                 intervalMinutes: nil
             ),
             intervalJob("token_refresh", "Spotify Token Refresh", minutes: 45, now: now),
