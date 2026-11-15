@@ -42,6 +42,7 @@ import { getErrorMessage } from '../../api';
 import { EPISODE_LIMIT_MAX } from '../../types';
 import { spotifyPlaylistUrl } from '../../utils/playlistLabels';
 import { PlaylistPodcastsEditor, type EditorRow } from './PlaylistPodcastsEditor';
+import { diffAssignments } from './assignmentDiff';
 
 const { Text } = Typography;
 
@@ -293,24 +294,11 @@ function PlaylistFormModalContent({ open, playlist, onClose, onSaved }: Playlist
     // Membership is applied after the settings save so a brand-new playlist
     // has an id to add to. A failure here leaves the settings saved and says
     // so, rather than reporting the whole save as failed.
-    // A standard playlist can't keep a `random` override; the server clears
-    // those when the kind changes, so the draft drops them too.
-    const rows = (draft ?? initialRows).map((r) =>
-      values.kind !== 'sleep' && r.pick_from === 'random' ? { ...r, pick_from: null } : r
+    const { rows, toAdd, toRemove, toPatch, orderChanged } = diffAssignments(
+      initialRows,
+      draft ?? initialRows,
+      values.kind
     );
-    const before = new Map(initialRows.map((r) => [r.id, r]));
-    const wanted = new Set(rows.map((r) => r.id));
-    const toAdd = rows.filter((r) => !before.has(r.id));
-    const toRemove = initialRows.filter((r) => !wanted.has(r.id));
-    const toPatch = rows.filter((r) => {
-      const prev = before.get(r.id);
-      // A new row only needs a PATCH when it carries an override; an existing
-      // row only when an override changed.
-      if (!prev) return r.episode_limit !== null || r.pick_from !== null;
-      return prev.episode_limit !== r.episode_limit || prev.pick_from !== r.pick_from;
-    });
-    const orderChanged =
-      toAdd.length > 0 || toRemove.length > 0 || rows.some((r, i) => initialRows[i]?.id !== r.id);
 
     try {
       if (toAdd.length > 0) {
