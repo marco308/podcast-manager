@@ -1,18 +1,15 @@
 import { useState } from 'react';
 import {
   Alert,
-  Avatar,
+  Skeleton,
   Button,
   Card,
   Descriptions,
   Grid,
   Space,
-  Table,
-  Tag,
   Tooltip,
   Typography,
 } from 'antd';
-import type { TableProps } from 'antd';
 import {
   ArrowLeftOutlined,
   EditOutlined,
@@ -22,25 +19,26 @@ import {
 import { Link, useParams } from 'react-router';
 import dayjs from 'dayjs';
 import { usePlaylist, usePlaylistPodcasts, useRunPlaylistWithFeedback } from '../hooks';
-import { LastRunTag, LoadingSpinner, PlaylistFormModal, SleepTag } from '../components';
+import {
+  LoadingSpinner,
+  PartRow,
+  PlaylistFormModal,
+  PlaylistStatus,
+  RunProblem,
+  SleepTag,
+} from '../components';
 import { getErrorMessage } from '../api';
 import {
   arrangementLabel,
   dateDirectionLabel,
   episodeLimitLabel,
   pickFromLabel,
-  ruleSourceLabel,
-  ruleSummary,
   spotifyPlaylistUrl,
 } from '../utils/playlistLabels';
-import type { Playlist, PlaylistPodcast } from '../types';
+import type { Playlist } from '../types';
 
 const { Title, Text } = Typography;
 const { useBreakpoint } = Grid;
-
-function hasOverride(podcast: PlaylistPodcast): boolean {
-  return podcast.override.episode_limit !== null || podcast.override.pick_from !== null;
-}
 
 // Read-only view of the playlist's podcasts with the rule each one resolves
 // to. Editing (membership, order, per-row overrides) lives in the shared
@@ -48,79 +46,6 @@ function hasOverride(podcast: PlaylistPodcast): boolean {
 function PodcastsSection({ playlist, onEdit }: { playlist: Playlist; onEdit: () => void }) {
   const { data: podcasts, isLoading, error } = usePlaylistPodcasts(playlist.id);
   const orderMatters = playlist.arrangement === 'by_position';
-
-  const columns: TableProps<PlaylistPodcast>['columns'] = [
-    {
-      title: '#',
-      key: 'position',
-      width: 48,
-      align: 'center',
-      render: (_, __, index) => (
-        <Text type={orderMatters ? undefined : 'secondary'}>{index + 1}</Text>
-      ),
-    },
-    {
-      title: 'Podcast',
-      key: 'podcast',
-      render: (_, row) => (
-        <Space size={8}>
-          {row.image_url ? (
-            <Avatar
-              src={row.image_url}
-              size={32}
-              shape="square"
-              style={{ borderRadius: 6, flexShrink: 0 }}
-            >
-              {row.name[0]}
-            </Avatar>
-          ) : null}
-          <div style={{ minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <Text ellipsis style={{ maxWidth: 260 }}>
-                {row.name}
-              </Text>
-              {row.is_sequential && (
-                <Tooltip title="Sequential: takes from the oldest unfinished episode unless overridden">
-                  <Tag color="blue" style={{ fontSize: 10, margin: 0 }}>
-                    SEQ
-                  </Tag>
-                </Tooltip>
-              )}
-              {/* Still assigned, but the sync found it gone from the Spotify
-                  library, so the next build skips it (issue #240). */}
-              {row.missing_since && (
-                <Tooltip title="Not in your Spotify library any more — this show contributes no episodes, and will be removed from the app if it stays away">
-                  <Tag color="warning" style={{ fontSize: 10, margin: 0 }}>
-                    NOT ON SPOTIFY
-                  </Tag>
-                </Tooltip>
-              )}
-            </div>
-            {row.publisher && (
-              <Text type="secondary" style={{ fontSize: 12 }} ellipsis>
-                {row.publisher}
-              </Text>
-            )}
-          </div>
-        </Space>
-      ),
-    },
-    {
-      title: 'Rule',
-      key: 'rule',
-      width: 260,
-      render: (_, row) => (
-        <Space size={6} wrap>
-          <Tag color={hasOverride(row) ? 'purple' : 'default'} style={{ margin: 0 }}>
-            {ruleSummary(row.rule.episode_limit, row.rule.pick_from, playlist.kind)}
-          </Tag>
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            {ruleSourceLabel(row.rule)}
-          </Text>
-        </Space>
-      ),
-    },
-  ];
 
   return (
     <Card
@@ -152,16 +77,26 @@ function PodcastsSection({ playlist, onEdit }: { playlist: Playlist; onEdit: () 
               }
             />
           )}
-          <Table<PlaylistPodcast>
-            size="small"
-            rowKey="id"
-            loading={isLoading}
-            pagination={false}
-            dataSource={podcasts ?? []}
-            columns={columns}
-            locale={{ emptyText: 'No podcasts yet. Use Edit podcasts to add some.' }}
-            scroll={{ x: 520 }}
-          />
+          {isLoading ? (
+            <Skeleton active paragraph={{ rows: 4 }} title={false} />
+          ) : (podcasts ?? []).length === 0 ? (
+            <p style={{ margin: 0, color: 'var(--ink-2)' }}>
+              No podcasts yet. Use Edit podcasts to add some.
+            </p>
+          ) : (
+            <ol className="pm-parts pm-parts-in-card">
+              {(podcasts ?? []).map((part, i) => (
+                <PartRow
+                  key={part.id}
+                  part={part}
+                  index={i}
+                  kind={playlist.kind}
+                  enabled={playlist.is_enabled}
+                  orderMatters={orderMatters}
+                />
+              ))}
+            </ol>
+          )}
         </>
       )}
     </Card>
@@ -296,39 +231,36 @@ export function PlaylistDetail() {
         </Space>
       </div>
 
-      <Card title="Settings" style={{ marginBottom: 24 }}>
-        <Descriptions column={isMobile ? 1 : 2} size="small">
-          <Descriptions.Item label="Kind">
-            {playlist.kind === 'sleep'
-              ? "Sleep — only episodes you've already finished"
-              : "Standard — episodes you haven't finished"}
-          </Descriptions.Item>
-          <Descriptions.Item label="Arrangement">{arrangementLabel(playlist)}</Descriptions.Item>
-          {playlist.arrangement === 'by_date' && (
-            <Descriptions.Item label="Direction">
-              {dateDirectionLabel(playlist.date_direction)}
+      <Card title="Settings" style={{ marginBottom: 24 }} styles={{ body: { padding: 0 } }}>
+        <RunProblem playlist={playlist} />
+        <div style={{ padding: 24 }}>
+          <Descriptions column={isMobile ? 1 : 2} size="small">
+            <Descriptions.Item label="Kind">
+              {playlist.kind === 'sleep'
+                ? "Sleep — only episodes you've already finished"
+                : "Standard — episodes you haven't finished"}
             </Descriptions.Item>
-          )}
-          <Descriptions.Item label="Default episodes">
-            {episodeLimitLabel(playlist.default_episode_limit, playlist.kind)}
-          </Descriptions.Item>
-          <Descriptions.Item label="Take from">
-            {pickFromLabel(playlist.default_pick_from)}
-          </Descriptions.Item>
-          <Descriptions.Item label="Enabled">
-            {playlist.is_enabled ? (
-              <Tag color="success">Enabled</Tag>
-            ) : (
-              <Space size={6}>
-                <Tag color="default">Disabled</Tag>
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  Never written to on Spotify until re-enabled
-                </Text>
-              </Space>
+            <Descriptions.Item label="Arrangement">{arrangementLabel(playlist)}</Descriptions.Item>
+            {playlist.arrangement === 'by_date' && (
+              <Descriptions.Item label="Direction">
+                {dateDirectionLabel(playlist.date_direction)}
+              </Descriptions.Item>
             )}
-          </Descriptions.Item>
-          <Descriptions.Item label="Last updated">
-            <Space size={6} wrap>
+            <Descriptions.Item label="Default episodes">
+              {episodeLimitLabel(playlist.default_episode_limit, playlist.kind)}
+            </Descriptions.Item>
+            <Descriptions.Item label="Take from">
+              {pickFromLabel(playlist.default_pick_from)}
+            </Descriptions.Item>
+            <Descriptions.Item label="Last run">
+              <Space size={10} wrap>
+                <PlaylistStatus playlist={playlist} />
+                {playlist.is_enabled ? null : (
+                  <Text type="secondary">Never written to on Spotify until turned on</Text>
+                )}
+              </Space>
+            </Descriptions.Item>
+            <Descriptions.Item label="Last written to Spotify">
               {playlist.last_updated_at ? (
                 <Tooltip title={dayjs(playlist.last_updated_at).format('YYYY-MM-DD HH:mm:ss')}>
                   {dayjs(playlist.last_updated_at).fromNow()}
@@ -336,17 +268,9 @@ export function PlaylistDetail() {
               ) : (
                 'Never'
               )}
-              <LastRunTag playlist={playlist} />
-            </Space>
-            {playlist.last_run_error && playlist.last_run_status !== 'success' && (
-              <div>
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  {playlist.last_run_error}
-                </Text>
-              </div>
-            )}
-          </Descriptions.Item>
-        </Descriptions>
+            </Descriptions.Item>
+          </Descriptions>
+        </div>
       </Card>
 
       <PodcastsSection playlist={playlist} onEdit={() => setIsEditOpen(true)} />

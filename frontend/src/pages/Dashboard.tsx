@@ -1,212 +1,140 @@
-import { Card, Row, Col, Statistic, Button, Space, Typography, Tag, Grid } from 'antd';
-import {
-  SyncOutlined,
-  CustomerServiceOutlined,
-  UnorderedListOutlined,
-  ThunderboltOutlined,
-  CheckCircleOutlined,
-  ExportOutlined,
-} from '@ant-design/icons';
+import { Button } from 'antd';
+import { SyncOutlined } from '@ant-design/icons';
+import { Link } from 'react-router';
 import dayjs from 'dayjs';
 import {
   usePodcasts,
   usePlaylists,
+  useJobs,
   useSyncPodcastsWithFeedback,
   useRunAllPlaylistsWithFeedback,
 } from '../hooks';
-import { LastRunTag, LoadingSpinner, SleepTag } from '../components';
-import { ruleSummary, spotifyPlaylistUrl } from '../utils/playlistLabels';
+import { LoadingSpinner, PlaylistAssembly } from '../components';
 
-const { Title, Text } = Typography;
-const { useBreakpoint } = Grid;
+const DAILY_JOB_ID = 'daily_playlist_update';
 
+function runTime(iso: string | null | undefined): string {
+  if (!iso) return 'Not yet';
+  const t = dayjs(iso);
+  return t.isSame(dayjs(), 'day') ? t.format('HH:mm') : t.format('HH:mm ddd');
+}
+
+// The run sheet: answers "did last night work?" before anything is clicked,
+// then every playlist as a parts list of its shows.
 export function Dashboard() {
   const { data: podcasts, isLoading: podcastsLoading } = usePodcasts();
   const { data: playlists, isLoading: playlistsLoading } = usePlaylists();
+  const { data: jobs } = useJobs();
   const { sync: handleSync, isPending: syncPending } = useSyncPodcastsWithFeedback();
   const { runAll: handleRunAll, isPending: runAllPending } = useRunAllPlaylistsWithFeedback();
-  const screens = useBreakpoint();
-  const isMobile = !screens.md;
 
   if (podcastsLoading || playlistsLoading) {
-    return <LoadingSpinner tip="Loading dashboard..." />;
+    return <LoadingSpinner tip="Loading the run sheet…" />;
   }
 
-  // Calculate stats
-  const totalPodcasts = podcasts?.length || 0;
-  const assignedPodcasts = podcasts?.filter((p) => p.playlist_ids.length > 0).length || 0;
-  const unassignedPodcasts = totalPodcasts - assignedPodcasts;
-
-  // Find last sync time
-  const lastSyncedPodcast = podcasts
-    ?.filter((p) => p.last_synced_at)
-    .sort(
-      (a, b) => new Date(b.last_synced_at!).getTime() - new Date(a.last_synced_at!).getTime()
-    )[0];
+  const daily = jobs?.jobs.find((j) => j.id === DAILY_JOB_ID);
+  const troubled = (playlists ?? []).filter(
+    (p) => p.is_enabled && (p.last_run_status === 'partial' || p.last_run_status === 'failed')
+  );
+  const unsorted = (podcasts ?? []).filter((p) => p.playlist_ids.length === 0).length;
+  const dailyFailed = daily?.last_run_status === 'failed';
 
   return (
-    <div>
-      <Title level={4} style={{ marginBottom: 16 }}>
-        Dashboard
-      </Title>
-
-      {/* Quick Actions */}
-      <Card
-        title={isMobile ? 'Quick Actions' : undefined}
-        style={{ marginBottom: 16 }}
-        styles={{ body: { padding: isMobile ? 12 : 24 } }}
+    <div style={{ display: 'grid', gap: 24 }}>
+      <header
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 16,
+          justifyContent: 'space-between',
+          alignItems: 'flex-end',
+          borderBottom: '3px solid var(--rule-strong)',
+          paddingBottom: 18,
+        }}
       >
-        <Space
-          direction={isMobile ? 'vertical' : 'horizontal'}
-          style={{ width: isMobile ? '100%' : 'auto' }}
-        >
+        <div>
+          <h1 className="pm-title">Run sheet</h1>
+          <div className="pm-label" style={{ marginTop: 10 }}>
+            {dayjs().format('ddd D MMM')}
+          </div>
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
           <Button
-            type="primary"
             icon={<SyncOutlined spin={syncPending} />}
             onClick={handleSync}
             loading={syncPending}
-            size={isMobile ? 'large' : 'middle'}
-            block={isMobile}
           >
-            {isMobile ? 'Sync Podcasts' : 'Sync Podcasts from Spotify'}
+            Sync library
           </Button>
-          <Button
-            icon={<ThunderboltOutlined />}
-            onClick={handleRunAll}
-            loading={runAllPending}
-            size={isMobile ? 'large' : 'middle'}
-            block={isMobile}
-          >
-            Update All Playlists
+          <Button type="primary" onClick={handleRunAll} loading={runAllPending}>
+            Update all
           </Button>
-        </Space>
-      </Card>
+        </div>
+      </header>
 
-      {/* Stats Cards */}
-      <Row gutter={[isMobile ? 12 : 16, isMobile ? 12 : 16]}>
-        <Col xs={24} sm={12} lg={6}>
-          <Card styles={{ body: { padding: isMobile ? 16 : 24 } }}>
-            <Statistic
-              title="Total Podcasts"
-              value={totalPodcasts}
-              prefix={<CustomerServiceOutlined />}
-              valueStyle={{ fontSize: isMobile ? 28 : 24 }}
-            />
-            {lastSyncedPodcast && (
-              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>
-                Last synced {dayjs(lastSyncedPodcast.last_synced_at).fromNow()}
-              </Text>
-            )}
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} lg={6}>
-          <Card styles={{ body: { padding: isMobile ? 16 : 24 } }}>
-            <Statistic
-              title="Assigned to Playlists"
-              value={assignedPodcasts}
-              suffix={`/ ${totalPodcasts}`}
-              valueStyle={{
-                color: assignedPodcasts === totalPodcasts ? '#52c41a' : '#1890ff',
-                fontSize: isMobile ? 28 : 24,
-              }}
-            />
-            {assignedPodcasts === totalPodcasts && totalPodcasts > 0 && (
-              <Tag icon={<CheckCircleOutlined />} color="success" style={{ marginTop: 8 }}>
-                All assigned!
-              </Tag>
-            )}
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} lg={6}>
-          <Card styles={{ body: { padding: isMobile ? 16 : 24 } }}>
-            <Statistic
-              title="Managed Playlists"
-              value={playlists?.length || 0}
-              prefix={<UnorderedListOutlined />}
-              valueStyle={{ fontSize: isMobile ? 28 : 24 }}
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} lg={6}>
-          <Card styles={{ body: { padding: isMobile ? 16 : 24 } }}>
-            <Statistic
-              title="Unassigned"
-              value={unassignedPodcasts}
-              valueStyle={{
-                color: unassignedPodcasts === 0 ? '#52c41a' : '#faad14',
-                fontSize: isMobile ? 28 : 24,
-              }}
-            />
-            {unassignedPodcasts > 0 && (
-              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>
-                {unassignedPodcasts} podcast{unassignedPodcasts !== 1 ? 's' : ''} not in any
-                playlist
-              </Text>
-            )}
-          </Card>
-        </Col>
-      </Row>
+      <section className="pm-runsheet" aria-label="Run sheet">
+        <div>
+          <span className="pm-label">Last run</span>
+          <b className="pm-num" style={dailyFailed ? { color: 'var(--failed)' } : undefined}>
+            {runTime(daily?.last_run)}
+          </b>
+          {daily?.last_run_status === 'failed' && (
+            <span className="pm-label" style={{ color: 'var(--ink)' }}>
+              Failed
+              {daily.last_run_failed_steps?.length
+                ? `: ${daily.last_run_failed_steps.join(', ')}`
+                : ''}
+            </span>
+          )}
+        </div>
+        <div>
+          <span className="pm-label">Next run</span>
+          <b className="pm-num">{runTime(daily?.next_run)}</b>
+        </div>
+        <div>
+          <span className="pm-label">Need a look</span>
+          <b className="pm-num" style={troubled.length ? { color: 'var(--partial)' } : undefined}>
+            {troubled.length}
+          </b>
+          {troubled.length > 0 && (
+            <span className="pm-label" style={{ color: 'var(--ink)' }}>
+              {troubled.map((p) => p.name).join(', ')}
+            </span>
+          )}
+        </div>
+        <div>
+          <span className="pm-label">Unsorted shows</span>
+          <b className="pm-num">{unsorted}</b>
+          {unsorted > 0 && (
+            <Link to="/podcasts" className="pm-label" style={{ color: 'var(--accent-text)' }}>
+              Sort them
+            </Link>
+          )}
+        </div>
+      </section>
 
-      {/* Playlists Status */}
-      {playlists && playlists.length > 0 && (
-        <Card
-          title="Playlist Status"
-          style={{ marginTop: isMobile ? 16 : 24 }}
-          styles={{ body: { padding: isMobile ? 12 : 24 } }}
+      {playlists && playlists.length > 0 ? (
+        <div className="pm-assemblies">
+          {playlists.map((playlist) => (
+            <PlaylistAssembly key={playlist.id} playlist={playlist} />
+          ))}
+        </div>
+      ) : (
+        <div
+          className="pm-sheet"
+          style={{ padding: '28px 24px', display: 'grid', gap: 14, justifyItems: 'start' }}
         >
-          <Row gutter={[isMobile ? 8 : 16, isMobile ? 8 : 16]}>
-            {playlists.map((playlist) => (
-              <Col xs={24} sm={12} lg={6} key={playlist.id}>
-                <Card size="small" bordered styles={{ body: { padding: isMobile ? 12 : 16 } }}>
-                  <Space direction="vertical" size={4} style={{ width: '100%' }}>
-                    <Text strong style={{ fontSize: isMobile ? 15 : 14 }}>
-                      {playlist.name}
-                    </Text>
-                    <Space size={4} wrap>
-                      <Tag
-                        color={playlist.default_episode_limit === 0 ? 'blue' : 'green'}
-                        style={{ width: 'fit-content' }}
-                      >
-                        {ruleSummary(
-                          playlist.default_episode_limit,
-                          playlist.default_pick_from,
-                          playlist.kind
-                        )}
-                      </Tag>
-                      {playlist.kind === 'sleep' && <SleepTag />}
-                    </Space>
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      {playlist.podcast_count} podcast{playlist.podcast_count !== 1 ? 's' : ''}
-                    </Text>
-                    <Space size={4} wrap>
-                      <Text type="secondary" style={{ fontSize: 12 }}>
-                        {playlist.last_updated_at
-                          ? `Updated ${dayjs(playlist.last_updated_at).fromNow()}`
-                          : 'Never updated'}
-                      </Text>
-                      <LastRunTag playlist={playlist} />
-                    </Space>
-                    {!playlist.is_enabled && (
-                      <Tag color="default" style={{ width: 'fit-content' }}>
-                        Disabled
-                      </Tag>
-                    )}
-                    {spotifyPlaylistUrl(playlist.spotify_playlist_id) && (
-                      <a
-                        href={spotifyPlaylistUrl(playlist.spotify_playlist_id) ?? undefined}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ fontSize: 12 }}
-                      >
-                        Open in Spotify <ExportOutlined />
-                      </a>
-                    )}
-                  </Space>
-                </Card>
-              </Col>
-            ))}
-          </Row>
-        </Card>
+          <h2 className="pm-title" style={{ fontSize: 24 }}>
+            No playlists yet
+          </h2>
+          <p style={{ margin: 0, color: 'var(--ink-2)', maxWidth: '52ch' }}>
+            Make a playlist, add shows to it, and it appears here as a parts list: each show
+            numbered, with the rule the next rebuild will use.
+          </p>
+          <Link to="/playlists">
+            <Button type="primary">Make a playlist</Button>
+          </Link>
+        </div>
       )}
     </div>
   );

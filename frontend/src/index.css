@@ -1,48 +1,457 @@
-/* Base styles */
+@import './theme/fonts.css';
+
+/* The Parts List world. Tokens mirror src/theme/themeConfig.ts. */
 :root {
-  font-family:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --ground: #f2f3f5;
+  --panel: #ffffff;
+  --raised: #e8eaee;
+  --ink: #16191d;
+  --ink-2: rgba(22, 25, 29, 0.7);
+  --rule: rgba(22, 25, 29, 0.22);
+  --rule-strong: #16191d;
+  --accent: #c24a08;
+  --accent-text: #b04306;
+  --on-accent: #ffffff;
+  --balloon: #2f6fc4;
+  --serial: #b07f00;
+  --ok: #1e9e4a;
+  --partial: #b07f00;
+  --failed: #d0312d;
+  --off: #b4b9c1;
+  --font: Outfit, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --mono: 'DM Mono', ui-monospace, Menlo, monospace;
+  --ease-flow: cubic-bezier(0.37, 0, 0.63, 1);
+  --ease-move: cubic-bezier(0.215, 0.61, 0.355, 1);
+
+  font-family: var(--font);
+  font-weight: 500;
   line-height: 1.5;
-  font-weight: 400;
-
   color-scheme: light;
-  color: rgba(0, 0, 0, 0.88);
-  background-color: #f5f5f5;
-
+  color: var(--ink);
+  background-color: var(--ground);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-
-  /* Theme variables - Light mode */
-  --bg-layout: #f5f5f5;
-  --bg-container: #ffffff;
-  --border-color: #f0f0f0;
-  --card-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-  --scrollbar-track: #f1f1f1;
-  --scrollbar-thumb: #c1c1c1;
-  --scrollbar-thumb-hover: #a1a1a1;
 }
 
-/* Dark mode variables */
 [data-theme='dark'] {
+  --ground: #16191d;
+  --panel: #1f2328;
+  --raised: #272c33;
+  --ink: #eef0f2;
+  --ink-2: rgba(238, 240, 242, 0.74);
+  --rule: rgba(238, 240, 242, 0.22);
+  --rule-strong: #eef0f2;
+  --accent: #e8590c;
+  --accent-text: #ff7a33;
+  --on-accent: #16191d;
+  --balloon: #62a3ea;
+  --serial: #f5c12e;
+  --ok: #4fe06a;
+  --partial: #f5c12e;
+  --failed: #ff5a4a;
+  --off: #4a5059;
   color-scheme: dark;
-  color: rgba(255, 255, 255, 0.88);
-  background-color: #141414;
-
-  --bg-layout: #141414;
-  --bg-container: #1f1f1f;
-  --border-color: #303030;
-  --card-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
-  --scrollbar-track: #2a2a2a;
-  --scrollbar-thumb: #4a4a4a;
-  --scrollbar-thumb-hover: #5a5a5a;
 }
 
 body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  background: var(--ground);
+  color: var(--ink);
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+input,
+textarea {
+  caret-color: var(--accent);
+}
+
+a {
+  text-underline-offset: 0.2em;
+}
+
+/* Tabular numerals wherever numbers line up. */
+.ant-table,
+.ant-statistic,
+.pm-num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Parts List vocabulary ---------- */
+
+.pm-label {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.pm-title {
+  font-family: var(--font);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: -0.02em;
+  line-height: 0.95;
+  margin: 0;
+  text-wrap: balance;
+}
+
+h1.pm-title,
+.ant-typography h4,
+h4.ant-typography {
+  font-size: clamp(34px, 4vw, 52px) !important;
+  line-height: 0.95 !important;
+  font-weight: 700 !important;
+  text-transform: uppercase;
+  letter-spacing: -0.02em;
+}
+
+/* A sheet: the outline of a real thing. */
+.pm-sheet {
+  background: var(--panel);
+  border: 3px solid var(--rule-strong);
+  min-width: 0;
+}
+
+.pm-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 18px;
+  border-bottom: 1.5px solid var(--rule);
+}
+
+.pm-sheet-head h2 {
+  font-size: 22px;
+}
+
+.pm-sheet-head a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.pm-sheet-head a:hover h2 {
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+}
+
+/* A part row: balloon, name, spec, lamp. */
+.pm-part {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto 12px;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 18px;
+}
+
+.pm-parts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pm-part-item {
+  border-bottom: 1px dotted var(--rule);
+}
+
+.pm-part-item:last-child {
+  border-bottom: 0;
+}
+
+/* The row opens in place to show where its rule comes from. */
+summary.pm-part {
+  list-style: none;
+  cursor: pointer;
+  transition: background-color 200ms var(--ease-flow);
+}
+
+summary.pm-part::-webkit-details-marker {
+  display: none;
+}
+
+summary.pm-part:hover,
+.pm-part-details[open] > summary.pm-part {
+  background: var(--raised);
+}
+
+summary.pm-part:focus-visible {
+  outline-offset: -2px;
+}
+
+.pm-part-more {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px 24px;
+  margin: 0;
+  padding: 4px 18px 16px 62px;
+  background: var(--raised);
+}
+
+.pm-part-more dt {
+  margin-bottom: 2px;
+}
+
+.pm-part-more dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.pm-part-more dd span {
+  display: block;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .pm-part-details[open] > .pm-part-more {
+    animation: pm-draw 450ms var(--ease-move) both;
+  }
+}
+
+/* Why the last build went wrong, under the sheet head. */
+.pm-problem {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0;
+  padding: 10px 18px;
+  border-bottom: 1.5px solid var(--rule);
+  font-size: 14px;
+  background: var(--raised);
+}
+
+.pm-problem .pm-lamp {
+  transform: translateY(1px);
+}
+
+.pm-part-name {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  font-size: 15px;
+  line-height: 1.25;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.pm-part-name small {
+  display: block;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.pm-spec {
+  text-align: right;
+}
+
+.pm-spec.is-custom,
+.pm-spec.is-sequential {
+  color: var(--accent-text);
+}
+
+.pm-balloon {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid var(--balloon);
+  display: grid;
+  place-items: center;
+  font: 500 12px var(--mono);
+  flex: none;
+}
+
+.pm-balloon.is-sequential {
+  border-color: var(--serial);
+}
+
+.pm-lamp {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--ok);
+  flex: none;
+}
+
+.pm-lamp.is-partial {
+  background: var(--partial);
+}
+
+.pm-lamp.is-failed {
+  background: var(--failed);
+}
+
+.pm-lamp.is-off,
+.pm-lamp.is-none {
+  background: var(--off);
+}
+
+.pm-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Run sheet: one strip of facts. */
+.pm-runsheet {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1.5px solid var(--rule);
+  background: var(--panel);
+}
+
+.pm-runsheet > div {
+  padding: 12px 16px;
+  border-right: 1px dotted var(--rule);
+  min-width: 0;
+}
+
+.pm-runsheet > div:last-child {
+  border-right: 0;
+}
+
+.pm-runsheet b {
+  display: block;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-top: 4px;
+}
+
+.pm-assemblies {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr));
+  gap: 28px;
+  align-items: start;
+}
+
+/* Panels wipe in with a clip on first paint. */
+@media (prefers-reduced-motion: no-preference) {
+  .pm-draw {
+    animation: pm-draw 900ms var(--ease-flow) both;
+  }
+  .pm-assemblies > .pm-draw:nth-child(2) {
+    animation-delay: 120ms;
+  }
+  .pm-assemblies > .pm-draw:nth-child(3) {
+    animation-delay: 240ms;
+  }
+  .pm-assemblies > .pm-draw:nth-child(n + 4) {
+    animation-delay: 360ms;
+  }
+}
+
+@keyframes pm-draw {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+/* ---------- Ant Design adjustments ---------- */
+
+.ant-btn {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 13px;
+}
+
+.ant-tag {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ant-card {
+  border: 3px solid var(--rule-strong) !important;
+}
+
+/* Tables are sheets too, unless they sit inside one. */
+.ant-table-wrapper .ant-table {
+  border: 3px solid var(--rule-strong);
+}
+
+.ant-card .ant-table-wrapper .ant-table {
+  border: 0;
+}
+
+.ant-table-thead > tr > th::before {
+  display: none;
+}
+
+.pm-name {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+a {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+}
+
+a:hover {
+  color: var(--accent-text);
+  text-decoration-thickness: 2px;
+}
+
+.ant-menu a,
+.ant-btn a,
+a.ant-btn,
+.pm-sheet-head a {
+  text-decoration: none;
+}
+
+.ant-card-head-title {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: -0.01em;
+}
+
+.ant-table-thead > tr > th {
+  font-family: var(--mono);
+  font-weight: 400 !important;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ant-table-tbody > tr > td {
+  border-bottom-style: dotted !important;
+}
+
+.ant-menu-item-selected {
+  box-shadow: inset 3px 0 var(--accent);
+}
+
+.ant-statistic-title {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 /* Responsive tweaks for mobile */
@@ -55,85 +464,84 @@ body {
     display: none;
   }
 
-  /* Reduce content padding on small screens */
   .ant-layout > .ant-layout {
     padding: 12px !important;
   }
 
-  /* Content area reduced padding */
   .ant-layout-content {
     padding: 12px !important;
   }
 
-  .ant-card {
-    border-radius: 6px;
-  }
-
-  /* Page titles */
-  .ant-typography h4 {
-    font-size: 18px !important;
-  }
-
-  /* Modal full width on mobile */
   .ant-modal {
     max-width: calc(100vw - 32px) !important;
     margin: 16px auto !important;
   }
 
-  .ant-modal-content {
-    border-radius: 12px;
-  }
-
-  /* Buttons in header areas - stack on mobile */
   .ant-space-wrap {
     justify-content: flex-start;
   }
 
-  /* Form items tighter spacing */
   .ant-form-item {
     margin-bottom: 16px;
   }
 
-  /* Pagination simplified */
-  .ant-pagination-total-text {
-    display: none;
-  }
-
+  .ant-pagination-total-text,
   .ant-pagination-options {
     display: none;
   }
+
+  .pm-runsheet {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pm-runsheet > div:nth-child(2) {
+    border-right: 0;
+  }
+
+  .pm-runsheet > div:nth-child(-n + 2) {
+    border-bottom: 1px dotted var(--rule);
+  }
+
+  .pm-part {
+    grid-template-columns: 28px minmax(0, 1fr) 12px;
+    gap: 12px;
+  }
+
+  .pm-part .pm-spec {
+    grid-column: 2;
+    grid-row: 2;
+    text-align: left;
+  }
+
+  .pm-part .pm-lamp {
+    grid-column: 3;
+    grid-row: 1;
+  }
 }
 
-/* Extra small screens */
 @media (max-width: 480px) {
   .app-header {
     padding: 0 8px !important;
   }
 
-  .ant-layout > .ant-layout {
-    padding: 8px !important;
-  }
-
+  .ant-layout > .ant-layout,
   .ant-layout-content {
     padding: 8px !important;
   }
 
-  /* Table even more compact */
   .ant-table-thead > tr > th,
   .ant-table-tbody > tr > td {
     padding: 8px !important;
   }
 
-  /* Cards tighter padding */
   .ant-card-body {
     padding: 12px !important;
   }
 
-  /* Smaller tags */
-  .ant-tag {
-    font-size: 11px;
-    padding: 0 4px;
-    margin-inline-end: 4px;
+  .pm-sheet-head,
+  .pm-part {
+    padding-left: 12px;
+    padding-right: 12px;
   }
 }
 
@@ -148,13 +556,11 @@ body {
     font-size: 14px;
   }
 
-  /* Make table controls and cells more compact */
   .ant-table-thead > tr > th,
   .ant-table-tbody > tr > td {
     padding: 8px 12px;
   }
 
-  /* Category select narrower on mobile */
   .ant-select {
     min-width: unset !important;
   }
@@ -162,52 +568,133 @@ body {
 
 /* Touch-friendly improvements */
 @media (pointer: coarse) {
-  /* Larger touch targets for switches */
   .ant-switch {
     min-width: 44px;
     min-height: 24px;
   }
 
-  /* Larger touch targets for buttons */
   .ant-btn-sm {
     min-height: 32px;
     min-width: 32px;
   }
 
-  /* Better tap targets for list items */
   .ant-list-item {
     min-height: 48px;
   }
 
-  /* Improve dropdown trigger area */
   .ant-dropdown-trigger {
     padding: 8px;
   }
 }
 
-/* Let Ant Design components use their own focus styles */
-.ant-btn:focus-visible,
-.ant-input:focus-visible,
-.ant-select:focus-visible,
-.ant-switch:focus-visible {
-  outline: none;
+/* Scrollbars from the palette */
+* {
+  scrollbar-color: var(--rule) transparent;
 }
 
-/* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--scrollbar-track);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb);
-  border-radius: 4px;
+  background: var(--rule);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--scrollbar-thumb-hover);
+  background: var(--ink-2);
+}
+
+/* A parts list fills its card edge to edge. */
+.ant-card-body > .pm-parts-in-card {
+  margin: 0 -24px -24px;
+}
+
+@media (max-width: 480px) {
+  .ant-card-body > .pm-parts-in-card {
+    margin: 0 -12px -12px;
+  }
+}
+
+/* Order not used by the arrangement: the ring goes dashed, the number stays legible. */
+.pm-balloon.is-unordered {
+  border-style: dashed;
+}
+
+/* Lamp and the open affordance share the row's last column. */
+.pm-part {
+  grid-template-columns: 30px minmax(0, 1fr) auto auto;
+}
+
+.pm-part-end {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pm-part-chevron {
+  font-size: 11px;
+  color: var(--ink-2);
+  transition: transform 200ms var(--ease-flow);
+}
+
+.pm-part-details[open] .pm-part-chevron {
+  transform: rotate(90deg);
+}
+
+.podcast-name {
+  font-weight: 700 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.ant-card-head-title {
+  white-space: normal;
+  overflow: visible;
+}
+
+@media (max-width: 768px) {
+  .pm-part {
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+  }
+
+  .pm-part .pm-part-end {
+    grid-column: 3;
+    grid-row: 1;
+  }
+}
+
+/* Sign-in: one sheet on the ground. */
+.pm-login {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px 16px;
+  background: var(--ground);
+}
+
+.pm-login-sheet {
+  width: 100%;
+  max-width: 440px;
+}
+
+.pm-login-body {
+  display: grid;
+  gap: 20px;
+  padding: 28px 24px 24px;
+}
+
+.pm-login-body h1.pm-title {
+  font-size: clamp(36px, 9vw, 48px) !important;
+}
+
+.pm-login-lede {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 17px;
+  max-width: 34ch;
 }

@@ -43,7 +43,7 @@ function readStoredPreference(): string | null {
 
 function writeStoredPreference(preference: ThemePreference): void {
   try {
-    writeStoredPreference(preference);
+    localStorage.setItem(STORAGE_KEY, preference);
   } catch {
     // Not persisted; the choice still applies for this page load.
   }
