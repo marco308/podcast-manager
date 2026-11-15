@@ -26,8 +26,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.jobs import locks, scheduler
+from app.jobs import cleanup, locks, scheduler, sync_log
 from app.models.sync_log import SyncStatus
+from tests.job_patches import patch_job_sessions
 
 
 class _FakeResult:
@@ -153,8 +154,8 @@ class _NoopSpotify:
     def __init__(self, *_a: object, **_kw: object) -> None:
         self.api_calls_used = 0
 
-    def reset_api_counter(self) -> None:
-        self.api_calls_used = 0
+    def set_access_token(self, access_token: str) -> None:
+        pass
 
     async def __aenter__(self) -> _NoopSpotify:
         return self
@@ -204,9 +205,9 @@ async def test_playlist_update_finalises_log_when_user_read_fails():
     finalise = AsyncMock()
 
     with (
-        patch("app.jobs.scheduler.async_session_maker", _session_factory(fail_on="users")),
-        patch("app.jobs.scheduler.sync_all_libraries", AsyncMock()),
-        patch("app.jobs.scheduler._finalise_sync_log", finalise),
+        patch_job_sessions(_session_factory(fail_on="users")),
+        patch("app.jobs.playlist_update.sync_all_libraries", AsyncMock()),
+        patch("app.jobs.sync_log.finalise_sync_log", finalise),
     ):
         await scheduler.update_all_playlists()
 
@@ -223,9 +224,9 @@ async def test_playlist_update_finalises_log_on_unexpected_error():
     locks.playlist_write_lock = _ExplodingLock()
 
     with (
-        patch("app.jobs.scheduler.async_session_maker", _session_factory(users=[(1,)])),
-        patch("app.jobs.scheduler.sync_all_libraries", AsyncMock()),
-        patch("app.jobs.scheduler._finalise_sync_log", finalise),
+        patch_job_sessions(_session_factory(users=[(1,)])),
+        patch("app.jobs.playlist_update.sync_all_libraries", AsyncMock()),
+        patch("app.jobs.sync_log.finalise_sync_log", finalise),
     ):
         await scheduler.update_all_playlists()
 
@@ -241,9 +242,9 @@ async def test_playlist_update_finalises_log_on_success():
     finalise = AsyncMock()
 
     with (
-        patch("app.jobs.scheduler.async_session_maker", _session_factory(users=[])),
-        patch("app.jobs.scheduler.sync_all_libraries", AsyncMock()),
-        patch("app.jobs.scheduler._finalise_sync_log", finalise),
+        patch_job_sessions(_session_factory(users=[])),
+        patch("app.jobs.playlist_update.sync_all_libraries", AsyncMock()),
+        patch("app.jobs.sync_log.finalise_sync_log", finalise),
     ):
         await scheduler.update_all_playlists()
 
@@ -256,8 +257,8 @@ async def test_playlist_update_finalises_log_on_success():
 async def test_finalise_helper_is_a_noop_without_a_log_row():
     """If the RUNNING row was never created there is nothing to finalise."""
     factory = _session_factory()
-    with patch("app.jobs.scheduler.async_session_maker", factory):
-        await scheduler._finalise_sync_log(
+    with patch_job_sessions(factory):
+        await sync_log.finalise_sync_log(
             None,
             status=SyncStatus.FAILED,
             details="ignored",
@@ -292,12 +293,11 @@ async def test_cleanup_finalises_log_when_get_token_raises_non_runtime_error():
             raise _TokenDecryptionError("stored token is unreadable")
 
     with (
-        patch(
-            "app.jobs.scheduler.async_session_maker",
+        patch_job_sessions(
             _session_factory(users=[_make_user()], playlists=[_make_playlist()]),
         ),
-        patch("app.jobs.scheduler.TokenManager", _Manager),
-        patch("app.jobs.scheduler._finalise_cleanup_log", finalise),
+        patch("app.jobs.cleanup.TokenManager", _Manager),
+        patch("app.jobs.sync_log.finalise_sync_log", finalise),
     ):
         await scheduler.remove_played_episodes_from_playlists()
 
@@ -320,12 +320,11 @@ async def test_cleanup_still_skips_a_missing_user_without_failing_the_run():
             raise RuntimeError(f"User {self._user_id} not found")
 
     with (
-        patch(
-            "app.jobs.scheduler.async_session_maker",
+        patch_job_sessions(
             _session_factory(users=[_make_user()], playlists=[_make_playlist()]),
         ),
-        patch("app.jobs.scheduler.TokenManager", _Manager),
-        patch("app.jobs.scheduler._finalise_cleanup_log", finalise),
+        patch("app.jobs.cleanup.TokenManager", _Manager),
+        patch("app.jobs.sync_log.finalise_sync_log", finalise),
     ):
         await scheduler.remove_played_episodes_from_playlists()
 
@@ -340,8 +339,8 @@ async def test_cleanup_finalises_log_when_db_read_fails():
     finalise = AsyncMock()
 
     with (
-        patch("app.jobs.scheduler.async_session_maker", _session_factory(fail_on="users")),
-        patch("app.jobs.scheduler._finalise_cleanup_log", finalise),
+        patch_job_sessions(_session_factory(fail_on="users")),
+        patch("app.jobs.sync_log.finalise_sync_log", finalise),
     ):
         await scheduler.remove_played_episodes_from_playlists()
 
@@ -358,11 +357,10 @@ async def test_cleanup_finalises_log_on_unexpected_error():
     locks.playlist_write_lock = _ExplodingLock()
 
     with (
-        patch(
-            "app.jobs.scheduler.async_session_maker",
+        patch_job_sessions(
             _session_factory(users=[_make_user()], playlists=[_make_playlist()]),
         ),
-        patch("app.jobs.scheduler._finalise_cleanup_log", finalise),
+        patch("app.jobs.sync_log.finalise_sync_log", finalise),
     ):
         await scheduler.remove_played_episodes_from_playlists()
 
@@ -393,9 +391,7 @@ async def test_cleanup_finalises_the_log_before_writing_the_rotation_cursor():
             return "token"
 
     with (
-        patch(
-            "app.jobs.scheduler.async_session_maker",
-            # A stored cursor of 1 plus a run that reaches every playlist
+        patch_job_sessions(  # A stored cursor of 1 plus a run that reaches every playlist
             # means the cursor resets to 0 — i.e. an actual write.
             _session_factory(
                 users=[_make_user()],
@@ -403,10 +399,10 @@ async def test_cleanup_finalises_the_log_before_writing_the_rotation_cursor():
                 rotation_offset="1",
             ),
         ),
-        patch("app.jobs.scheduler.TokenManager", _Manager),
-        patch("app.jobs.scheduler.SpotifyService", _NoopSpotify),
-        patch("app.jobs.scheduler._persist_cleanup_rotation_offset", persist),
-        patch("app.jobs.scheduler._finalise_cleanup_log", finalise),
+        patch("app.jobs.cleanup.TokenManager", _Manager),
+        patch("app.jobs.cleanup.SpotifyService", _NoopSpotify),
+        patch("app.jobs.cleanup._persist_cleanup_rotation_offset", persist),
+        patch("app.jobs.sync_log.finalise_sync_log", finalise),
         pytest.raises(RuntimeError, match="settings table is gone"),
     ):
         await scheduler.remove_played_episodes_from_playlists()
@@ -424,16 +420,16 @@ async def test_persist_rotation_offset_swallows_write_failures():
     def _exploding_factory():
         raise RuntimeError("no sessions today")
 
-    with patch("app.jobs.scheduler.async_session_maker", _exploding_factory):
-        await scheduler._persist_cleanup_rotation_offset(3)
+    with patch_job_sessions(_exploding_factory):
+        await cleanup._persist_cleanup_rotation_offset(3)
     # No exception escaped.
 
 
 @pytest.mark.asyncio
 async def test_finalise_cleanup_helper_is_a_noop_without_a_log_row():
     """Mirror of the playlist-update guard clause."""
-    with patch("app.jobs.scheduler.async_session_maker", _session_factory()):
-        await scheduler._finalise_cleanup_log(
+    with patch_job_sessions(_session_factory()):
+        await sync_log.finalise_sync_log(
             None,
             status=SyncStatus.FAILED,
             details="ignored",
@@ -460,8 +456,8 @@ async def test_finalise_cleanup_helper_writes_the_outcome():
         return _RowSession(users=[], playlists=[])
 
     before = datetime.now(UTC)
-    with patch("app.jobs.scheduler.async_session_maker", _factory):
-        await scheduler._finalise_cleanup_log(
+    with patch_job_sessions(_factory):
+        await sync_log.finalise_sync_log(
             42,
             status=SyncStatus.FAILED,
             details="something broke",

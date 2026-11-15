@@ -21,11 +21,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from app.routers import playlists as playlists_module
 from app.database import Base
 from app.jobs import locks
 from app.models import Playlist, PlaylistPodcast, Podcast, User
 from app.rate_limit import limiter
+from app.routers import playlists as playlists_module
 from app.routers.playlists import add_podcasts_to_playlist, run_all_playlist_updates
 from app.schemas.playlist import (
     PlaylistCreate,

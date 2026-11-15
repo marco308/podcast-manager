@@ -35,8 +35,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.jobs import locks, scheduler
+from app.jobs import cleanup, locks, scheduler
 from app.models.sync_log import SyncStatus
+from tests.job_patches import patch_job_sessions
 
 
 @pytest.fixture(autouse=True)
@@ -68,7 +69,7 @@ def _make_session_factory(*, recent_rebuild_at: datetime | None, users: list = N
     - swallows commit / add silently
     """
     users = users or []
-    cutoff = datetime.now(UTC) - scheduler.CLEANUP_RECENCY_WINDOW
+    cutoff = datetime.now(UTC) - cleanup.CLEANUP_RECENCY_WINDOW
     gate_row = recent_rebuild_at if (recent_rebuild_at is not None and recent_rebuild_at > cutoff) else None
 
     class _FakeResult:
@@ -149,7 +150,7 @@ async def test_cleanup_waits_for_rebuild_lock():
     # the lock.
     session_factory = _make_session_factory(recent_rebuild_at=None, users=[])
 
-    with patch("app.jobs.scheduler.async_session_maker", session_factory):
+    with patch_job_sessions(session_factory):
         rebuild_task = asyncio.create_task(fake_rebuild_holding_lock())
         # Yield so the rebuild task actually starts and takes the lock
         # before cleanup begins.
@@ -183,17 +184,13 @@ async def test_cleanup_skips_when_rebuild_recent():
         return MagicMock()
 
     with (
-        patch("app.jobs.scheduler.async_session_maker", session_factory),
-        patch("app.jobs.scheduler.SpotifyService", side_effect=_spotify_ctor),
+        patch_job_sessions(session_factory),
+        patch("app.jobs.cleanup.SpotifyService", side_effect=_spotify_ctor),
     ):
         await scheduler.remove_played_episodes_from_playlists()
 
-    assert spotify_instances == 0, (
-        "cleanup must short-circuit before instantiating SpotifyService"
-    )
-    assert not locks.playlist_write_lock.locked(), (
-        "cleanup must not have acquired the write lock"
-    )
+    assert spotify_instances == 0, "cleanup must short-circuit before instantiating SpotifyService"
+    assert not locks.playlist_write_lock.locked(), "cleanup must not have acquired the write lock"
 
 
 @pytest.mark.asyncio
@@ -209,7 +206,6 @@ async def test_cleanup_runs_when_rebuild_stale():
         spotify_instances += 1
         client = MagicMock()
         client.api_calls_used = 0
-        client.reset_api_counter = MagicMock()
         return client
 
     lock_acquired_during_run = False
@@ -222,15 +218,13 @@ async def test_cleanup_runs_when_rebuild_stale():
         return await original_acquire()
 
     with (
-        patch("app.jobs.scheduler.async_session_maker", session_factory),
-        patch("app.jobs.scheduler.SpotifyService", side_effect=_spotify_ctor),
+        patch_job_sessions(session_factory),
+        patch("app.jobs.cleanup.SpotifyService", side_effect=_spotify_ctor),
         patch.object(locks.playlist_write_lock, "acquire", _spy_acquire),
     ):
         await scheduler.remove_played_episodes_from_playlists()
 
-    assert lock_acquired_during_run, (
-        "cleanup should have taken the write lock past the stale gate"
-    )
+    assert lock_acquired_during_run, "cleanup should have taken the write lock past the stale gate"
     # No users / playlists in our fake DB → SpotifyService isn't built,
     # but we did get past the recency gate. The lock acquisition above
     # is the operative assertion.
@@ -250,7 +244,8 @@ async def test_manual_run_takes_same_lock():
 
     # The @limiter.limit decorator wraps the original handler; unwrap.
     handler = getattr(
-        playlists_router.run_all_playlist_updates, "__wrapped__",
+        playlists_router.run_all_playlist_updates,
+        "__wrapped__",
         playlists_router.run_all_playlist_updates,
     )
 
@@ -361,13 +356,13 @@ async def test_manual_run_returns_409_when_lock_is_held_too_long():
     with (
         patch("app.routers.playlists.PlaylistBuilder.update_all_playlists", _fake_update_all),
         patch("app.routers.playlists.WRITE_LOCK_WAIT_SECONDS", 0.05),
+        pytest.raises(HTTPException) as exc_info,
     ):
-        with pytest.raises(HTTPException) as exc_info:
-            await handler(
-                request=MagicMock(),
-                session=MagicMock(user_id=user.id),
-                db=fake_db,
-            )
+        await handler(
+            request=MagicMock(),
+            session=MagicMock(user_id=user.id),
+            db=fake_db,
+        )
 
     assert exc_info.value.status_code == 409
     assert not ran, "the update must not run when the lock could not be acquired"

@@ -23,7 +23,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from app.jobs import scheduler
+from app.jobs import scheduler, sync_log
 from app.services.playlist_builder import EpisodeFetchError, PlaylistBuilder
 from app.services.spotify import MAX_RETRY_AFTER_SECONDS, SpotifyService
 
@@ -159,7 +159,7 @@ def _http_error(status: int, method: str = "GET") -> httpx.HTTPStatusError:
 
 
 def _classify(errors: list[str], exceptions: list[BaseException], attempted: int = 2, failed: int = 1):
-    return scheduler._classify_failure(
+    return sync_log.classify_failure(
         playlists_attempted=attempted,
         playlists_failed=failed,
         error_messages=errors,
@@ -217,8 +217,8 @@ class TestDailyUpdateMisfireGrace:
 
         with (
             patch.object(scheduler, "fail_orphaned_sync_logs", AsyncMock(return_value=0)),
-            patch.object(scheduler, "_load_update_times", AsyncMock(return_value=[(3, 0), (15, 30)])),
-            patch.object(scheduler, "scheduler", fake_scheduler),
+            patch.object(scheduler, "load_update_times", AsyncMock(return_value=[(3, 0), (15, 30)])),
+            patch("app.jobs.schedule.scheduler", fake_scheduler),
         ):
             await scheduler.init_scheduler()
 

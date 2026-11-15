@@ -9,6 +9,7 @@ in both directions. Every sort now goes through ``Episode.release_date_key``.
 """
 
 from datetime import date
+
 from app.models.playlist import Arrangement, DateDirection, PickFrom
 from app.services.assignment_rules import ResolvedRule
 from app.services.playlist_builder import Episode, PlaylistBuilder, ShowContribution, parse_release_date

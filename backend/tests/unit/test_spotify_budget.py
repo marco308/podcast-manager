@@ -73,6 +73,7 @@ async def test_throttle_does_not_sleep_below_threshold():
 @pytest.mark.asyncio
 async def test_cleanup_mode_aborts_on_long_retry_after():
     """cleanup_mode=True must raise CleanupBudgetExceeded for Retry-After > 60s."""
+
     def _handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(429, headers={"Retry-After": "120"}, json={})
 
@@ -164,17 +165,3 @@ async def test_api_calls_used_increments_on_each_request():
 
         # 1 initial 429 + 1 retry = 2 requests.
         assert service.api_calls_used == 2
-
-
-@pytest.mark.asyncio
-async def test_reset_api_counter_zeroes_counter_but_keeps_window():
-    """reset_api_counter() must clear api_calls_used but leave the deque alone."""
-    service = SpotifyService(access_token="t")
-    service.api_calls_used = 42
-    service._request_timestamps.append(time.monotonic())
-
-    service.reset_api_counter()
-
-    assert service.api_calls_used == 0
-    # Window state should persist across runs — Spotify doesn't reset because we did.
-    assert len(service._request_timestamps) == 1

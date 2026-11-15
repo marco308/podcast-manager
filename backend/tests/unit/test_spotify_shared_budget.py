@@ -128,7 +128,9 @@ class TestRequestCap:
         manager.get_token = AsyncMock(return_value="token")
         user = MagicMock(id=1)
 
-        manual = PlaylistBuilder(AsyncMock(), user, token_manager=manager, max_retry_after=REQUEST_MAX_RETRY_AFTER_SECONDS)
+        manual = PlaylistBuilder(
+            AsyncMock(), user, token_manager=manager, max_retry_after=REQUEST_MAX_RETRY_AFTER_SECONDS
+        )
         scheduled = PlaylistBuilder(AsyncMock(), user, token_manager=manager)
 
         assert (await manual._get_spotify_client())._max_retry_after == REQUEST_MAX_RETRY_AFTER_SECONDS

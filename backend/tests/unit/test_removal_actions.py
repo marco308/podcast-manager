@@ -20,10 +20,10 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from app.routers import playlists as playlists_module
 from app.database import Base
 from app.jobs import locks
 from app.models import Playlist, PlaylistPodcast, Podcast, User
+from app.routers import playlists as playlists_module
 from app.routers.playlists import add_podcasts_to_playlist, delete_playlist, update_playlist
 from app.routers.podcasts import list_podcasts, update_podcast
 from app.schemas.playlist import PlaylistPodcastAdd, PlaylistUpdate
@@ -102,9 +102,7 @@ class TestArchivePodcast:
                 # Routes are keyed by the integer id (issue #248).
                 hide_id = (await db.execute(select(Podcast.id).where(Podcast.spotify_id == "hide"))).scalar_one()
 
-                response = await update_podcast(
-                    str(hide_id), PodcastUpdate(is_archived=True), session=SESSION, db=db
-                )
+                response = await update_podcast(str(hide_id), PodcastUpdate(is_archived=True), session=SESSION, db=db)
                 assert response.is_archived is True
                 assert response.playlist_ids == []
 

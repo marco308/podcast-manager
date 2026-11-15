@@ -35,7 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base
-from app.jobs import scheduler
+from app.jobs import locks, playlist_update, scheduler, sync_log
 from app.models import Podcast, User
 from app.models.session import Session
 from app.rate_limit import limiter
@@ -47,6 +47,7 @@ from app.services.encryption import TokenDecryptionError
 from app.services.session import hash_session_id
 from app.services.spotify import SpotifyService
 from app.services.token_manager import TokenManager
+from tests.job_patches import JOB_MODULES_WITH_SESSIONS
 
 # --- SpotifyService keeps the refreshed token --------------------------------
 
@@ -375,10 +376,11 @@ async def test_daily_library_sync_recovers_from_401(maker, monkeypatch):
         )
     )
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    monkeypatch.setattr(scheduler, "async_session_maker", maker)
-    monkeypatch.setattr(scheduler, "TokenManager", MagicMock(return_value=token_manager))
+    for module in JOB_MODULES_WITH_SESSIONS:
+        monkeypatch.setattr(f"{module}.async_session_maker", maker)
+    monkeypatch.setattr(playlist_update, "TokenManager", MagicMock(return_value=token_manager))
     monkeypatch.setattr(
-        scheduler,
+        playlist_update,
         "SpotifyService",
         lambda access_token, **kwargs: SpotifyService(access_token=access_token, client=client, **kwargs),
     )
@@ -469,7 +471,7 @@ async def test_unreadable_refresh_token_during_401_retry_signs_out(maker, monkey
     assert exc_info.value.status_code == 401
     assert await _sessions_left(maker) == []
     # The sync lock was released on the way out.
-    assert not scheduler.locks.library_sync_lock.locked()
+    assert not locks.library_sync_lock.locked()
 
 
 @pytest.mark.asyncio
@@ -500,7 +502,7 @@ async def test_manual_run_with_unreadable_credentials_signs_out(maker, monkeypat
     from app.services.playlist_builder import EpisodeFetchError, PlaylistUpdateResult
 
     await _seed(maker, *_two_sessions(), Playlist(user_id=1, name="P", spotify_playlist_id="sp1"))
-    monkeypatch.setattr(scheduler.locks, "playlist_write_lock", asyncio.Lock())
+    monkeypatch.setattr(locks, "playlist_write_lock", asyncio.Lock())
     try:
         raise EpisodeFetchError("Show: wrapped") from TokenDecryptionError("bad refresh token")
     except EpisodeFetchError as e:
@@ -530,16 +532,16 @@ def test_jobs_classify_unreadable_credentials_apart_from_spotify_errors():
         wrapped = e
 
     assert (
-        scheduler._classify_failure(
+        sync_log.classify_failure(
             playlists_attempted=2,
             playlists_failed=2,
             error_messages=["a", "b"],
             exceptions=[rate_limited, wrapped],
         )
-        == scheduler.CREDENTIALS_UNREADABLE_FAILURE_CODE
+        == sync_log.CREDENTIALS_UNREADABLE_FAILURE_CODE
     )
     assert (
-        scheduler._classify_failure(
+        sync_log.classify_failure(
             playlists_attempted=1, playlists_failed=1, error_messages=["a"], exceptions=[rate_limited]
         )
         == "rate_limit"
@@ -573,8 +575,8 @@ async def test_token_refresh_job_first_runs_at_startup():
 
     with (
         patch.object(scheduler, "fail_orphaned_sync_logs", AsyncMock(return_value=0)),
-        patch.object(scheduler, "_load_update_times", AsyncMock(return_value=[(3, 0)])),
-        patch.object(scheduler, "scheduler", fake_scheduler),
+        patch.object(scheduler, "load_update_times", AsyncMock(return_value=[(3, 0)])),
+        patch("app.jobs.schedule.scheduler", fake_scheduler),
     ):
         await scheduler.init_scheduler()
 

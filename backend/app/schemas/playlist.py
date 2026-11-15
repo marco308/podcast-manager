@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
 from app.models.playlist import ALL_EPISODES, Arrangement, DateDirection, PickFrom, PlaylistKind
 from app.services.assignment_rules import RuleSource
@@ -26,6 +26,21 @@ DbId = Annotated[int, Field(ge=1, le=DB_ID_MAX)]
 EPISODE_LIMIT_MAX = 500
 
 
+def _blank_id_is_none(value: object) -> object:
+    """A blank field means "no link", not an empty ID."""
+    if isinstance(value, str):
+        value = value.strip()
+        return value or None
+    return value
+
+
+# A Spotify playlist to link, or None for no link.
+SpotifyPlaylistLink = Annotated[
+    Annotated[str, Field(max_length=SPOTIFY_ID_MAX_LENGTH, pattern=SPOTIFY_ID_PATTERN)] | None,
+    BeforeValidator(_blank_id_is_none),
+]
+
+
 class PlaylistBase(BaseModel):
     """Base playlist schema."""
 
@@ -45,16 +60,7 @@ class PlaylistCreate(PlaylistBase):
     """Schema for creating a playlist."""
 
     name: str = Field(min_length=1, max_length=NAME_MAX_LENGTH)
-    spotify_playlist_id: str | None = Field(None, max_length=SPOTIFY_ID_MAX_LENGTH, pattern=SPOTIFY_ID_PATTERN)
-
-    @field_validator("spotify_playlist_id", mode="before")
-    @classmethod
-    def _blank_id_is_none(cls, value: object) -> object:
-        """A blank field means "no link", not an empty ID."""
-        if isinstance(value, str):
-            value = value.strip()
-            return value or None
-        return value
+    spotify_playlist_id: SpotifyPlaylistLink = None
 
 
 class PlaylistResponse(PlaylistBase):
@@ -76,16 +82,7 @@ class PlaylistUpdate(BaseModel):
     """Schema for updating playlist configuration."""
 
     name: str | None = Field(None, min_length=1, max_length=NAME_MAX_LENGTH)
-    spotify_playlist_id: str | None = Field(None, max_length=SPOTIFY_ID_MAX_LENGTH, pattern=SPOTIFY_ID_PATTERN)
-
-    @field_validator("spotify_playlist_id", mode="before")
-    @classmethod
-    def _blank_id_is_none(cls, value: object) -> object:
-        """A blank field means "no link", not an empty ID."""
-        if isinstance(value, str):
-            value = value.strip()
-            return value or None
-        return value
+    spotify_playlist_id: SpotifyPlaylistLink = None
 
     is_enabled: bool | None = None
     kind: PlaylistKind | None = None

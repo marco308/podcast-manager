@@ -133,15 +133,9 @@ class SpotifyService:
         """Return a context manager that yields the shared client or a new one."""
         return _ClientContextManager(self._client)
 
-    def reset_api_counter(self) -> None:
-        """Zero the per-run API-call counter.
-
-        Called by the cleanup scheduler at the start of each run so the
-        SyncLog reflects only that run's traffic. Does not clear the
-        sliding-window deque — the actual rate-limit budget should
-        carry across runs (Spotify doesn't reset because we did).
-        """
-        self.api_calls_used = 0
+    def set_access_token(self, access_token: str) -> None:
+        """Swap in a fresh bearer token for subsequent requests."""
+        self._access_token = access_token
 
     async def _throttle_if_needed(self) -> None:
         """Soft-throttle before issuing a request if the sliding window is hot.
@@ -720,60 +714,6 @@ class SpotifyService:
                 on_unauthorized=on_unauthorized,
             )
             return resp.json()
-
-    async def get_show_episodes_all(self, show_id: str, max_episodes: int = 200) -> list[dict[str, Any]]:
-        """Get all episodes for a show with pagination.
-
-        Args:
-            show_id: Spotify show ID.
-            max_episodes: Maximum number of episodes to fetch.
-
-        Returns:
-            List of episodes.
-        """
-        all_episodes = []
-        offset = 0
-
-        while len(all_episodes) < max_episodes:
-            batch_limit = min(50, max_episodes - len(all_episodes))
-            data = await self.get_show_episodes(show_id, limit=batch_limit, offset=offset)
-
-            episodes = data.get("items", [])
-            if not episodes:
-                break
-
-            all_episodes.extend(episodes)
-            offset += len(episodes)
-
-            if not data.get("next"):
-                break
-
-        return all_episodes
-
-    async def get_all_user_shows(self) -> list[dict[str, Any]]:
-        """Get all user's subscribed podcasts (handles pagination).
-
-        Returns:
-            Complete list of all saved shows.
-        """
-        all_shows = []
-        offset = 0
-        limit = 50
-
-        while True:
-            data = await self.get_user_shows(limit=limit, offset=offset)
-            items = data.get("items", [])
-
-            if not items:
-                break
-
-            all_shows.extend(items)
-            offset += len(items)
-
-            if not data.get("next"):
-                break
-
-        return all_shows
 
     async def unfollow_show(
         self,

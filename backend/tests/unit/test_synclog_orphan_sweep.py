@@ -20,12 +20,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
+from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.jobs import scheduler, sync_log
 from app.models import Base
-from app.jobs import scheduler
 from app.models.sync_log import SyncLog, SyncStatus
+from tests.job_patches import patch_job_sessions
 
 
 @pytest_asyncio.fixture
@@ -66,14 +68,14 @@ async def test_running_rows_are_marked_failed_and_interrupted(session_maker):
         _row("cleanup", SyncStatus.RUNNING, minutes_ago=5),
     )
 
-    with patch.object(scheduler, "async_session_maker", session_maker):
+    with patch_job_sessions(session_maker):
         swept = await scheduler.fail_orphaned_sync_logs()
 
     assert swept == 2
     rows = await _all_rows(session_maker)
     assert [r.status for r in rows] == [SyncStatus.FAILED, SyncStatus.FAILED]
     for row in rows:
-        assert row.failure_code == scheduler.INTERRUPTED_FAILURE_CODE
+        assert row.failure_code == sync_log.INTERRUPTED_FAILURE_CODE
         assert row.completed_at is not None
         assert row.completed_at >= row.started_at
         assert "interrupted" in row.details.lower()
@@ -89,7 +91,7 @@ async def test_finished_rows_are_left_alone(session_maker):
     )
     before = [(r.status, r.completed_at, r.details, r.failure_code) for r in await _all_rows(session_maker)]
 
-    with patch.object(scheduler, "async_session_maker", session_maker):
+    with patch_job_sessions(session_maker):
         swept = await scheduler.fail_orphaned_sync_logs()
 
     assert swept == 0
@@ -99,7 +101,7 @@ async def test_finished_rows_are_left_alone(session_maker):
 
 @pytest.mark.asyncio
 async def test_sweep_is_a_noop_on_an_empty_table(session_maker):
-    with patch.object(scheduler, "async_session_maker", session_maker):
+    with patch_job_sessions(session_maker):
         assert await scheduler.fail_orphaned_sync_logs() == 0
 
 
@@ -112,13 +114,13 @@ async def test_get_job_status_reports_the_swept_run_as_failed(session_maker):
     job.id = "daily_playlist_update"
     job.name = "Daily Playlist Update"
     job.next_run_time = None
-    job.trigger = scheduler.CronTrigger(hour=4, minute=0)
+    job.trigger = CronTrigger(hour=4, minute=0)
     fake_scheduler = MagicMock()
     fake_scheduler.get_jobs.return_value = [job]
 
     with (
-        patch.object(scheduler, "async_session_maker", session_maker),
-        patch.object(scheduler, "scheduler", fake_scheduler),
+        patch_job_sessions(session_maker),
+        patch("app.jobs.schedule.scheduler", fake_scheduler),
     ):
         before = await scheduler.get_job_status()
         await scheduler.fail_orphaned_sync_logs()
@@ -138,8 +140,8 @@ async def test_init_scheduler_runs_the_sweep_before_starting(session_maker):
     fake_scheduler.running = False
 
     with (
-        patch.object(scheduler, "async_session_maker", session_maker),
-        patch.object(scheduler, "scheduler", fake_scheduler),
+        patch_job_sessions(session_maker),
+        patch("app.jobs.schedule.scheduler", fake_scheduler),
     ):
         await scheduler.init_scheduler()
 
@@ -160,8 +162,8 @@ async def test_a_failing_sweep_does_not_block_startup():
 
     with (
         patch.object(scheduler, "fail_orphaned_sync_logs", boom),
-        patch.object(scheduler, "async_session_maker", broken_maker),
-        patch.object(scheduler, "scheduler", fake_scheduler),
+        patch_job_sessions(broken_maker),
+        patch("app.jobs.schedule.scheduler", fake_scheduler),
     ):
         await scheduler.init_scheduler()
 
