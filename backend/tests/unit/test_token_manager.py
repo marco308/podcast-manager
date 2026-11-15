@@ -14,7 +14,7 @@ Issue #89: covers the three invariants we care about.
 
 TODO(issue #89, PR1): these tests require ``pytest-asyncio`` and a way
 to monkey-patch ``async_session_maker``. Neither is in
-``requirements.txt`` today (this PR deliberately does not add new
+``pyproject.toml`` today (this PR deliberately does not add new
 top-level deps — that's scope creep). Install ``pytest-asyncio`` and
 ``respx`` locally to run.
 """

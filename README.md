@@ -171,7 +171,7 @@ METRICS_TOKEN=            # bearer token for GET /metrics (Prometheus); unset, /
 cd backend
 mkdir -p certs && (cd certs && mkcert -install && mkcert localhost 127.0.0.1 ::1)
 python3 -m venv venv && source venv/bin/activate
-pip install -r requirements-dev.txt
+pip install ".[dev]"
 alembic upgrade head     # Alembic owns the schema; the app never creates tables
 uvicorn app.main:app --reload \
   --ssl-keyfile=./certs/localhost+2-key.pem \

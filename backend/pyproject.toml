@@ -1,3 +1,72 @@
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "podcast-manager-backend"
+dynamic = ["version"]
+requires-python = ">=3.11"
+dependencies = [
+    # FastAPI and server
+    "fastapi>=0.162.4,<0.163.0",
+    "uvicorn[standard]>=0.54.0,<0.55.0",
+
+    # Database
+    "sqlalchemy>=2.1.8,<3.0.0",
+    "alembic>=1.20.1,<2.0.0",
+    "aiosqlite>=0.22.1,<1.0.0",
+    "greenlet>=3.5.6,<4.0.0",
+
+    # HTTP client for Spotify API
+    "httpx>=0.28.1,<1.0.0",
+    # CA bundle httpx trusts. 2026.10.19 drops emSign ECC Root CA - G3 after the
+    # eMudhra intermediate-key compromise (anyone could forge certs chaining to it).
+    # Transitive via httpx, pinned here so the floor can't silently regress.
+    "certifi>=2026.10.23",
+
+    # Background jobs
+    "apscheduler>=3.11.3,<4.0.0",
+    # IANA zone data for TIMEZONE: the slim image need not ship /usr/share/zoneinfo,
+    # and zoneinfo falls back to this package.
+    "tzdata>=2026.6",
+
+    # Security and encryption
+    "cryptography>=50.0.2",
+
+    # Rate limiting (per-session budgets on expensive endpoints)
+    "slowapi>=0.1.10,<1.0.0",
+
+    # Metrics (GET /metrics, Prometheus text format)
+    "prometheus-client>=0.26.0,<0.27.0",
+
+    # Configuration and validation
+    "pydantic>=2.14.3,<3.0.0",
+    "pydantic-settings>=2.16.2,<3.0.0",
+    "python-dotenv>=1.2.4,<2.0.0",
+
+    "python-multipart>=0.0.33,<1.0.0",
+]
+
+[project.optional-dependencies]
+# Development and test dependencies (not installed in the Docker image):
+# pip install ".[dev]"
+dev = [
+    # Lint / format (keep the minor pinned: the formatter's output must match CI)
+    "ruff>=0.17.4,<0.18",
+    # Tests
+    "pytest>=9.2.0,<10",
+    "pytest-asyncio>=1.4.1.post1,<2.0",
+    "pytest-cov>=7.1.0,<8",
+]
+
+[tool.setuptools]
+# The app runs from its source tree (/app in the image), not as an installed
+# package. Installing this project only installs its dependencies.
+packages = []
+
+[tool.setuptools.dynamic]
+version = { file = "VERSION" }
+
 [tool.ruff]
 target-version = "py311"
 line-length = 120
