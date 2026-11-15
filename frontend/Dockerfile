@@ -1,5 +1,7 @@
-# Build stage
-FROM node:26-alpine AS builder
+# Build stage. Both base images are pinned by digest as well as tag, so a
+# rebuild can't pick up a re-pushed tag unannounced; Dependabot's docker
+# ecosystem bumps tag and digest together.
+FROM node:26-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS builder
 
 WORKDIR /app
 
@@ -18,7 +20,7 @@ RUN npm run build
 # Production stage. A versioned tag (1.31 = current mainline, which is what
 # the bare `alpine` tag tracks) rather than `nginx:alpine`, so Dependabot can
 # see and propose the next version instead of it changing silently on rebuild.
-FROM nginx:1.31-alpine
+FROM nginx:1.31-alpine@sha256:fed7e14be83cbd2661a75cdc5b872d936cf155d46c327084d30b8df19ae88d72
 
 # Copy built assets from builder
 COPY --from=builder /app/dist /usr/share/nginx/html

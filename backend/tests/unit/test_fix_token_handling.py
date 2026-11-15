@@ -280,7 +280,7 @@ def _wire_spotify(monkeypatch, handler):
     monkeypatch.setattr(
         _deps,
         "SpotifyService",
-        lambda access_token: SpotifyService(access_token=access_token, client=client),
+        lambda access_token, **kwargs: SpotifyService(access_token=access_token, client=client, **kwargs),
     )
     return token_manager
 
@@ -379,7 +379,7 @@ async def test_daily_library_sync_recovers_from_401(maker, monkeypatch):
     monkeypatch.setattr(
         scheduler,
         "SpotifyService",
-        lambda access_token: SpotifyService(access_token=access_token, client=client),
+        lambda access_token, **kwargs: SpotifyService(access_token=access_token, client=client, **kwargs),
     )
 
     await scheduler.sync_all_libraries()

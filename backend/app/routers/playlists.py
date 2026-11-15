@@ -46,6 +46,7 @@ from app.schemas.playlist import (
 )
 from app.services.assignment_rules import resolve_rule
 from app.services.playlist_builder import PlaylistBuilder, spotify_playlist_description
+from app.services.spotify import REQUEST_MAX_RETRY_AFTER_SECONDS
 from app.services.token_manager import TokenManager
 
 logger = logging.getLogger(__name__)
@@ -797,7 +798,12 @@ async def run_playlist_update(
         if not playlist.is_enabled:
             raise HTTPException(status_code=409, detail=DISABLED_PLAYLIST_DETAIL)
 
-        builder = PlaylistBuilder(db, user, token_manager=TokenManager(user.id))
+        builder = PlaylistBuilder(
+            db,
+            user,
+            token_manager=TokenManager(user.id),
+            max_retry_after=REQUEST_MAX_RETRY_AFTER_SECONDS,
+        )
         result = await builder.update_playlist(playlist)
 
     # Persist the builder's flushed writes (last_updated_at) before the
@@ -851,7 +857,12 @@ async def run_all_playlist_updates(
     # Take the shared write lock so manual fan-out serialises against the
     # daily rebuild and the cleanup job (issue #89, PR3, AC #3).
     async with _playlist_write_lock():
-        builder = PlaylistBuilder(db, user, token_manager=TokenManager(user.id))
+        builder = PlaylistBuilder(
+            db,
+            user,
+            token_manager=TokenManager(user.id),
+            max_retry_after=REQUEST_MAX_RETRY_AFTER_SECONDS,
+        )
         results = await builder.update_all_playlists()
 
     # Persist the builder's flushed writes (last_updated_at) before the

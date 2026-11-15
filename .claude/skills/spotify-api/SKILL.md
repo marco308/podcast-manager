@@ -18,7 +18,7 @@ description: Spotify Web API constraints for podcast-manager: the Dev Mode batch
 - `GET /me/episodes` — user's saved episodes
 - All playlist and user-profile endpoints
 
-**Rate limiting:** Spotify 429s carry a `Retry-After`. `SpotifyService._request_with_retry()` issues up to 3 attempts total (1 + 2 retries); every request goes through it. A per-instance sliding-window soft throttle backs off before Spotify has to 429 us. A `Retry-After` above `MAX_RETRY_AFTER_SECONDS` (300s) is not slept through: the 429 is raised at once as an `httpx.HTTPStatusError` (a build holds `playlist_write_lock` while it waits, and sleeping the cap only earned another 429).
+**Rate limiting:** Spotify 429s carry a `Retry-After`. `SpotifyService._request_with_retry()` issues up to 3 attempts total (1 + 2 retries); every request goes through it. A sliding-window soft throttle backs off before Spotify has to 429 us; the window is one per process, shared by every `SpotifyService` (issue #314), so a manual sync and a scheduled job pace against each other. A `Retry-After` above the instance's cap is not slept through: the 429 is raised at once as an `httpx.HTTPStatusError` (a build holds `playlist_write_lock` while it waits, and sleeping the cap only earned another 429). The cap is `MAX_RETRY_AFTER_SECONDS` (300s) for jobs and `REQUEST_MAX_RETRY_AFTER_SECONDS` (10s) for anything serving an HTTP request: `routers/_deps.py::spotify_client` and the manual-run `PlaylistBuilder`s pass it as `max_retry_after`.
 
 **Playlist replace:** `replace_playlist_items` is a PUT of the first 100 URIs then POST appends; Spotify has no transactional replace. A failure after the PUT landed (the playlist is now truncated) retries the whole replace once; a failed PUT or a 429 is raised as is.
 

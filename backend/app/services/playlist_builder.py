@@ -25,7 +25,7 @@ from app.models.podcast import Podcast
 from app.models.sleep_episode import SleepEpisode
 from app.models.user import User
 from app.services.assignment_rules import ResolvedRule, resolve_rule
-from app.services.spotify import SpotifyService
+from app.services.spotify import MAX_RETRY_AFTER_SECONDS, SpotifyService
 from app.services.token_manager import TokenManager
 
 logger = logging.getLogger(__name__)
@@ -177,6 +177,8 @@ class PlaylistBuilder:
         db: AsyncSession,
         user: User,
         token_manager: TokenManager | None = None,
+        *,
+        max_retry_after: int = MAX_RETRY_AFTER_SECONDS,
     ) -> None:
         """Initialize playlist builder.
 
@@ -187,10 +189,14 @@ class PlaylistBuilder:
                 constructed for ``user.id`` — this preserves backward
                 compatibility with existing call sites while letting
                 schedulers/routers inject a shared instance (issue #89).
+            max_retry_after: Longest 429 ``Retry-After`` the build's Spotify
+                client sleeps through. Manual runs pass the shorter request
+                cap; the scheduled rebuild keeps the default.
         """
         self._db = db
         self._user = user
         self._token_manager = token_manager if token_manager is not None else TokenManager(user.id)
+        self._max_retry_after = max_retry_after
         self._spotify: SpotifyService | None = None
         # One httpx client per build (see ``_shared_http_client``), so the
         # dozens of page reads reuse a connection instead of each opening one.
@@ -227,7 +233,11 @@ class PlaylistBuilder:
         """
         access_token = await self._token_manager.get_token(min_remaining_seconds=300)
         if self._spotify is None:
-            self._spotify = SpotifyService(access_token=access_token, client=self._http_client)
+            self._spotify = SpotifyService(
+                access_token=access_token,
+                client=self._http_client,
+                max_retry_after=self._max_retry_after,
+            )
         else:
             # Refresh the cached client's token so any subsequent reads
             # (and future shared-client write paths) see the new value.
