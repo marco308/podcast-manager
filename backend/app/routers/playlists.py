@@ -400,31 +400,37 @@ async def update_playlist(
 
     # Present-and-null unlinks (the Spotify playlist is left in place and a
     # new one is created on the next run); an absent field is left alone.
+    newly_linked = False
     if "spotify_playlist_id" in update_data.model_fields_set:
         new_link = update_data.spotify_playlist_id
         if new_link != playlist.spotify_playlist_id:
             if new_link is not None:
                 await _check_spotify_playlist_link(db, session.user_id, new_link, playlist_id=playlist.id)
+                newly_linked = True
             playlist.spotify_playlist_id = new_link
-            if new_link is not None and update_data.name is not None and update_data.name != playlist.name:
-                # The rename below goes to the newly linked playlist. The
+            if newly_linked:
+                # The name is pushed to the newly linked playlist below. The
                 # check above is racy, so let the unique constraint refuse the
                 # link now, before a playlist this save may not get is renamed
                 # on Spotify. Only a flush: a failed rename still saves nothing.
                 await _flush_playlist_link(db)
-    if update_data.name is not None and update_data.name != playlist.name:
+    renamed = update_data.name is not None and update_data.name != playlist.name
+    if renamed or newly_linked:
         # The name is otherwise only used when the Spotify playlist is first
-        # created, so push a rename through (issue #247). Spotify first: if it
-        # fails nothing is saved and the user can retry, rather than the two
-        # names silently drifting apart. A 404 means the Spotify playlist is
-        # gone — there is nothing to rename, so the local rename goes ahead.
+        # created, so push it through on a rename (issue #247) and to a newly
+        # linked playlist, which would otherwise keep its old Spotify name
+        # (issue #313). Spotify first: if it fails nothing is saved and the
+        # user can retry, rather than the two names silently drifting apart.
+        # A 404 means the Spotify playlist is gone — there is nothing to
+        # rename, so the local change goes ahead.
+        name = update_data.name if renamed else playlist.name
         if playlist.spotify_playlist_id:
             spotify, token_manager = await spotify_client(db, session.user_id)
             try:
                 await spotify.update_playlist_details(
                     playlist.spotify_playlist_id,
-                    name=update_data.name,
-                    description=spotify_playlist_description(update_data.name),
+                    name=name,
+                    description=spotify_playlist_description(name),
                     on_unauthorized=token_manager.force_refresh,
                 )
             except Exception as e:
@@ -435,7 +441,7 @@ async def update_playlist(
                         detail="Could not rename the playlist on Spotify, so nothing was saved. Please try again.",
                     ) from None
                 logger.info(f"Spotify playlist {playlist.spotify_playlist_id} not found; renaming locally only")
-        playlist.name = update_data.name
+        playlist.name = name
     if update_data.is_enabled is not None:
         playlist.is_enabled = update_data.is_enabled
     if update_data.default_episode_limit is not None:
