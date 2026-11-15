@@ -18,6 +18,7 @@ from app.models.playlist import Playlist, PlaylistKind
 from app.models.settings import AppSetting
 from app.models.sync_log import SyncLog, SyncStatus
 from app.models.user import User
+from app.services.encryption import is_unreadable_credentials
 from app.services.library_sync import sync_library
 from app.services.playlist_builder import PlaylistBuilder
 from app.services.spotify import CleanupBudgetExceeded, SpotifyService
@@ -267,6 +268,7 @@ async def sync_all_libraries() -> None:
 
     summaries: list[str] = []
     errors: list[str] = []
+    credentials_unreadable = False
 
     # The lock covers each user's commit, not just its walk: releasing before
     # the commit would leave the pending insert invisible to a concurrent sync,
@@ -288,7 +290,11 @@ async def sync_all_libraries() -> None:
                     # A partial walk leaves uncommitted upserts and, by
                     # construction, no reconciliation — roll the lot back so
                     # the library is never half-updated from a half-read.
-                    logger.error(f"Library sync failed for user {user_id}: {e}")
+                    if is_unreadable_credentials(e):
+                        credentials_unreadable = True
+                        logger.error(f"Library sync skipped user {user_id}: stored credentials are unreadable")
+                    else:
+                        logger.error(f"Library sync failed for user {user_id}: {e}")
                     errors.append(f"User {user_id}: {e}")
                     await db.rollback()
 
@@ -300,7 +306,9 @@ async def sync_all_libraries() -> None:
         sync_log_id,
         status=SyncStatus.SUCCESS if not errors else SyncStatus.FAILED,
         details=details,
-        failure_code="unknown" if errors else None,
+        failure_code=(
+            None if not errors else CREDENTIALS_UNREADABLE_FAILURE_CODE if credentials_unreadable else "unknown"
+        ),
     )
 
     logger.info(f"Library sync job completed: {details}")
@@ -476,6 +484,11 @@ async def _finalise_sync_log(
                 await db.commit()
         except Exception as e:
             logger.error(f"Failed to update sync log: {e}")
+
+
+# failure_code for a run that hit stored Spotify tokens it could not decrypt
+# (issue #308). The user has to sign in again; Spotify itself refused nothing.
+CREDENTIALS_UNREADABLE_FAILURE_CODE = "credentials_unreadable"
 
 
 # failure_code written by the startup sweep below. Distinct from the codes
@@ -752,11 +765,18 @@ def _classify_failure(
     and a playlist called "Top 401" used to classify as ``token_expired``.
 
     Returns:
-        One of: rate_limit, token_expired, playlist_write_failed,
-        partial, unknown — or None if there were no failures.
+        One of: credentials_unreadable, rate_limit, token_expired,
+        playlist_write_failed, partial, unknown — or None if there were no
+        failures.
     """
     if not error_messages and not exceptions:
         return None
+
+    # Stored tokens that can't be decrypted are not a Spotify failure: no
+    # request was refused, and no retry helps until the user signs in again
+    # (issue #308). They outrank everything else for that reason.
+    if any(is_unreadable_credentials(exc) for exc in exceptions):
+        return CREDENTIALS_UNREADABLE_FAILURE_CODE
 
     statuses: list[int] = []
     methods: list[str] = []
@@ -1016,7 +1036,10 @@ async def remove_played_episodes_from_playlists() -> None:
                 except Exception as e:
                     # TokenDecryptionError / network failures must not escape
                     # past the SyncLog finalisation below (issue #174).
-                    logger.error(f"Failed to get token for user {user_id}: {e}")
+                    if is_unreadable_credentials(e):
+                        logger.error(f"Cleanup skipped user {user_id}: stored credentials are unreadable")
+                    else:
+                        logger.error(f"Failed to get token for user {user_id}: {e}")
                     errors.append(f"User {user_id}: {str(e)}")
                     error_objects.append(e)
                     continue

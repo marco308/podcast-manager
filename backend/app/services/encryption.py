@@ -18,6 +18,22 @@ class TokenDecryptionError(Exception):
     """
 
 
+def is_unreadable_credentials(exc: BaseException) -> bool:
+    """Whether ``exc`` is, or was caused by, a :class:`TokenDecryptionError`.
+
+    Walks the ``__cause__`` / ``__context__`` chain, because callers wrap the
+    error on the way out (``EpisodeFetchError`` raises ``from`` it).
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        if isinstance(current, TokenDecryptionError):
+            return True
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return False
+
+
 class EncryptionService:
     """Service for encrypting and decrypting sensitive data."""
 
