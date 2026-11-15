@@ -145,7 +145,7 @@ export function RunHistoryCard({ style }: { style?: React.CSSProperties }) {
       extra={
         <Select
           size="small"
-          style={{ width: 200 }}
+          style={{ width: 'min(200px, 44vw)' }}
           value={jobType ?? 'all'}
           onChange={(value) => setJobType(value === 'all' ? undefined : value)}
           options={[

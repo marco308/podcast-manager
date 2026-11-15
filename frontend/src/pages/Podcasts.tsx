@@ -74,7 +74,7 @@ export function Podcasts() {
             onClick={handleSync}
             loading={syncPending}
           >
-            Sync from Spotify
+            Sync library
           </Button>
         </Space>
       </div>
@@ -94,7 +94,7 @@ export function Podcasts() {
                 onClick={handleSync}
                 loading={syncPending}
               >
-                Sync Now
+                Sync library
               </Button>
             </Space>
           }

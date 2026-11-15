@@ -122,7 +122,7 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
             src={record.image_url}
             size={48}
             shape="square"
-            style={{ borderRadius: 8, flexShrink: 0 }}
+            style={{ borderRadius: 0, flexShrink: 0 }}
           >
             {record.name[0]}
           </Avatar>
@@ -131,11 +131,13 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
               className="podcast-name"
               strong
               style={{
-                display: 'block',
-                whiteSpace: 'nowrap',
+                display: '-webkit-box',
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: 'vertical',
                 overflow: 'hidden',
-                textOverflow: 'ellipsis',
+                overflowWrap: 'anywhere',
               }}
+              title={record.name}
             >
               {record.name}
             </Text>
@@ -213,9 +215,9 @@ export function PodcastTable({ podcasts }: PodcastTableProps) {
     {
       title: 'Last Synced',
       key: 'last_synced_at',
-      width: 120,
+      width: 130,
       render: (_, record) => (
-        <Text type="secondary" style={{ fontSize: 12 }}>
+        <Text type="secondary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
           {record.last_synced_at ? dayjs(record.last_synced_at).fromNow() : 'Never'}
         </Text>
       ),

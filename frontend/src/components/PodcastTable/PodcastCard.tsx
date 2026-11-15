@@ -33,6 +33,7 @@ export function PodcastCard({ podcast, getPlaylistName, onOpen }: PodcastCardPro
         </Avatar>
         <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
           <div
+            className="podcast-name"
             style={{
               fontWeight: 600,
               marginBottom: 2,
