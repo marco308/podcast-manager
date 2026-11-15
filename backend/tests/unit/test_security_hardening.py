@@ -63,6 +63,7 @@ async def _callback(db):
         oauth_state="the-state",
         oauth_verifier="verifier",
         mobile_redirect_scheme=None,
+        mobile_code_challenge=None,
         db=db,
         session_service=SessionService(),
     )

@@ -53,8 +53,11 @@ actor APIClient {
     /// URL — it returns an opaque `code` that we POST here. The backend
     /// responds with the real credentials in the JSON body, which never
     /// travel through any URL or device log.
-    func exchangeMobileAuthCode(_ code: String) async throws -> MobileExchangeResponse {
-        try await post("/api/auth/mobile-exchange", body: ["code": code])
+    ///
+    /// `codeVerifier` is the PKCE verifier whose challenge went to
+    /// `/api/auth/login`; the server refuses the code without it (issue #307).
+    func exchangeMobileAuthCode(_ code: String, codeVerifier: String) async throws -> MobileExchangeResponse {
+        try await post("/api/auth/mobile-exchange", body: ["code": code, "code_verifier": codeVerifier])
     }
 
     /// Invalidate the session server-side.

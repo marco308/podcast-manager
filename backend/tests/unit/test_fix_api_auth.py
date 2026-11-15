@@ -65,6 +65,7 @@ class TestOAuthStateCompareDigest:
                 oauth_state="ascii-state",
                 oauth_verifier="verifier",
                 mobile_redirect_scheme=None,
+                mobile_code_challenge=None,
                 db=MagicMock(),
                 session_service=MagicMock(),
             )
@@ -87,7 +88,7 @@ def _patch_spotify(monkeypatch):
     monkeypatch.setattr(auth_module, "SpotifyService", MagicMock(return_value=instance))
 
 
-async def _run_callback(monkeypatch, mobile_redirect_scheme):
+async def _run_callback(monkeypatch, mobile_redirect_scheme, mobile_code_challenge=None):
     """Drive the callback against an in-memory DB with Spotify stubbed out."""
     _patch_spotify(monkeypatch)
     monkeypatch.setattr(auth_module, "issue_exchange_code", AsyncMock(return_value="exchange-code-123"))
@@ -105,6 +106,7 @@ async def _run_callback(monkeypatch, mobile_redirect_scheme):
                 oauth_state="the-state",
                 oauth_verifier="verifier",
                 mobile_redirect_scheme=mobile_redirect_scheme,
+                mobile_code_challenge=mobile_code_challenge,
                 db=db,
                 session_service=SessionService(),
             )
@@ -151,6 +153,7 @@ class TestCallbackErrorLogInjection:
                 oauth_state=None,
                 oauth_verifier=None,
                 mobile_redirect_scheme=None,
+                mobile_code_challenge=None,
                 db=MagicMock(),
                 session_service=MagicMock(),
             )

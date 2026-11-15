@@ -23,7 +23,7 @@ from app.rate_limit import limiter
 from app.schemas.user import UserResponse
 from app.services.account import AccountDeletionResult, delete_account
 from app.services.encryption import get_encryption_service
-from app.services.mobile_auth import issue_exchange_code, redeem_exchange_code
+from app.services.mobile_auth import is_valid_code_challenge, issue_exchange_code, redeem_exchange_code
 from app.services.session import SessionService, get_session_service
 from app.services.spotify import SpotifyService
 
@@ -154,6 +154,9 @@ def validate_csrf_token(
 
 
 MOBILE_REDIRECT_COOKIE = "mobile_redirect_scheme"
+# The app's PKCE challenge for the exchange code (issue #307). Unrelated to
+# OAUTH_VERIFIER_COOKIE_NAME, which is the backend's own PKCE with Spotify.
+MOBILE_CHALLENGE_COOKIE = "mobile_code_challenge"
 
 # Allowed custom URL schemes for mobile OAuth redirects.
 # Only schemes listed here can be used as redirect targets after OAuth callback.
@@ -161,7 +164,10 @@ ALLOWED_REDIRECT_SCHEMES: set[str] = {"podcastmanager"}
 
 
 @router.get("/login")
-async def login(redirect_scheme: str | None = Query(None)) -> RedirectResponse:
+async def login(
+    redirect_scheme: str | None = Query(None),
+    code_challenge: str | None = Query(None),
+) -> RedirectResponse:
     """Redirect to Spotify authorization page with CSRF state parameter.
 
     Args:
@@ -170,6 +176,10 @@ async def login(redirect_scheme: str | None = Query(None)) -> RedirectResponse:
             ``{redirect_scheme}://auth/callback?session_id=...&csrf_token=...``
             instead of the frontend URL.
             Must be one of the allowed schemes.
+        code_challenge: Optional ``BASE64URL(SHA256(code_verifier))`` from the
+            mobile app. When provided, the exchange code issued at the callback
+            is only redeemable with the matching ``code_verifier`` (issue #307).
+            Only meaningful together with ``redirect_scheme``.
     """
     # Validate redirect_scheme against allowlist to prevent credential leakage
     if redirect_scheme is not None and redirect_scheme not in ALLOWED_REDIRECT_SCHEMES:
@@ -178,9 +188,15 @@ async def login(redirect_scheme: str | None = Query(None)) -> RedirectResponse:
             detail=f"Invalid redirect_scheme. Allowed schemes: {', '.join(sorted(ALLOWED_REDIRECT_SCHEMES))}",
         )
 
+    if code_challenge is not None and (redirect_scheme is None or not is_valid_code_challenge(code_challenge)):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid code_challenge. Send BASE64URL(SHA256(code_verifier)) together with redirect_scheme.",
+        )
+
     state = secrets.token_urlsafe(32)
-    code_verifier, code_challenge = _pkce_pair()
-    auth_url = settings.spotify_auth_url(state, code_challenge)
+    code_verifier, spotify_code_challenge = _pkce_pair()
+    auth_url = settings.spotify_auth_url(state, spotify_code_challenge)
     logger.info("Redirecting to Spotify auth URL with state + PKCE challenge")
     response = RedirectResponse(url=auth_url)
     # Store state + verifier in httpOnly cookies for validation in the callback
@@ -199,6 +215,8 @@ async def login(redirect_scheme: str | None = Query(None)) -> RedirectResponse:
     # Store mobile redirect scheme if provided (for iOS/Android OAuth flow)
     if redirect_scheme:
         response.set_cookie(key=MOBILE_REDIRECT_COOKIE, value=redirect_scheme, **state_cookie_settings)
+        if code_challenge:
+            response.set_cookie(key=MOBILE_CHALLENGE_COOKIE, value=code_challenge, **state_cookie_settings)
 
     return response
 
@@ -262,6 +280,7 @@ async def callback(
     oauth_state: str | None = Cookie(None, alias=OAUTH_STATE_COOKIE_NAME),
     oauth_verifier: str | None = Cookie(None, alias=OAUTH_VERIFIER_COOKIE_NAME),
     mobile_redirect_scheme: str | None = Cookie(None, alias=MOBILE_REDIRECT_COOKIE),
+    mobile_code_challenge: str | None = Cookie(None, alias=MOBILE_CHALLENGE_COOKIE),
     db: AsyncSession = Depends(get_db),
     session_service: SessionService = Depends(get_session_service),
 ) -> RedirectResponse:
@@ -311,6 +330,12 @@ async def callback(
         logger.warning(f"Ignoring disallowed mobile redirect scheme cookie: {mobile_redirect_scheme!r}")
         mobile_redirect_scheme = None
 
+    # Same for the challenge cookie: a malformed one fails the login rather
+    # than quietly downgrading it to an unbound exchange code (issue #307).
+    if mobile_code_challenge is not None and not is_valid_code_challenge(mobile_code_challenge):
+        logger.error("Malformed mobile code challenge cookie on callback")
+        raise HTTPException(status_code=400, detail="Invalid code challenge")
+
     encryption = get_encryption_service()
 
     try:
@@ -359,17 +384,21 @@ async def callback(
         # Mobile flow: never ship the session_id/csrf_token through the URL.
         # Instead mint a single-use 2-minute exchange code; the app redeems it
         # at POST /api/auth/mobile-exchange to get the real credentials in a
-        # JSON response body. Mitigates URL-scheme hijacking and log exposure.
+        # JSON response body, which keeps them out of URLs and logs. When the
+        # app sent a PKCE challenge to /login the code is bound to it, so a
+        # hijacked callback URL is useless without the app's verifier (#307).
         if mobile_redirect_scheme:
             exchange_code = await issue_exchange_code(
                 session_id=session_id,
                 csrf_token=session.csrf_token,
+                code_challenge=mobile_code_challenge,
             )
             redirect_url = f"{mobile_redirect_scheme}://auth/callback?code={exchange_code}"
             response = RedirectResponse(url=redirect_url, status_code=302)
             response.delete_cookie(key=OAUTH_STATE_COOKIE_NAME, **delete_kwargs)
             response.delete_cookie(key=OAUTH_VERIFIER_COOKIE_NAME, **delete_kwargs)
             response.delete_cookie(key=MOBILE_REDIRECT_COOKIE, **delete_kwargs)
+            response.delete_cookie(key=MOBILE_CHALLENGE_COOKIE, **delete_kwargs)
             logger.info("Redirecting to mobile app with exchange code")
             return response
 
@@ -381,6 +410,7 @@ async def callback(
         response.delete_cookie(key=OAUTH_VERIFIER_COOKIE_NAME, **delete_kwargs)
         # Also clears any disallowed scheme cookie ignored above (issue #172).
         response.delete_cookie(key=MOBILE_REDIRECT_COOKIE, **delete_kwargs)
+        response.delete_cookie(key=MOBILE_CHALLENGE_COOKIE, **delete_kwargs)
 
         logger.info("Redirecting to frontend with session cookie")
         return response
@@ -397,6 +427,9 @@ async def callback(
 
 class MobileExchangeRequest(BaseModel):
     code: str = Field(min_length=16, max_length=128)
+    # Required when the login sent a code_challenge; builds that predate
+    # issue #307 send neither.
+    code_verifier: str | None = Field(default=None, min_length=43, max_length=128)
 
 
 class MobileExchangeResponse(BaseModel):
@@ -421,11 +454,15 @@ async def mobile_exchange(
     map and return the real `session_id` and `csrf_token` in the JSON
     response body. Credentials never appear in any URL.
 
+    If the login carried a PKCE ``code_challenge``, ``code_verifier`` must
+    hash to it; a missing or wrong verifier is the same 401 as a bad code,
+    and the code is spent either way.
+
     Rate-limited because the code is 32 bytes of entropy — brute force is
     effectively impossible — but 10/min keeps a leaked-log scenario from
     being weaponised.
     """
-    pending = await redeem_exchange_code(body.code)
+    pending = await redeem_exchange_code(body.code, body.code_verifier)
     if pending is None:
         logger.warning("Mobile exchange attempted with invalid or expired code")
         raise HTTPException(status_code=401, detail="Invalid or expired exchange code")
