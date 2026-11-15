@@ -103,6 +103,17 @@ struct SettingsScreen: View {
                                     }
                                 }
 
+                                if job.type == "cron", let times = job.runTimesLabel {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "calendar")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                        Text(job.scheduleTimezone.map { "Daily at \(times) (\($0))" } ?? "Daily at \(times)")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+
                                 if job.type == "interval", let interval = job.intervalMinutes {
                                     HStack(spacing: 4) {
                                         Image(systemName: "repeat")
@@ -116,6 +127,10 @@ struct SettingsScreen: View {
 
                                 if job.isConfigurable {
                                     Divider()
+                                    Text(job.scheduleTimezone.map { "Times are the server's, in \($0)." }
+                                         ?? "Times are the server's, in its time zone.")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
                                     ForEach(scheduleDates.indices, id: \.self) { index in
                                         HStack {
                                             DatePicker(
