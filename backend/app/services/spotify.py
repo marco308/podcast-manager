@@ -12,6 +12,7 @@ from typing import Any
 
 import httpx
 
+from app import metrics
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -190,7 +191,13 @@ class SpotifyService:
         await self._throttle_if_needed()
         self._request_timestamps.append(time.monotonic())
         self.api_calls_used += 1
-        return await client.request(method, url, **kwargs)
+        try:
+            response = await client.request(method, url, **kwargs)
+        except Exception:
+            metrics.SPOTIFY_API_CALLS.labels(status="error").inc()
+            raise
+        metrics.SPOTIFY_API_CALLS.labels(status=str(response.status_code)).inc()
+        return response
 
     async def _request_with_retry(
         self,
