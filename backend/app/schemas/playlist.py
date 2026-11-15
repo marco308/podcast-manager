@@ -5,7 +5,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
-from app.models.playlist import ALL_EPISODES, Arrangement, DateDirection, PickFrom, PlaylistKind
+from app.models.playlist import ALL_EPISODES, Arrangement, DateDirection, LastRunStatus, PickFrom, PlaylistKind
 from app.services.assignment_rules import RuleSource
 
 # Spotify playlist IDs are 22 chars of base62 — 64 leaves slack without
@@ -73,6 +73,13 @@ class PlaylistResponse(PlaylistBase):
     last_updated_at: datetime | None
     created_at: datetime
     podcast_count: int = 0
+    # Outcome of the last build, written or not (issue #246): "success",
+    # "partial" (written from incomplete data) or "failed" (left
+    # unchanged), with a client-safe reason. All None until the playlist's
+    # first build after migration 022.
+    last_run_status: LastRunStatus | None = None
+    last_run_error: str | None = None
+    last_run_at: datetime | None = None
     # Always False: the setting was removed (issue #238), but installed iOS
     # builds decode it as a required field. Drop once they are gone.
     is_weekend_only: bool = False
@@ -149,6 +156,20 @@ class RunAllPlaylistsResponse(BaseModel):
 
     message: str
     results: list[RunAllPlaylistResult]
+
+
+class RunAcceptedResponse(BaseModel):
+    """``202`` from ``POST /playlists/{id}/run`` or ``/run-all`` with
+    ``Prefer: respond-async`` (issue #242).
+
+    The run has the write lock and is going; poll ``GET /api/jobs/runs/{run_id}``
+    (also sent as the ``Location`` header) until ``status`` is no longer
+    ``running``.
+    """
+
+    run_id: int
+    status: str
+    message: str
 
 
 class AddPodcastsResponse(BaseModel):

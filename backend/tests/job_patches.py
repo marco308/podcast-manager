@@ -8,6 +8,7 @@ from unittest.mock import patch
 # work by the job's own module), so tests swap the session maker in all.
 JOB_MODULES_WITH_SESSIONS = (
     "app.jobs.cleanup",
+    "app.jobs.manual_run",
     "app.jobs.playlist_update",
     "app.jobs.schedule",
     "app.jobs.scheduler",

@@ -2,18 +2,20 @@
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-from typing import Annotated
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import AsyncExitStack, asynccontextmanager
+from typing import Annotated, Any
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.jobs import locks
+from app.jobs import locks, manual_run
+from app.jobs.sync_log import SyncLogRun, sync_log_run
 from app.models.playlist import (
     SLEEP_DEFAULT_EPISODE_LIMIT,
     Arrangement,
@@ -24,6 +26,7 @@ from app.models.playlist import (
 from app.models.playlist_podcast import PlaylistPodcast
 from app.models.podcast import Podcast
 from app.models.session import Session
+from app.models.sync_log import SyncStatus
 from app.models.user import User
 from app.rate_limit import limiter
 from app.routers._deps import ReauthRequired, sign_out_for_reauth, spotify_client
@@ -43,13 +46,13 @@ from app.schemas.playlist import (
     PlaylistPodcastResponse,
     PlaylistResponse,
     PlaylistUpdate,
+    RunAcceptedResponse,
     RunAllPlaylistsResponse,
     RunPlaylistResponse,
     SpotifyPlaylistOption,
     SpotifyPlaylistOptionListResponse,
 )
 from app.services.assignment_rules import resolve_rule
-from app.services.encryption import is_unreadable_credentials
 from app.services.playlist_builder import PlaylistBuilder, spotify_playlist_description
 from app.services.spotify import REQUEST_MAX_RETRY_AFTER_SECONDS
 from app.services.token_manager import TokenManager
@@ -128,6 +131,9 @@ def _build_playlist_response(playlist: Playlist, podcast_count: int) -> Playlist
         date_direction=playlist.date_direction,
         spotify_playlist_id=playlist.spotify_playlist_id,
         last_updated_at=playlist.last_updated_at,
+        last_run_status=playlist.last_run_status,
+        last_run_error=playlist.last_run_error,
+        last_run_at=playlist.last_run_at,
         created_at=playlist.created_at,
         podcast_count=podcast_count,
     )
@@ -771,12 +777,64 @@ async def reorder_playlist_podcasts(
 
 # --- Playlist run endpoints ---
 
+# The opt-in for an async run (issue #242): RFC 7240's ``Prefer:
+# respond-async``. Without it a run is served synchronously, exactly as
+# before, because installed iOS builds send no such header and decode the
+# synchronous response.
+RESPOND_ASYNC = "respond-async"
+
+RUN_ACCEPTED_RESPONSES: dict[int | str, dict] = {
+    202: {
+        "model": RunAcceptedResponse,
+        "description": "With `Prefer: respond-async`: the run has started; poll `Location`.",
+    }
+}
+
+
+def _wants_async(request: Request) -> bool:
+    """Whether the client asked for an async run with ``Prefer: respond-async``."""
+    prefer = request.headers.get("prefer")
+    # isinstance: tests call the handlers with a MagicMock request.
+    return isinstance(prefer, str) and RESPOND_ASYNC in (p.strip().lower() for p in prefer.split(","))
+
+
+async def _accept_async_run(
+    stack: AsyncExitStack,
+    work: Callable[[SyncLogRun], Awaitable[None]],
+    message: str,
+) -> JSONResponse:
+    """Record the run and hand it, with the lock ``stack`` holds, to a background task.
+
+    ``stack`` already holds ``playlist_write_lock``; the run's SyncLog row is
+    added to it here and the background task closes it, so the lock is never
+    free between the 202 and the work. If anything fails before the task owns
+    the stack, the stack is closed here and the lock released.
+    """
+    try:
+        run = await stack.enter_async_context(sync_log_run(manual_run.MANUAL_PLAYLIST_UPDATE_JOB_TYPE))
+        if run.id is None:
+            # Without a row there is nothing to poll, so don't start a run
+            # the client could never see the end of.
+            run.fail("Could not record the run; it was not started.")
+            raise HTTPException(status_code=503, detail="Could not start the run. Please try again.")
+        manual_run.start_in_background(stack, run, work)
+    except BaseException:
+        await stack.aclose()
+        raise
+
+    return JSONResponse(
+        status_code=202,
+        content=RunAcceptedResponse(run_id=run.id, status=SyncStatus.RUNNING.value, message=message).model_dump(),
+        headers={"Location": f"/api/jobs/runs/{run.id}", "Preference-Applied": RESPOND_ASYNC},
+    )
+
 
 @router.post(
     "/{playlist_id}/run",
     response_model=RunPlaylistResponse,
     # skipped and partial are only sent when set, as before the model existed.
     response_model_exclude_unset=True,
+    responses=RUN_ACCEPTED_RESPONSES,
 )
 @limiter.limit("3/10minutes")
 async def run_playlist_update(
@@ -784,8 +842,14 @@ async def run_playlist_update(
     playlist_id: PlaylistId,
     session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
-) -> dict:
+) -> Any:
     """Manually trigger a playlist update.
+
+    Synchronous unless the request sends ``Prefer: respond-async``, which
+    gets a ``202`` with a run id to poll at ``GET /api/jobs/runs/{id}``
+    (issue #242). Either way the run takes the write lock before anything
+    else (409 if it stays busy) and is recorded in SyncLog as
+    ``manual_playlist_update``.
 
     Disabled playlists are refused with a 409 — see the ``is_enabled`` gates
     below (issue #239): once up front, and again under the write lock.
@@ -804,6 +868,25 @@ async def run_playlist_update(
 
     user = await _get_user(db, session.user_id)
 
+    if _wants_async(request):
+        stack = AsyncExitStack()
+        # Taken here, in the request, so the 409 still reaches the client.
+        await stack.enter_async_context(_playlist_write_lock())
+        try:
+            # The same re-check as the synchronous path below, under the lock.
+            await db.refresh(playlist)
+            if not playlist.is_enabled:
+                raise HTTPException(status_code=409, detail=DISABLED_PLAYLIST_DETAIL)
+        except BaseException:
+            await stack.aclose()
+            raise
+        user_id = user.id
+
+        async def work(run: SyncLogRun) -> None:
+            await manual_run.run_one_playlist(run, user_id, playlist_id)
+
+        return await _accept_async_run(stack, work, f"Updating playlist '{playlist.name}'")
+
     # Build and update the playlist — use the same TokenManager-based
     # plumbing as the scheduled job so manual runs also get just-in-time
     # token refresh at the write boundary (issue #89, AC #5).
@@ -818,68 +901,73 @@ async def run_playlist_update(
         if not playlist.is_enabled:
             raise HTTPException(status_code=409, detail=DISABLED_PLAYLIST_DETAIL)
 
-        builder = PlaylistBuilder(
-            db,
-            user,
-            token_manager=TokenManager(user.id),
-            max_retry_after=REQUEST_MAX_RETRY_AFTER_SECONDS,
-        )
-        result = await builder.update_playlist(playlist)
+        async with sync_log_run(manual_run.MANUAL_PLAYLIST_UPDATE_JOB_TYPE) as run:
+            builder = PlaylistBuilder(
+                db,
+                user,
+                token_manager=TokenManager(user.id),
+                max_retry_after=REQUEST_MAX_RETRY_AFTER_SECONDS,
+            )
+            result = await builder.update_playlist(playlist)
+            manual_run.record_outcome(run, [result], message=manual_run.single_run_message(result))
 
     # Persist the builder's flushed writes (last_updated_at) before the
     # response is sent (see get_db). No-op on the failure path.
     await db.commit()
 
-    if result.exception is not None and is_unreadable_credentials(result.exception):
+    if manual_run.credentials_unreadable([result]):
         raise await sign_out_for_reauth(db, session.user_id)
 
     if not result.success and not result.partial:
         # Log the detail; don't hand raw exception text to the client (issue #161).
         logger.error(f"Manual run failed for playlist '{playlist.name}': {result.error}")
-        raise HTTPException(status_code=500, detail="Failed to update playlist. Check the server logs for details.")
+        raise HTTPException(status_code=500, detail=manual_run.GENERIC_FAILURE)
 
-    if result.skipped:
-        # Disabled after the re-check above — update_playlist left it
-        # untouched, so say so rather than claiming an update (issue #239).
-        return {
-            "message": f"Playlist '{playlist.name}' is disabled and was left unchanged",
-            "playlist_id": playlist_id,
-            "episode_count": 0,
-            "skipped": True,
-        }
-
-    if result.partial:
-        # The playlist was written, just from incomplete data — the message
-        # names the podcasts we couldn't reach, which is ours, not an
-        # arbitrary exception string.
-        return {
-            "message": f"Playlist '{playlist.name}' updated with warnings: {result.error}",
-            "playlist_id": playlist_id,
-            "episode_count": result.episode_count,
-            "partial": True,
-        }
-
-    return {
-        "message": f"Playlist '{playlist.name}' updated successfully",
+    response: dict = {
+        "message": manual_run.single_run_message(result),
         "playlist_id": playlist_id,
         "episode_count": result.episode_count,
     }
+    if result.skipped:
+        # Disabled after the re-check above — update_playlist left it
+        # untouched, so say so rather than claiming an update (issue #239).
+        response["skipped"] = True
+    elif result.partial:
+        # The playlist was written, just from incomplete data — the message
+        # names the podcasts we couldn't reach, which is ours, not an
+        # arbitrary exception string.
+        response["partial"] = True
+    return response
 
 
-@router.post("/run-all", response_model=RunAllPlaylistsResponse)
+@router.post("/run-all", response_model=RunAllPlaylistsResponse, responses=RUN_ACCEPTED_RESPONSES)
 @limiter.limit("1/5minutes")
 async def run_all_playlist_updates(
     request: Request,
     session: Session = Depends(validate_csrf_token),
     db: AsyncSession = Depends(get_db),
-) -> dict:
-    """Manually trigger all enabled playlist updates."""
+) -> Any:
+    """Manually trigger all enabled playlist updates.
+
+    Synchronous unless the request sends ``Prefer: respond-async``; see
+    :func:`run_playlist_update`.
+    """
     user = await _get_user(db, session.user_id)
+
+    if _wants_async(request):
+        stack = AsyncExitStack()
+        await stack.enter_async_context(_playlist_write_lock())
+        user_id = user.id
+
+        async def work(run: SyncLogRun) -> None:
+            await manual_run.run_all_playlists(run, user_id)
+
+        return await _accept_async_run(stack, work, "Updating all enabled playlists")
 
     # Update all playlists — same plumbing as the scheduled job (issue #89).
     # Take the shared write lock so manual fan-out serialises against the
     # daily rebuild and the cleanup job (issue #89, PR3, AC #3).
-    async with _playlist_write_lock():
+    async with _playlist_write_lock(), sync_log_run(manual_run.MANUAL_PLAYLIST_UPDATE_JOB_TYPE) as run:
         builder = PlaylistBuilder(
             db,
             user,
@@ -887,6 +975,7 @@ async def run_all_playlist_updates(
             max_retry_after=REQUEST_MAX_RETRY_AFTER_SECONDS,
         )
         results = await builder.update_all_playlists()
+        manual_run.record_outcome(run, results, message=manual_run.run_all_message(results))
 
     # Persist the builder's flushed writes (last_updated_at) before the
     # response is sent (see get_db).
@@ -894,40 +983,17 @@ async def run_all_playlist_updates(
 
     # Unreadable credentials fail every playlist the same way, and only a
     # fresh sign-in fixes them (issue #308).
-    if any(r.exception is not None and is_unreadable_credentials(r.exception) for r in results):
+    if manual_run.credentials_unreadable(results):
         raise await sign_out_for_reauth(db, session.user_id)
-
-    skipped = [r for r in results if r.skipped]
-    partial = [r for r in results if r.partial]
-    successful = [r for r in results if r.success and not r.skipped]
-    failed = [r for r in results if not r.success and not r.partial]
 
     # Log the detail; don't hand raw exception text to the client (issue #161).
     # Partial results keep their message — it names the podcasts we couldn't
     # reach, which is ours, not an arbitrary exception string.
-    for r in failed:
-        logger.error(f"Manual run-all failed for playlist '{r.playlist_name}': {r.error}")
-
-    message = f"Updated {len(successful)} playlists, {len(failed)} failed"
-    if partial:
-        message += f", {len(partial)} updated with warnings"
-    if skipped:
-        message += f", {len(skipped)} skipped (disabled)"
+    for r in results:
+        if not r.success and not r.partial:
+            logger.error(f"Manual run-all failed for playlist '{r.playlist_name}': {r.error}")
 
     return {
-        "message": message,
-        "results": [
-            {
-                "playlist_id": r.playlist_id,
-                "playlist_name": r.playlist_name,
-                "success": r.success,
-                "episode_count": r.episode_count,
-                "error": r.error
-                if r.partial
-                else ("Failed to update playlist. Check the server logs for details." if r.error else None),
-                "partial": r.partial,
-                "skipped": r.skipped,
-            }
-            for r in results
-        ],
+        "message": manual_run.run_all_message(results),
+        "results": [manual_run.result_entry(r) for r in results],
     }

@@ -62,6 +62,24 @@ class DateDirection(str, PyEnum):
     OLDEST_FIRST = "oldest_first"
 
 
+class LastRunStatus(str, PyEnum):
+    """Outcome of a playlist's most recent build (issue #246).
+
+    A disabled playlist that a run skipped keeps its previous outcome: it was
+    not built, so nothing about its last build changed.
+    """
+
+    SUCCESS = "success"
+    # Written, but some podcasts' episodes could not be fetched.
+    PARTIAL = "partial"
+    # Not written; the Spotify playlist keeps what it had.
+    FAILED = "failed"
+
+
+# Longest ``last_run_error`` kept.
+LAST_RUN_ERROR_MAX_LENGTH = 500
+
+
 class Playlist(Base):
     """Playlist model storing configuration for managed playlists.
 
@@ -92,8 +110,15 @@ class Playlist(Base):
     arrangement: Mapped[str] = mapped_column(String(20), default=Arrangement.BY_POSITION.value, nullable=False)
     date_direction: Mapped[str] = mapped_column(String(20), default=DateDirection.OLDEST_FIRST.value, nullable=False)
 
-    # Tracking
+    # Tracking. ``last_updated_at`` is the last time the Spotify playlist was
+    # written; the ``last_run_*`` columns are the outcome of the last build,
+    # written or not (issue #246) — see ``LastRunStatus``.
     last_updated_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    last_run_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Client-safe text: the podcasts a partial build couldn't reach, or what
+    # kind of failure it was — never raw exception text (issue #161).
+    last_run_error: Mapped[str | None] = mapped_column(String(LAST_RUN_ERROR_MAX_LENGTH), nullable=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, server_default=func.now(), nullable=False)
