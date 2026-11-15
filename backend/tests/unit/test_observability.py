@@ -32,6 +32,12 @@ def client():
     return TestClient(app)
 
 
+def _blow_up(message: str) -> None:
+    """Raise from a helper, so the code after ``pytest.raises`` isn't read as
+    unreachable by static analysis (it runs: pytest.raises swallows this)."""
+    raise RuntimeError(message)
+
+
 def _records(caplog, logger_name):
     return [r for r in caplog.records if r.name == logger_name]
 
@@ -347,7 +353,7 @@ class TestJobRunEvents:
         before = _job_runs("playlist_update", "error")
         with caplog.at_level(logging.INFO, logger=EVENTS_LOGGER), pytest.raises(RuntimeError):
             async with sync_log_run("playlist_update"):
-                raise RuntimeError("boom")
+                _blow_up("boom")
 
         assert _job_runs("playlist_update", "error") == before + 1
         [event] = _records(caplog, EVENTS_LOGGER)
