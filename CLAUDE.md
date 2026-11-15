@@ -14,6 +14,8 @@ Podcast Manager is a self-hosted web app that sits on top of Spotify and adds a 
 
 ## Commands
 
+`make help` lists the everyday ones (`run`, `test`, `lint`, `frontend-check`, `ios-test`, `deploy`); the sections below are what they run.
+
 ### Backend (Python/FastAPI)
 
 ```bash
@@ -47,7 +49,8 @@ Use `127.0.0.1` (not `localhost`) in `SPOTIFY_REDIRECT_URI`.
 
 Log in through the browser once against the local server. After that, `python -m scripts.dev_session` (from `backend/`) creates a 30-day session for the single local user and writes a curl cookie jar to `data/dev-session/cookies.txt` (gitignored), so you can run `curl -k -b data/dev-session/cookies.txt https://127.0.0.1:8000/api/...`. Mutating requests also need `X-CSRF-Token` from `data/dev-session/session.json`. The Spotify access token renews itself from the stored refresh token. Don't copy the production user row across: PKCE refresh tokens rotate, so production and local would keep invalidating each other.
 
-- Deployment (`./deploy.sh`, Swarm, migrations, production hosts): see the `deploy` skill.
+- Deployment (`./deploy.sh`, Swarm, migrations, production hosts): see the `deploy` skill. `deploy.sh` pins each image by digest (`<ref>:<sha>@sha256:…`), resolved with `docker buildx imagetools inspect` before any service is touched, because Swarm's own tag-to-digest resolution has failed silently on the owner's swarm.
+- Estate-wide facts for the owner's deployment (hosts, ingress, DNS, backups, monitoring, the private stack file in `podcast-manager-deploy`) live in the private `marcuslab-docs` repo, not here. Read the relevant `estate/` page before changing any of them, and update it in the same piece of work. Facts about the app itself stay in this repo.
 - Releases (`vX.Y.Z` tags → versioned images and a GitHub Release, the "Unreleased" draft that tracks what hasn't been released, and when to cut one): see the `release` skill. After merging a PR or deploying, check whether a release is due and say so.
 
 ## Architecture

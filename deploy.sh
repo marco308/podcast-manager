@@ -108,6 +108,13 @@ wait_for_service() {
                     # compare the reference the script asked for.
                     image="$(docker service inspect --format \
                         '{{.Spec.TaskTemplate.ContainerSpec.Image}}' "$service")"
+                    if [[ -n "$REGISTRY" ]]; then
+                        local digest_var="DIGEST_${component}"
+                        if [[ "${image#*@}" != "${!digest_var}" ]]; then
+                            echo "ERROR: $service runs ${image}, not digest ${!digest_var}." >&2
+                            return 1
+                        fi
+                    fi
                     image="${image%%@*}"
                     if [[ "$image" != "$want" ]]; then
                         echo "ERROR: $service finished updating but runs ${image}, not ${want}." >&2
@@ -148,7 +155,7 @@ build_image() {
 }
 
 # Update the swarm service. With REGISTRY the service is repointed at the
-# published reference, which Swarm resolves to a digest so every node pulls
+# published reference pinned to the digest recorded above, so every node pulls
 # this exact build; --with-registry-auth forwards the manager's credentials
 # so workers can pull a private package. Without it, --force restarts the
 # service on the locally-built :latest.
@@ -157,26 +164,36 @@ update_service() {
     local service="$2"
     echo "Updating ${service}..."
     if [[ -n "$REGISTRY" ]]; then
+        local digest_var="DIGEST_${component}"
         docker service update --force --with-registry-auth \
-            --image "${REGISTRY}/podcast-manager-${component}:${IMAGE_TAG}" "$service"
+            --image "${REGISTRY}/podcast-manager-${component}:${IMAGE_TAG}@${!digest_var}" "$service"
     else
         docker service update --force "$service"
     fi
 }
 
-# Confirm the image exists before touching any service. Deploying "all" runs
-# two updates, so an unpublished tag discovered on the second one would leave
-# the stack half-updated. Usually this means CI has not finished publishing
-# this commit, or the commit was never merged to main.
+# Confirm the image exists before touching any service, and record its digest.
+# Deploying "all" runs two updates, so an unpublished tag discovered on the
+# second one would leave the stack half-updated. Usually this means CI has not
+# finished publishing this commit, or the commit was never merged to main.
+#
+# The digest goes into the service spec (<ref>:<tag>@sha256:...). Swarm is
+# meant to resolve a tag to a digest itself, but on this estate that
+# resolution has failed silently (services here ran on a bare sha tag), and
+# then each node resolves the tag on its own. With the digest supplied there
+# is nothing left to resolve.
 require_published_image() {
     local component="$1"
     local ref="${REGISTRY}/podcast-manager-${component}:${IMAGE_TAG}"
-    if ! docker manifest inspect "$ref" >/dev/null 2>&1; then
+    local digest
+    digest="$(docker buildx imagetools inspect "$ref" 2>/dev/null | awk '/^Digest:/ {print $2; exit}')"
+    if [[ "$digest" != sha256:* ]]; then
         echo "ERROR: ${ref} is not in the registry." >&2
         echo "CI publishes an image for every merge to main — check that its run has" >&2
         echo "finished, or pass an explicit IMAGE_TAG=<published sha|latest>." >&2
         exit 1
     fi
+    printf -v "DIGEST_${component}" '%s' "$digest"
 }
 
 # Migrations run in the container's entrypoint (backend/entrypoint.sh) before
