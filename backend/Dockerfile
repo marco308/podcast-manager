@@ -9,9 +9,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies (declared in pyproject.toml; VERSION feeds its
+# version). Copied alone first so a code change doesn't bust this layer.
+COPY pyproject.toml VERSION ./
+RUN pip install --no-cache-dir . && rm -rf build ./*.egg-info
 
 # Copy application code
 COPY . .

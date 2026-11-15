@@ -10,7 +10,7 @@ See the [README](README.md#local-development) for full local setup (Spotify app 
 # Backend
 cd backend
 python3 -m venv venv && source venv/bin/activate
-pip install -r requirements-dev.txt
+pip install ".[dev]"
 alembic upgrade head
 
 # Frontend
