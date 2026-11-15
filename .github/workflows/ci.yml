@@ -17,11 +17,13 @@ permissions:
 jobs:
   backend:
     runs-on: ubuntu-latest
-    # 3.11 is the documented floor (ruff's target-version); 3.14 is what the
-    # Docker image ships. Testing both keeps the README claim honest (issue #162).
+    # 3.11 is the documented floor (ruff's target-version); 3.15 is what the
+    # Docker image ships (keep it in step with backend/Dockerfile's FROM line).
+    # Testing both keeps the README claim honest (issue #162). 3.14 stays
+    # because it is a required status check on main.
     strategy:
       matrix:
-        python-version: ["3.11", "3.14"]
+        python-version: ["3.11", "3.14", "3.15"]
     defaults:
       run:
         working-directory: backend
@@ -39,8 +41,8 @@ jobs:
       - run: ruff format --check app scripts
       - run: pytest tests --cov --cov-report=term --cov-report=json
       # One copy of the coverage report feeds the README badge (coverage-badge
-      # job below); 3.14 because that is what the Docker image runs.
-      - if: matrix.python-version == '3.14'
+      # job below); 3.15 because that is what the Docker image runs.
+      - if: matrix.python-version == '3.15'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage

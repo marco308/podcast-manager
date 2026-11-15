@@ -113,7 +113,7 @@ The saved session lives in the gitignored `frontend/.screenshots-auth.json`. Acc
 
 - A Spotify **Premium** account and your own Spotify Developer application (see below)
 - For deployment: a machine that runs Docker, and a public HTTPS URL for it
-- For local development: Python 3.11+ (CI tests 3.11 and 3.14; the Docker image runs 3.14), Node.js, and [mkcert](https://github.com/FiloSottile/mkcert)
+- For local development: Python 3.11+ (CI tests 3.11, 3.14 and 3.15; the Docker image runs 3.15), Node.js, and [mkcert](https://github.com/FiloSottile/mkcert)
 
 ### Register your Spotify app
 
