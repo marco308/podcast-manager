@@ -5,6 +5,7 @@ import {
   Button,
   Table,
   Space,
+  Tag,
   Popconfirm,
   Alert,
   Grid,
@@ -28,7 +29,7 @@ import {
   useRunPlaylistWithFeedback,
   useRunAllPlaylistsWithFeedback,
 } from '../hooks';
-import { LoadingSpinner, PlaylistFormModal, PlaylistStatus, SleepTag } from '../components';
+import { LastRunTag, LoadingSpinner, PlaylistFormModal, SleepTag } from '../components';
 import { getErrorMessage } from '../api';
 import { arrangementLabel, ruleSummary, spotifyPlaylistUrl } from '../utils/playlistLabels';
 import type { Playlist } from '../types';
@@ -79,30 +80,29 @@ export function Playlists() {
       dataIndex: 'name',
       key: 'name',
       render: (name: string, record: Playlist) => (
-        <div style={{ display: 'grid', gap: 6, justifyItems: 'start' }}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <Link to={`/playlists/${record.id}`} className="pm-name">
-              {name}
-            </Link>
-            {record.kind === 'sleep' && <SleepTag />}
-          </span>
+        <div>
+          <Link to={`/playlists/${record.id}`}>
+            <Text strong>{name}</Text>
+          </Link>
+          {record.kind === 'sleep' && <SleepTag style={{ marginLeft: 8 }} />}
+          <LastRunTag playlist={record} style={{ marginLeft: 8 }} />
           {isMobile && (
-            <>
-              <span className="pm-label" style={{ color: 'var(--ink)' }}>
+            <div style={{ marginTop: 4 }}>
+              <Tag color="blue">
                 {ruleSummary(record.default_episode_limit, record.default_pick_from, record.kind)}
-              </span>
-              <PlaylistStatus playlist={record} />
+              </Tag>
+              {record.is_enabled ? <Tag color="success">On</Tag> : <Tag color="default">Off</Tag>}
               {spotifyPlaylistUrl(record.spotify_playlist_id) && (
                 <a
                   href={spotifyPlaylistUrl(record.spotify_playlist_id) ?? undefined}
                   target="_blank"
                   rel="noopener noreferrer"
-                  style={{ fontSize: 13 }}
+                  style={{ fontSize: 12 }}
                 >
-                  Open in Spotify <ExportOutlined />
+                  Spotify <ExportOutlined />
                 </a>
               )}
-            </>
+            </div>
           )}
         </div>
       ),
@@ -113,9 +113,9 @@ export function Playlists() {
       responsive: ['md'] as const,
       render: (_, record) => (
         <Tooltip title="Default episodes per podcast · where they are taken from">
-          <span className="pm-label" style={{ color: 'var(--ink)' }}>
+          <Tag color={record.default_episode_limit === 0 ? 'blue' : 'green'}>
             {ruleSummary(record.default_episode_limit, record.default_pick_from, record.kind)}
-          </span>
+          </Tag>
         </Tooltip>
       ),
     },
@@ -153,13 +153,15 @@ export function Playlists() {
       },
     },
     {
-      title: 'Last run',
-      key: 'last_run',
+      title: 'Enabled',
+      dataIndex: 'is_enabled',
+      key: 'is_enabled',
       responsive: ['md'] as const,
-      render: (_, record) => <PlaylistStatus playlist={record} />,
+      render: (enabled: boolean) =>
+        enabled ? <Tag color="success">Enabled</Tag> : <Tag color="default">Disabled</Tag>,
     },
     {
-      title: 'Written to Spotify',
+      title: 'Last Updated',
       dataIndex: 'last_updated_at',
       key: 'last_updated_at',
       responsive: ['xl'] as const,
