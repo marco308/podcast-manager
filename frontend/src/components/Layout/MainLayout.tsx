@@ -1,4 +1,4 @@
-import { Layout, Alert } from 'antd';
+import { Layout, theme, Alert } from 'antd';
 import { Outlet, Navigate } from 'react-router';
 import { Header } from './Header';
 import { Sidebar } from './Sidebar';
@@ -9,6 +9,7 @@ const { Content } = Layout;
 
 export function MainLayout() {
   const { isAuthenticated, isLoading, isError } = useAuth();
+  const { token } = theme.useToken();
 
   if (isLoading) {
     return <LoadingSpinner fullScreen tip="Loading..." />;
@@ -47,15 +48,14 @@ export function MainLayout() {
       <Header />
       <Layout>
         <Sidebar />
-        <Layout style={{ padding: '24px 32px' }}>
+        <Layout style={{ padding: '24px' }}>
           <Content
             style={{
-              background: 'transparent',
-              padding: '8px 16px',
+              background: token.colorBgContainer,
+              padding: 24,
               margin: 0,
               minHeight: 280,
-              maxWidth: 1440,
-              width: '100%',
+              borderRadius: 8,
             }}
           >
             <Outlet />

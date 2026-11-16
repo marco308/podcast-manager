@@ -7,12 +7,12 @@ import {
   Button,
   Space,
   Divider,
+  Tag,
   Segmented,
   TimePicker,
   Spin,
   Table,
   Tooltip,
-  Grid,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
@@ -26,7 +26,7 @@ import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { useAuth, useTheme, useJobs, useUpdateJobSchedule, useHealth } from '../hooks';
 import { getErrorMessage } from '../api';
-import { Lamp, RunHistoryCard } from '../components';
+import { RunHistoryCard } from '../components';
 import type { ThemePreference } from '../context';
 import type { Job, JobSchedule } from '../types';
 
@@ -88,8 +88,6 @@ export function Settings() {
   const { message, modal } = App.useApp();
   const { user, logout, deleteAccount } = useAuth();
   const { themePreference, setThemePreference } = useTheme();
-  const screens = Grid.useBreakpoint();
-  const isMobile = screens.md === false;
   const { data: jobsData, isLoading: jobsLoading } = useJobs();
   const { data: health } = useHealth();
   const updateSchedule = useUpdateJobSchedule();
@@ -144,106 +142,19 @@ export function Settings() {
     );
   };
 
-  const renderSchedule = (record: Job) => {
-    if (!record.is_configurable) {
-      if (record.type === 'interval' && record.interval_minutes) {
-        return <Text type="secondary">Every {record.interval_minutes} minutes</Text>;
-      }
-      return <Text type="secondary">Not configurable</Text>;
-    }
-
-    const times = editingTimes ?? scheduleTimes(record).map(pickerTime);
-    const maxTimes = record.max_schedule_times ?? 1;
-
-    const setTimeAt = (index: number, time: dayjs.Dayjs) =>
-      setEditingTimes(times.map((t, i) => (i === index ? time : t)));
-    const removeTimeAt = (index: number) => setEditingTimes(times.filter((_, i) => i !== index));
-    // Start a new run eight hours after the last one, a sensible spread
-    // for up to three a day; the user adjusts it before saving.
-    const addTime = () =>
-      setEditingTimes([
-        ...times,
-        (times[times.length - 1] ?? pickerTime({ hour: 0, minute: 0 })).add(8, 'hour'),
-      ]);
-
-    return (
-      <Space wrap>
-        {times.map((time, index) => (
-          <Space.Compact key={index}>
-            <TimePicker
-              value={time}
-              format="HH:mm"
-              onChange={(value) => value && setTimeAt(index, value)}
-              suffixIcon={<ClockCircleOutlined />}
-              allowClear={false}
-              style={{ width: 100 }}
-            />
-            {times.length > 1 && (
-              <Tooltip title="Remove this run time">
-                <Button icon={<CloseOutlined />} onClick={() => removeTimeAt(index)} />
-              </Tooltip>
-            )}
-          </Space.Compact>
-        ))}
-        {record.schedule_timezone && (
-          <Tooltip title="Run times are in the server's time zone (its TIMEZONE setting), not your device's">
-            <Text type="secondary">{record.schedule_timezone}</Text>
-          </Tooltip>
-        )}
-        {times.length < maxTimes && (
-          <Tooltip title={`Run up to ${maxTimes} times a day`}>
-            <Button icon={<PlusOutlined />} onClick={addTime}>
-              Add time
-            </Button>
-          </Tooltip>
-        )}
-        <Button
-          type="primary"
-          size="small"
-          loading={updateSchedule.isPending}
-          disabled={!editingTimes}
-          onClick={() => handleScheduleSave()}
-        >
-          Save
-        </Button>
-      </Space>
-    );
-  };
-
   const jobColumns: ColumnsType<Job> = [
     {
       title: 'Job',
       dataIndex: 'name',
       key: 'name',
-      render: (name: string, record) =>
-        isMobile ? (
-          <div style={{ display: 'grid', gap: 6 }}>
-            <span className="pm-name">{name}</span>
-            <span className="pm-label">
-              {record.type === 'cron'
-                ? formatTimes(record)
-                : `Every ${record.interval_minutes} min`}
-            </span>
-            <span className="pm-label">
-              Next {record.next_run ? dayjs(record.next_run).fromNow() : '—'} · Last{' '}
-              {record.last_run ? dayjs(record.last_run).fromNow() : '—'}
-              {record.last_run_status === 'failed' ? ' · Failed' : ''}
-            </span>
-            {record.is_configurable && renderSchedule(record)}
-          </div>
-        ) : (
-          <span className="pm-name">{name}</span>
-        ),
+      render: (name: string) => <Text strong>{name}</Text>,
     },
     {
       title: 'Status',
       key: 'status',
-      responsive: ['md'] as const,
       render: (_, record) => (
         <Space>
-          <span className="pm-label" style={{ color: 'var(--ink)' }}>
-            {record.type === 'cron' ? 'Scheduled' : 'Repeating'}
-          </span>
+          <Tag color={record.type === 'cron' ? 'blue' : 'purple'}>{record.type}</Tag>
           {record.type === 'interval' && record.interval_minutes && (
             <Text type="secondary">every {record.interval_minutes} min</Text>
           )}
@@ -255,7 +166,6 @@ export function Settings() {
     },
     {
       title: 'Next Run',
-      responsive: ['md'] as const,
       dataIndex: 'next_run',
       key: 'next_run',
       render: (next_run: string | null) =>
@@ -269,7 +179,6 @@ export function Settings() {
     },
     {
       title: 'Last Run',
-      responsive: ['md'] as const,
       dataIndex: 'last_run',
       key: 'last_run',
       render: (last_run: string | null, record) =>
@@ -280,16 +189,10 @@ export function Settings() {
             </Tooltip>
             {record.last_run_status === 'failed' && (
               <Tooltip title={failedStepsLabel(record)}>
-                <span className="pm-status pm-label" style={{ color: 'var(--ink)' }}>
-                  <Lamp state="failed" /> Failed
-                </span>
+                <Tag color="red">failed</Tag>
               </Tooltip>
             )}
-            {record.last_run_status === 'running' && (
-              <span className="pm-status pm-label">
-                <Lamp state="partial" /> Running
-              </span>
-            )}
+            {record.last_run_status === 'running' && <Tag color="processing">running</Tag>}
           </Space>
         ) : (
           '—'
@@ -298,8 +201,72 @@ export function Settings() {
     {
       title: 'Schedule',
       key: 'schedule',
-      responsive: ['md'] as const,
-      render: (_, record) => renderSchedule(record),
+      render: (_, record) => {
+        if (!record.is_configurable) {
+          if (record.type === 'interval' && record.interval_minutes) {
+            return <Text type="secondary">Every {record.interval_minutes} minutes</Text>;
+          }
+          return <Text type="secondary">Not configurable</Text>;
+        }
+
+        const times = editingTimes ?? scheduleTimes(record).map(pickerTime);
+        const maxTimes = record.max_schedule_times ?? 1;
+
+        const setTimeAt = (index: number, time: dayjs.Dayjs) =>
+          setEditingTimes(times.map((t, i) => (i === index ? time : t)));
+        const removeTimeAt = (index: number) =>
+          setEditingTimes(times.filter((_, i) => i !== index));
+        // Start a new run eight hours after the last one, a sensible spread
+        // for up to three a day; the user adjusts it before saving.
+        const addTime = () =>
+          setEditingTimes([
+            ...times,
+            (times[times.length - 1] ?? pickerTime({ hour: 0, minute: 0 })).add(8, 'hour'),
+          ]);
+
+        return (
+          <Space wrap>
+            {times.map((time, index) => (
+              <Space.Compact key={index}>
+                <TimePicker
+                  value={time}
+                  format="HH:mm"
+                  onChange={(value) => value && setTimeAt(index, value)}
+                  suffixIcon={<ClockCircleOutlined />}
+                  allowClear={false}
+                  style={{ width: 100 }}
+                />
+                {times.length > 1 && (
+                  <Tooltip title="Remove this run time">
+                    <Button icon={<CloseOutlined />} onClick={() => removeTimeAt(index)} />
+                  </Tooltip>
+                )}
+              </Space.Compact>
+            ))}
+            {record.schedule_timezone && (
+              <Tooltip title="Run times are in the server's time zone (its TIMEZONE setting), not your device's">
+                <Text type="secondary">{record.schedule_timezone}</Text>
+              </Tooltip>
+            )}
+            {times.length < maxTimes && (
+              <Tooltip title={`Run up to ${maxTimes} times a day`}>
+                <Button icon={<PlusOutlined />} onClick={addTime}>
+                  Add time
+                </Button>
+              </Tooltip>
+            )}
+            <Button
+              type="primary"
+              size="small"
+              loading={updateSchedule.isPending}
+              disabled={!editingTimes}
+              onClick={() => handleScheduleSave()}
+            >
+              Save
+            </Button>
+          </Space>
+        );
+      },
     },
   ];
 
@@ -381,9 +348,9 @@ export function Settings() {
               Podcast Manager
             </Text>
             {health?.version && (
-              <span className="pm-label" style={{ marginLeft: 10 }}>
+              <Tag color="green" style={{ marginLeft: 8 }}>
                 v{health.version}
-              </span>
+              </Tag>
             )}
           </div>
           <Paragraph style={{ marginBottom: 0 }}>

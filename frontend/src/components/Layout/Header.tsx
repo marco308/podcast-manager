@@ -1,13 +1,5 @@
-import { useState } from 'react';
-import { Layout, Avatar, Dropdown, Space, Typography, Button, Drawer, Grid } from 'antd';
-import {
-  UserOutlined,
-  LogoutOutlined,
-  SunOutlined,
-  MoonOutlined,
-  MenuOutlined,
-} from '@ant-design/icons';
-import { NavMenu } from './Sidebar';
+import { Layout, Avatar, Dropdown, Space, Typography, Button, theme } from 'antd';
+import { UserOutlined, LogoutOutlined, SunOutlined, MoonOutlined } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { useAuth, useTheme } from '../../hooks';
 
@@ -17,9 +9,7 @@ const { Text } = Typography;
 export function Header() {
   const { user, logout } = useAuth();
   const { isDarkMode, toggleTheme } = useTheme();
-  const screens = Grid.useBreakpoint();
-  const isMobile = screens.md === false;
-  const [navOpen, setNavOpen] = useState(false);
+  const { token } = theme.useToken();
 
   const menuItems: MenuProps['items'] = [
     {
@@ -37,38 +27,16 @@ export function Header() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        background: 'var(--ground)',
+        background: token.colorBgContainer,
         padding: '0 24px',
-        borderBottom: '1.5px solid var(--rule)',
+        borderBottom: `1px solid ${token.colorBorderSecondary}`,
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        {isMobile && (
-          <Button
-            type="text"
-            icon={<MenuOutlined />}
-            onClick={() => setNavOpen(true)}
-            aria-label="Open navigation"
-            aria-expanded={navOpen}
-          />
-        )}
-        <img
-          src={isDarkMode ? '/brand/mark-cream.svg' : '/brand/mark-ink.svg'}
-          alt="Marcus Lab"
-          width={28}
-          height={28}
-          style={{ display: 'block' }}
-        />
-        <span
-          style={{
-            fontWeight: 700,
-            fontSize: 15,
-            letterSpacing: '0.04em',
-            textTransform: 'uppercase',
-          }}
-        >
+        <img src="/icon.svg" alt="" width={28} height={28} style={{ display: 'block' }} />
+        <Text strong style={{ fontSize: 18 }}>
           Podcast Manager
-        </span>
+        </Text>
       </div>
 
       <Space>
@@ -91,27 +59,12 @@ export function Header() {
             >
               <Space>
                 <Avatar icon={<UserOutlined />} />
-                <Text
-                  className="header-username"
-                  style={{ textTransform: 'none', letterSpacing: 0 }}
-                >
-                  {user.display_name || user.spotify_id}
-                </Text>
+                <Text className="header-username">{user.display_name || user.spotify_id}</Text>
               </Space>
             </Button>
           </Dropdown>
         )}
       </Space>
-      <Drawer
-        placement="left"
-        open={navOpen}
-        onClose={() => setNavOpen(false)}
-        width={260}
-        title="Podcast Manager"
-        styles={{ body: { padding: 0 }, header: { borderBottom: '1.5px solid var(--rule)' } }}
-      >
-        <NavMenu onNavigate={() => setNavOpen(false)} />
-      </Drawer>
     </AntHeader>
   );
 }

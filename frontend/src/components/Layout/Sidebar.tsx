@@ -1,4 +1,4 @@
-import { Layout, Menu, Grid } from 'antd';
+import { Layout, Menu, theme } from 'antd';
 import {
   DashboardOutlined,
   CustomerServiceOutlined,
@@ -14,7 +14,7 @@ const menuItems: MenuProps['items'] = [
   {
     key: '/',
     icon: <DashboardOutlined />,
-    label: 'Run sheet',
+    label: 'Dashboard',
   },
   {
     key: '/podcasts',
@@ -33,43 +33,34 @@ const menuItems: MenuProps['items'] = [
   },
 ];
 
-// The section links, shared by the desktop sidebar and the mobile drawer.
-export function NavMenu({ onNavigate }: { onNavigate?: () => void }) {
+export function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { token } = theme.useToken();
   // Highlight the section for nested routes too (e.g. /playlists/3 -> /playlists).
   const selectedKey = `/${location.pathname.split('/')[1] ?? ''}`;
 
   const handleMenuClick: MenuProps['onClick'] = ({ key }) => {
     navigate(key);
-    onNavigate?.();
   };
-
-  return (
-    <Menu
-      mode="inline"
-      selectedKeys={[selectedKey]}
-      style={{ height: '100%', borderRight: 0, background: 'transparent' }}
-      items={menuItems}
-      onClick={handleMenuClick}
-    />
-  );
-}
-
-export function Sidebar() {
-  const screens = Grid.useBreakpoint();
-  // Below md the header's menu button opens the same links in a drawer.
-  if (screens.md === false) return null;
 
   return (
     <Sider
       width={200}
+      breakpoint="md"
+      collapsedWidth={0}
       style={{
-        background: 'var(--ground)',
-        borderRight: '1.5px solid var(--rule)',
+        background: token.colorBgContainer,
+        borderRight: `1px solid ${token.colorBorderSecondary}`,
       }}
     >
-      <NavMenu />
+      <Menu
+        mode="inline"
+        selectedKeys={[selectedKey]}
+        style={{ height: '100%', borderRight: 0 }}
+        items={menuItems}
+        onClick={handleMenuClick}
+      />
     </Sider>
   );
 }
